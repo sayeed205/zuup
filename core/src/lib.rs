@@ -4,6 +4,7 @@ pub mod download;
 pub mod engine;
 pub mod error;
 pub mod event;
+pub mod protocol;
 pub mod session;
 pub mod types;
 

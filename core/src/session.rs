@@ -7,6 +7,7 @@ use std::sync::Arc;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+use crate::download::DownloadInfo;
 use crate::error::ZuupError;
 use crate::types::DownloadId;
 
