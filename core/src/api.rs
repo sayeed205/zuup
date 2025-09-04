@@ -1,6 +1,8 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use url::Url;
+
 use crate::config::ZuupConfig;
 use crate::download::DownloadRequest;
 use crate::engine::ZuupEngine;

@@ -5,6 +5,7 @@ use tokio::sync::RwLock;
 use crate::config::ZuupConfig;
 use crate::download::DownloadManager;
 use crate::event::EventBus;
+use crate::protocol::ProtocolRegistry;
 use crate::session::SessionManager;
 
 pub struct ZuupEngine {
@@ -43,18 +44,27 @@ pub enum EngineState {
 impl ZuupEngine {
     /// Create a new Zuup engine with given configuration
     pub async fn new(config: ZuupConfig) -> Result<Self> {
-        let config = Arc::new(RwLock::new(config));
-        let session_manager = Arc::new(SessionManager::new(config.clone()).await?);
-        let download_manager = Arc::new(DownloadManager::new(config.clone()).await?);
-        let event_bus = Arc::new(EventBus::new(config.clone()).await?);
-        let state = Arc::new(RwLock::new(EngineState::Starting));
+        let session_manager = Arc::new(SessionManager::new().await?);
+        let protocol_registry = Arc::new(RwLock::new(ProtocolRegistry::new()));
+        let download_manager = Arc::new(DownloadManager::new(
+            config.general.max_concurrent_downloads,
+            protocol_registry.clone(),
+        ));
+        let protocol_registry = protocol_registry;
+        let event_bus = Arc::new(EventBus::new(1000));
 
-        Ok(Self {
-            config,
+        let engine = Self {
+            config: Arc::new(RwLock::new(config)),
             session_manager,
             download_manager,
+            protocol_registry,
             event_bus,
-            state,
-        })
+            state: Arc::new(RwLock::new(EngineState::Starting)),
+        };
+
+        // Initialize the engine
+        engine.initialize().await?;
+
+        Ok(engine)
     }
 }

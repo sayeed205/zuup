@@ -1,4 +1,4 @@
-//! Error types and handling for Ruso
+//! Error types and handling for Zuup
 
 use std::fmt;
 use std::time::Duration;
@@ -8,7 +8,7 @@ use thiserror::Error;
 use crate::download::DownloadState;
 use crate::types::DownloadId;
 
-/// Main error type for Ruso operations
+/// Main error type for Zuup operations
 #[derive(Debug, Error)]
 pub enum ZuupError {
     #[error("Network error: {0}")]
@@ -219,7 +219,7 @@ pub enum ProtocolError {
     InvalidMediaFormat(String),
 }
 
-/// Result type alias for Ruso operations
+/// Result type alias for Zuup operations
 pub type Result<T> = std::result::Result<T, ZuupError>;
 
 impl ZuupError {
