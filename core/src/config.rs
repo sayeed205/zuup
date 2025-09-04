@@ -5,10 +5,11 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Duration;
 
+use crate::metrics::MetricsConfig;
 use crate::types::{ProxyConfig, TlsConfig};
 
 /// Main configuration structure
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default, Debug, Clone, Serialize, Deserialize)]
 pub struct ZuupConfig {
     /// General configuration
     pub general: GeneralConfig,
@@ -30,23 +31,9 @@ pub struct ZuupConfig {
 
     /// Logging configuration
     pub logging: LoggingConfig,
-    // Metrics configuration todo))
-    // pub metrics: crate::metrics::MetricsConfig,
-}
 
-impl Default for ZuupConfig {
-    fn default() -> Self {
-        Self {
-            general: GeneralConfig::default(),
-            network: NetworkConfig::default(),
-            bittorrent: BitTorrentConfig::default(),
-            server: None,
-            gui: None,
-            media: MediaConfig::default(),
-            logging: LoggingConfig::default(),
-            // metrics: crate::metrics::MetricsConfig::default(),
-        }
-    }
+    /// Metrics configuration
+    pub metrics: MetricsConfig,
 }
 
 /// General application configuration
@@ -636,13 +623,13 @@ impl ConfigManager {
         }
 
         // Validate media config
-        if let Some(ytdlp_path) = &self.config.media.ytdlp_path {
-            if !ytdlp_path.exists() {
-                return Err(crate::error::ZuupError::Config(format!(
-                    "yt-dlp executable not found at: {}",
-                    ytdlp_path.display()
-                )));
-            }
+        if let Some(ytdlp_path) = &self.config.media.ytdlp_path
+            && !ytdlp_path.exists()
+        {
+            return Err(crate::error::ZuupError::Config(format!(
+                "yt-dlp executable not found at: {}",
+                ytdlp_path.display()
+            )));
         }
 
         // Validate categories

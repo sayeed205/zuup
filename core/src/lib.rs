@@ -9,6 +9,7 @@ pub mod error;
 pub mod event;
 pub mod media;
 pub mod metalink;
+pub mod metrics;
 pub mod protocol;
 pub mod session;
 pub mod types;
