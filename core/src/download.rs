@@ -9,6 +9,7 @@ use tokio::sync::{Mutex, RwLock, mpsc};
 use tokio::task::JoinHandle;
 use url::Url;
 
+use crate::bandwidth::BandwidthManager;
 use crate::error::ZuupError;
 use crate::protocol::{Download as ProtoDownload, ProtocolRegistry};
 use crate::types::{DownloadId, DownloadOptions, DownloadSegment, SegmentProgress};
@@ -1126,6 +1127,19 @@ pub struct DownloadManager {
 
     /// Task scheduler
     scheduler: Arc<TaskScheduler>,
+
+    /// Bandwidth manager
+    bandwidth_manager: Arc<BandwidthManager>,
 }
 
-impl DownloadManager {}
+impl DownloadManager {
+    /// Create a new download manager
+    pub fn new(max_concurrent: u32, protocol_registry: Arc<RwLock<ProtocolRegistry>>) -> Self {
+        Self {
+            protocol_registry,
+            downloads: Arc::new(RwLock::new(HashMap::new())),
+            scheduler: Arc::new(TaskScheduler::new(max_concurrent)),
+            bandwidth_manager: Arc::new(BandwidthManager::new()),
+        }
+    }
+}

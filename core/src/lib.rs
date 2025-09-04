@@ -1,4 +1,5 @@
 pub mod api;
+pub mod bandwidth;
 pub mod config;
 pub mod download;
 pub mod engine;
