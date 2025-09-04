@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use tokio::process::Command;
 use url::Url;
 
-use crate::error::{MediaError, Result, RusoError};
+use crate::error::{MediaError, Result, ZuupError};
 
 /// Media download options for yt-dlp integration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -376,7 +376,7 @@ impl MediaDownloadCoordinator {
         let media_info = self.ytdlp_manager.extract_info(url).await?;
 
         if media_info.is_playlist {
-            return Err(RusoError::MediaDownload(MediaError::InvalidMediaFormat(
+            return Err(ZuupError::MediaDownload(MediaError::InvalidMediaFormat(
                 "Use add_playlist_download for playlist URLs".to_string(),
             )));
         }
@@ -426,7 +426,7 @@ impl MediaDownloadCoordinator {
         let media_info = self.ytdlp_manager.extract_info(url).await?;
 
         if !media_info.is_playlist {
-            return Err(RusoError::MediaDownload(MediaError::InvalidMediaFormat(
+            return Err(ZuupError::MediaDownload(MediaError::InvalidMediaFormat(
                 "URL is not a playlist".to_string(),
             )));
         }
@@ -694,7 +694,7 @@ impl YtDlpManager {
     /// Create a new yt-dlp manager
     pub async fn new() -> Result<Self> {
         let ytdlp_path = Self::find_ytdlp_executable().await?;
-        let temp_dir = std::env::temp_dir().join("ruso-ytdlp");
+        let temp_dir = std::env::temp_dir().join("zuup-ytdlp");
         tokio::fs::create_dir_all(&temp_dir).await?;
 
         Ok(Self {
@@ -707,10 +707,10 @@ impl YtDlpManager {
     /// Create a new yt-dlp manager with custom path
     pub async fn with_path(ytdlp_path: PathBuf) -> Result<Self> {
         if !ytdlp_path.exists() {
-            return Err(RusoError::MediaDownload(MediaError::YtDlpNotFound));
+            return Err(ZuupError::MediaDownload(MediaError::YtDlpNotFound));
         }
 
-        let temp_dir = std::env::temp_dir().join("ruso-ytdlp");
+        let temp_dir = std::env::temp_dir().join("zuup-ytdlp");
         tokio::fs::create_dir_all(&temp_dir).await?;
 
         Ok(Self {
@@ -731,7 +731,7 @@ impl YtDlpManager {
             }
         }
 
-        Err(RusoError::MediaDownload(MediaError::YtDlpNotFound))
+        Err(ZuupError::MediaDownload(MediaError::YtDlpNotFound))
     }
 
     /// Check if yt-dlp is available and get version
@@ -745,7 +745,7 @@ impl YtDlpManager {
 
         if !output.status.success() {
             let error = String::from_utf8_lossy(&output.stderr);
-            return Err(RusoError::MediaDownload(MediaError::YtDlpExecutionFailed(
+            return Err(ZuupError::MediaDownload(MediaError::YtDlpExecutionFailed(
                 error.to_string(),
             )));
         }
@@ -765,7 +765,7 @@ impl YtDlpManager {
 
         if !output.status.success() {
             let error = String::from_utf8_lossy(&output.stderr);
-            return Err(RusoError::MediaDownload(MediaError::ExtractionFailed(
+            return Err(ZuupError::MediaDownload(MediaError::ExtractionFailed(
                 error.to_string(),
             )));
         }
@@ -797,7 +797,7 @@ impl YtDlpManager {
         preferences: &FormatPreferences,
     ) -> Result<MediaFormat> {
         if formats.is_empty() {
-            return Err(RusoError::MediaDownload(MediaError::FormatNotAvailable(
+            return Err(ZuupError::MediaDownload(MediaError::FormatNotAvailable(
                 "No formats available".to_string(),
             )));
         }
@@ -830,7 +830,7 @@ impl YtDlpManager {
         }
 
         if candidates.is_empty() {
-            return Err(RusoError::MediaDownload(MediaError::FormatNotAvailable(
+            return Err(ZuupError::MediaDownload(MediaError::FormatNotAvailable(
                 format!(
                     "No formats matching type preference: {:?}",
                     preferences.format_type
@@ -915,7 +915,7 @@ impl YtDlpManager {
         }
 
         candidates.first().map(|f| (*f).clone()).ok_or_else(|| {
-            RusoError::MediaDownload(MediaError::FormatNotAvailable(
+            ZuupError::MediaDownload(MediaError::FormatNotAvailable(
                 "No formats match the specified preferences".to_string(),
             ))
         })
@@ -1226,7 +1226,7 @@ impl YtDlpManager {
 
         if !output.status.success() {
             let error = String::from_utf8_lossy(&output.stderr);
-            return Err(RusoError::MediaDownload(MediaError::YtDlpExecutionFailed(
+            return Err(ZuupError::MediaDownload(MediaError::YtDlpExecutionFailed(
                 error.to_string(),
             )));
         }
@@ -1255,7 +1255,7 @@ impl YtDlpManager {
             }
 
             if entries.is_empty() {
-                return Err(RusoError::MediaDownload(MediaError::ExtractionFailed(
+                return Err(ZuupError::MediaDownload(MediaError::ExtractionFailed(
                     "No entries found".to_string(),
                 )));
             }
@@ -1421,7 +1421,7 @@ impl YtDlpManager {
             }
         }
 
-        Err(RusoError::MediaDownload(MediaError::ExtractionFailed(
+        Err(ZuupError::MediaDownload(MediaError::ExtractionFailed(
             "Downloaded file not found".to_string(),
         )))
     }
@@ -1453,7 +1453,7 @@ impl YtDlpManager {
 
         if !output.status.success() {
             let error = String::from_utf8_lossy(&output.stderr);
-            return Err(RusoError::MediaDownload(MediaError::YtDlpExecutionFailed(
+            return Err(ZuupError::MediaDownload(MediaError::YtDlpExecutionFailed(
                 format!("Update failed: {}", error),
             )));
         }
@@ -1487,7 +1487,7 @@ impl YtDlpManager {
                 .find(|f| f.format_id == *format_id)
                 .cloned()
                 .ok_or_else(|| {
-                    RusoError::MediaDownload(MediaError::FormatNotAvailable(format_id.clone()))
+                    ZuupError::MediaDownload(MediaError::FormatNotAvailable(format_id.clone()))
                 })?
         } else {
             let preferences = FormatPreferences {
@@ -1566,7 +1566,7 @@ impl YtDlpManager {
         }
 
         let playlist_entries = media_info.playlist_entries.ok_or_else(|| {
-            RusoError::MediaDownload(MediaError::PlaylistFailed(
+            ZuupError::MediaDownload(MediaError::PlaylistFailed(
                 "No playlist entries found".to_string(),
             ))
         })?;
@@ -1624,7 +1624,7 @@ impl YtDlpManager {
         }
 
         if requests.is_empty() {
-            return Err(RusoError::MediaDownload(MediaError::PlaylistFailed(
+            return Err(ZuupError::MediaDownload(MediaError::PlaylistFailed(
                 "No entries selected for download".to_string(),
             )));
         }
@@ -1752,7 +1752,7 @@ impl YtDlpManager {
 
         if !output.status.success() {
             let error = String::from_utf8_lossy(&output.stderr);
-            return Err(RusoError::MediaDownload(MediaError::YtDlpExecutionFailed(
+            return Err(ZuupError::MediaDownload(MediaError::YtDlpExecutionFailed(
                 error.to_string(),
             )));
         }
