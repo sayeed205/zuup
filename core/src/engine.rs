@@ -3,6 +3,7 @@ use tokio::sync::RwLock;
 
 use crate::config::ZuupConfig;
 use crate::download::DownloadManager;
+use crate::event::EventBus;
 use crate::session::SessionManager;
 
 pub struct ZuupEngine {
@@ -14,4 +15,7 @@ pub struct ZuupEngine {
 
     /// Download manager for handling downloads.
     download_manager: Arc<DownloadManager>,
+
+    /// Event bus for notifications.
+    event_bus: Arc<EventBus>,
 }
