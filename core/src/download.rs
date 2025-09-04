@@ -1142,4 +1142,452 @@ impl DownloadManager {
             bandwidth_manager: Arc::new(BandwidthManager::new()),
         }
     }
+
+    /// Create a new download manager with custom bandwidth manager
+    pub fn with_bandwidth_manager(
+        max_concurrent: u32,
+        bandwidth_manager: BandwidthManager,
+        protocol_registry: Arc<RwLock<ProtocolRegistry>>,
+    ) -> Self {
+        Self {
+            protocol_registry,
+            downloads: Arc::new(RwLock::new(HashMap::new())),
+            scheduler: Arc::new(TaskScheduler::new(max_concurrent)),
+            bandwidth_manager: Arc::new(bandwidth_manager),
+        }
+    }
+
+    /// Add a new download
+    pub async fn add_download(
+        &self,
+        request: DownloadRequest,
+        priority: Option<DownloadPriority>,
+    ) -> Result<DownloadId> {
+        let id = DownloadId::new();
+        let task = Arc::new(DownloadTask::new(
+            id.clone(),
+            request,
+            self.protocol_registry.clone(),
+            priority,
+        ));
+
+        // Add to downloads collection
+        let mut downloads = self.downloads.write().await;
+        downloads.insert(id.clone(), task.clone());
+
+        // Don't automatically add to scheduler or start - let user control this
+
+        Ok(id)
+    }
+
+    /// Start a download
+    pub async fn start_download(&self, id: &DownloadId) -> Result<()> {
+        tracing::debug!("DownloadManager: Starting download {}", id);
+        let downloads = self.downloads.read().await;
+        let task = downloads
+            .get(id)
+            .ok_or_else(|| ZuupError::DownloadNotFound(id.clone()))?;
+
+        let state = task.state.read().await;
+        tracing::debug!("DownloadManager: Current state for {} is {:?}", id, state);
+        if state.is_active() {
+            tracing::debug!("DownloadManager: Download {} is already active", id);
+            return Ok(()); // Already active
+        }
+
+        if !state.can_start() {
+            tracing::error!(
+                "DownloadManager: Cannot start download {} - invalid state {:?}",
+                id,
+                state
+            );
+            return Err(ZuupError::InvalidStateTransition {
+                from: state.clone(),
+                to: DownloadState::Active,
+            });
+        }
+        drop(state);
+
+        // Add to scheduler if not already there
+        tracing::debug!("DownloadManager: Adding download {} to scheduler", id);
+        self.scheduler.add_task(task.clone()).await?;
+
+        // Try to start more tasks
+        tracing::debug!("DownloadManager: Trying to start next task for {}", id);
+        self.try_start_next_task().await?;
+
+        tracing::debug!("DownloadManager: Successfully started download {}", id);
+        Ok(())
+    }
+
+    /// Pause a download
+    pub async fn pause_download(&self, id: &DownloadId) -> Result<()> {
+        let downloads = self.downloads.read().await;
+        let task = downloads
+            .get(id)
+            .ok_or_else(|| ZuupError::DownloadNotFound(id.clone()))?;
+
+        task.pause().await?;
+
+        // Mark task as completed in scheduler to free up resources
+        self.scheduler.complete_task(id).await?;
+
+        // Try to start the next task
+        self.try_start_next_task().await?;
+
+        Ok(())
+    }
+
+    /// Resume a download
+    pub async fn resume_download(&self, id: &DownloadId) -> Result<()> {
+        let downloads = self.downloads.read().await;
+        let task = downloads
+            .get(id)
+            .ok_or_else(|| ZuupError::DownloadNotFound(id.clone()))?;
+
+        // Check if we can resume
+        let state = task.state.read().await;
+        if !state.can_resume() {
+            return Ok(()); // Already active or not resumable
+        }
+        drop(state);
+
+        // Add back to scheduler first (while still in resumable state)
+        self.scheduler.add_task(task.clone()).await?;
+
+        // Try to start the next task (which will call task.start() and change state to Active)
+        self.try_start_next_task().await?;
+
+        Ok(())
+    }
+
+    /// Cancel a download
+    pub async fn cancel_download(&self, id: &DownloadId) -> Result<()> {
+        let downloads = self.downloads.read().await;
+        let task = downloads
+            .get(id)
+            .ok_or_else(|| ZuupError::DownloadNotFound(id.clone()))?;
+
+        task.cancel().await?;
+
+        // Remove from scheduler
+        self.scheduler.complete_task(id).await?;
+
+        // Try to start the next task
+        self.try_start_next_task().await?;
+
+        Ok(())
+    }
+
+    /// Update download priority
+    pub async fn set_download_priority(
+        &self,
+        id: &DownloadId,
+        priority: DownloadPriority,
+    ) -> Result<()> {
+        let downloads = self.downloads.read().await;
+        let task = downloads
+            .get(id)
+            .ok_or_else(|| ZuupError::DownloadNotFound(id.clone()))?;
+
+        // Always update the task's priority
+        task.set_priority(priority).await?;
+
+        // Try to update in scheduler (may fail if not in scheduler, which is OK)
+        let _ = self.scheduler.update_task_priority(id, priority).await;
+
+        Ok(())
+    }
+
+    /// Get download information
+    pub async fn get_download(&self, id: &DownloadId) -> Result<DownloadInfo> {
+        let downloads = self.downloads.read().await;
+        let task = downloads
+            .get(id)
+            .ok_or_else(|| ZuupError::DownloadNotFound(id.clone()))?;
+
+        Ok(task.info().await)
+    }
+
+    /// List all downloads
+    pub async fn list_downloads(&self) -> Result<Vec<DownloadInfo>> {
+        let downloads = self.downloads.read().await;
+        let mut infos = Vec::new();
+
+        for task in downloads.values() {
+            infos.push(task.info().await);
+        }
+
+        // Sort by priority and creation time
+        infos.sort_by(|a, b| {
+            // First by state (active first, then by priority)
+            match (&a.state, &b.state) {
+                (DownloadState::Active, DownloadState::Active) => a.created_at.cmp(&b.created_at),
+                (DownloadState::Active, _) => std::cmp::Ordering::Less,
+                (_, DownloadState::Active) => std::cmp::Ordering::Greater,
+                _ => a.created_at.cmp(&b.created_at),
+            }
+        });
+
+        Ok(infos)
+    }
+
+    /// Remove a download
+    pub async fn remove_download(&self, id: &DownloadId, force: bool) -> Result<()> {
+        let downloads = self.downloads.read().await;
+
+        if let Some(task) = downloads.get(id) {
+            let state = task.state.read().await;
+
+            // Check if we can remove the download
+            if !force && state.is_active() {
+                return Err(ZuupError::InvalidStateTransition {
+                    from: state.clone(),
+                    to: DownloadState::Cancelled,
+                });
+            }
+
+            // Cancel the task if it's not terminal
+            if !state.is_terminal() {
+                drop(state);
+                task.cancel().await?;
+            }
+        }
+
+        drop(downloads);
+        let mut downloads = self.downloads.write().await;
+        downloads
+            .remove(id)
+            .ok_or_else(|| ZuupError::DownloadNotFound(id.clone()))?;
+
+        // Remove from scheduler
+        self.scheduler.complete_task(id).await?;
+
+        // Try to start the next task
+        self.try_start_next_task().await?;
+
+        Ok(())
+    }
+
+    /// Get the number of active downloads
+    pub async fn active_count(&self) -> usize {
+        self.scheduler.running_count().await
+    }
+
+    /// Get the number of pending downloads
+    pub async fn pending_count(&self) -> usize {
+        self.scheduler.pending_count().await
+    }
+
+    /// Get total download count
+    pub async fn total_count(&self) -> usize {
+        self.downloads.read().await.len()
+    }
+
+    /// Check if we can start more downloads
+    pub async fn can_start_more(&self) -> bool {
+        self.scheduler.running_count().await < self.scheduler.max_concurrent as usize
+    }
+
+    /// Try to start the next task from the queue
+    async fn try_start_next_task(&self) -> Result<()> {
+        tracing::debug!("DownloadManager: Trying to start next task from scheduler");
+        if let Some(task) = self.scheduler.try_start_next().await? {
+            tracing::debug!(
+                "DownloadManager: Got task {} from scheduler, starting it",
+                task.id
+            );
+            // Start the task
+            if let Err(e) = task.start().await {
+                tracing::error!("DownloadManager: Failed to start task {}: {}", task.id, e);
+                // If we can't start the task, remove it from running tasks
+                self.scheduler.complete_task(&task.id).await?;
+                return Err(e);
+            }
+            tracing::debug!("DownloadManager: Successfully started task {}", task.id);
+        } else {
+            tracing::debug!("DownloadManager: No task available to start from scheduler");
+        }
+        Ok(())
+    }
+
+    /// Get scheduler statistics
+    pub async fn scheduler_stats(&self) -> (usize, usize) {
+        (
+            self.scheduler.running_count().await,
+            self.scheduler.pending_count().await,
+        )
+    }
+
+    /// Get detailed resource usage information
+    pub async fn resource_usage(&self) -> ResourceUsage {
+        self.scheduler.resource_usage().await
+    }
+
+    /// Get queue statistics
+    pub async fn queue_stats(&self) -> QueueStats {
+        self.scheduler.queue_stats().await
+    }
+
+    /// Start multiple downloads up to the concurrent limit
+    pub async fn start_downloads(&self, ids: Vec<DownloadId>) -> Result<Vec<DownloadId>> {
+        let mut started = Vec::new();
+
+        for id in ids {
+            if !self.can_start_more().await {
+                break;
+            }
+
+            if self.start_download(&id).await.is_ok() {
+                started.push(id);
+            }
+        }
+
+        Ok(started)
+    }
+
+    /// Pause all active downloads
+    pub async fn pause_all_downloads(&self) -> Result<Vec<DownloadId>> {
+        let downloads = self.downloads.read().await;
+        let mut active_ids = Vec::new();
+
+        // First collect active download IDs
+        for (id, task) in downloads.iter() {
+            if task.is_active().await {
+                active_ids.push(id.clone());
+            }
+        }
+        drop(downloads); // Release the lock before calling pause_download
+
+        let mut paused = Vec::new();
+        for id in active_ids {
+            if self.pause_download(&id).await.is_ok() {
+                paused.push(id);
+            }
+        }
+
+        Ok(paused)
+    }
+
+    /// Resume all paused downloads (up to concurrent limit)
+    pub async fn resume_all_downloads(&self) -> Result<Vec<DownloadId>> {
+        let downloads = self.downloads.read().await;
+        let mut resumable_ids = Vec::new();
+
+        // First collect resumable download IDs
+        for (id, task) in downloads.iter() {
+            let state = task.state.read().await;
+            if state.can_resume() {
+                resumable_ids.push(id.clone());
+            }
+        }
+        drop(downloads); // Release the lock before calling resume_download
+
+        let mut resumed = Vec::new();
+        for id in resumable_ids {
+            if !self.can_start_more().await {
+                break;
+            }
+
+            if self.resume_download(&id).await.is_ok() {
+                resumed.push(id);
+            }
+        }
+
+        Ok(resumed)
+    }
+
+    /// Cancel all downloads
+    pub async fn cancel_all_downloads(&self) -> Result<Vec<DownloadId>> {
+        let downloads = self.downloads.read().await;
+        let mut cancellable_ids = Vec::new();
+
+        // First collect non-terminal download IDs
+        for (id, task) in downloads.iter() {
+            if !task.is_terminal().await {
+                cancellable_ids.push(id.clone());
+            }
+        }
+        drop(downloads); // Release the lock before calling cancel_download
+
+        let mut cancelled = Vec::new();
+        for id in cancellable_ids {
+            if self.cancel_download(&id).await.is_ok() {
+                cancelled.push(id);
+            }
+        }
+
+        Ok(cancelled)
+    }
+
+    /// Get downloads by state
+    pub async fn get_downloads_by_state(&self, state: DownloadState) -> Result<Vec<DownloadInfo>> {
+        let downloads = self.downloads.read().await;
+        let mut matching_tasks = Vec::new();
+
+        // First collect matching tasks
+        for task in downloads.values() {
+            let task_state = task.state.read().await;
+            if *task_state == state {
+                matching_tasks.push(task.clone());
+            }
+        }
+        drop(downloads); // Release the lock before calling info()
+
+        let mut matching = Vec::new();
+        for task in matching_tasks {
+            matching.push(task.info().await);
+        }
+
+        Ok(matching)
+    }
+
+    /// Get downloads by priority
+    pub async fn get_downloads_by_priority(
+        &self,
+        priority: DownloadPriority,
+    ) -> Result<Vec<DownloadInfo>> {
+        let downloads = self.downloads.read().await;
+        let mut matching_tasks = Vec::new();
+
+        // First collect matching tasks
+        for task in downloads.values() {
+            if task.priority().await == priority {
+                matching_tasks.push(task.clone());
+            }
+        }
+        drop(downloads); // Release the lock before calling info()
+
+        let mut matching = Vec::new();
+        for task in matching_tasks {
+            matching.push(task.info().await);
+        }
+
+        Ok(matching)
+    }
+
+    /// Set maximum concurrent downloads
+    pub async fn set_max_concurrent(&self, _max_concurrent: u32) -> Result<()> {
+        // todo)) This would require making scheduler mutable, which would require Arc<Mutex<TaskScheduler>>
+        // For now, we'll return an error indicating this operation is not supported
+        // In a real implementation, we'd need to restructure the scheduler to be mutable
+        Err(ZuupError::Config(
+            "Cannot change max concurrent downloads after creation".to_string(),
+        ))
+    }
+
+    /// Get maximum concurrent downloads
+    pub fn max_concurrent(&self) -> u32 {
+        self.scheduler.max_concurrent()
+    }
+
+    /// Check if any downloads are stale (waiting too long)
+    pub async fn get_stale_downloads(&self, max_wait_time: Duration) -> Vec<DownloadId> {
+        self.scheduler.get_stale_tasks(max_wait_time).await
+    }
+
+    /// Get bandwidth manager reference
+    pub fn bandwidth_manager(&self) -> &Arc<BandwidthManager> {
+        &self.bandwidth_manager
+    }
 }
