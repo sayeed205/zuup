@@ -4,9 +4,8 @@ use std::sync::Arc;
 use url::Url;
 
 use crate::config::ZuupConfig;
-use crate::download::DownloadRequest;
 use crate::engine::ZuupEngine;
-use crate::types::DownloadId;
+use crate::types::{DownloadId, DownloadRequest};
 
 /// Main entry point for the Zuup download Manager library
 ///

@@ -8,9 +8,8 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
-use crate::download::{DownloadInfo, DownloadState};
 use crate::error::ZuupError;
-use crate::types::DownloadId;
+use crate::types::{DownloadId, DownloadInfo, DownloadState};
 
 /// Session format version for backward compatibility
 pub const SESSION_VERSION: u32 = 1;
