@@ -3,5 +3,5 @@
 version = 4
 
 [[package]]
-name = "zuup"
-version = "0.1.0"
+name = "zuup-core"
+version = "0.0.1"
