@@ -792,10 +792,10 @@ impl TaskScheduler {
 
         for task in queue.iter() {
             let wait_time = now.signed_duration_since(task.created_at);
-            if let Ok(duration) = wait_time.to_std() {
-                if duration > max_wait_time {
-                    stale_tasks.push(task.id.clone());
-                }
+            if let Ok(duration) = wait_time.to_std()
+                && duration > max_wait_time
+            {
+                stale_tasks.push(task.id.clone());
             }
         }
 
