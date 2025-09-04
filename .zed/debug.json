@@ -1,7 +1,3 @@
-// Project-local debug tasks
-//
-// For more documentation on how to configure debug tasks,
-// see: https://zed.dev/docs/debugger
 [
   {
     "label": "debug zuup server start",
@@ -12,6 +8,6 @@
     "program": "$ZED_WORKTREE_ROOT/target/debug/zuup",
     "args": ["server", "start", "/tmp/scratch"],
     "request": "launch",
-    "adapter": "CodeLLDB" // GDB is available on non arm macs as well as linux
+    "adapter": "CodeLLDB"
   }
 ]
