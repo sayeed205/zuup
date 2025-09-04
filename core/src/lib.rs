@@ -1,5 +1,6 @@
 pub mod api;
 pub mod bandwidth;
+pub mod callbacks;
 pub mod checksum;
 pub mod config;
 pub mod download;
