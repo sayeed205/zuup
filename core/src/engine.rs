@@ -1,4 +1,5 @@
 use std::sync::Arc;
+
 use tokio::sync::RwLock;
 
 use crate::config::ZuupConfig;
@@ -37,4 +38,23 @@ pub enum EngineState {
 
     /// Engine has stopped
     Stopped,
+}
+
+impl ZuupEngine {
+    /// Create a new Zuup engine with given configuration
+    pub async fn new(config: ZuupConfig) -> Result<Self> {
+        let config = Arc::new(RwLock::new(config));
+        let session_manager = Arc::new(SessionManager::new(config.clone()).await?);
+        let download_manager = Arc::new(DownloadManager::new(config.clone()).await?);
+        let event_bus = Arc::new(EventBus::new(config.clone()).await?);
+        let state = Arc::new(RwLock::new(EngineState::Starting));
+
+        Ok(Self {
+            config,
+            session_manager,
+            download_manager,
+            event_bus,
+            state,
+        })
+    }
 }

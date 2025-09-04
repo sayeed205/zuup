@@ -34,7 +34,7 @@ pub struct NetworkConfig {
 impl Default for NetworkConfig {
     fn default() -> Self {
         Self {
-            user_agent: format!("Ruso/{}", env!("CARGO_PKG_VERSION")),
+            user_agent: format!("Zuup/{}", env!("CARGO_PKG_VERSION")),
         }
     }
 }
