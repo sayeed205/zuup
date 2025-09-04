@@ -1,3 +1,11 @@
 [workspace]
 members = ['core']
 resolver = "3"
+
+[workspace.dependencies]
+# Async runtime and networking
+tokio = { version = "1", features = ["full"] }
+
+# Serialization and deserialization
+serde = { version = "1", features = ["derive"] }
+cuid2 = "0.1"
