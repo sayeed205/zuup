@@ -1539,10 +1539,10 @@ impl YtDlpManager {
 
         // Create download request
         let download_url = url::Url::parse(&format.url)?;
-        let mut request = crate::types::DownloadRequest::new(download_url).with_filename(filename);
+        let mut request = crate::types::DownloadRequest::new(vec![download_url]).filename(filename);
 
         if let Some(path) = output_path {
-            request = request.with_output_path(path);
+            request = request.output_path(path);
         }
 
         Ok(request)
@@ -1613,10 +1613,10 @@ impl YtDlpManager {
                 filename = filename.replace("%(playlist_index)s", &format!("{:03}", index + 1));
 
                 let mut request =
-                    crate::types::DownloadRequest::new(entry_url).with_filename(filename);
+                    crate::types::DownloadRequest::new(vec![entry_url]).filename(filename);
 
                 if let Some(ref path) = playlist_options.output_path {
-                    request = request.with_output_path(path.clone());
+                    request = request.output_path(path.clone());
                 }
 
                 requests.push(request);

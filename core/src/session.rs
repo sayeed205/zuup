@@ -8,7 +8,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
-use crate::error::ZuupError;
+use crate::error::{ZuupError, Result};
 use crate::types::{DownloadId, DownloadInfo, DownloadState};
 
 /// Session format version for backward compatibility
@@ -612,6 +612,7 @@ impl SessionManager {
                 DownloadState::Cancelled => stats.cancelled += 1,
                 DownloadState::Waiting => stats.pending += 1,
                 DownloadState::Preparing => stats.active += 1,
+                DownloadState::Retrying => stats.active += 1,
             }
 
             stats.total_size += info.progress.total_size.unwrap_or(0);
@@ -720,6 +721,18 @@ impl SessionManager {
                         download_id = %id,
                         filename = %download_info.filename,
                         "Pausing previously preparing download"
+                    );
+
+                    download_info.state = DownloadState::Paused;
+                    self.storage.save_download(&download_info)?;
+                    recovery_info.paused_downloads.push(download_info);
+                }
+                DownloadState::Retrying => {
+                    // Retrying downloads should be paused for manual restart
+                    tracing::info!(
+                        download_id = %id,
+                        filename = %download_info.filename,
+                        "Pausing previously retrying download"
                     );
 
                     download_info.state = DownloadState::Paused;

@@ -332,9 +332,10 @@ impl MetalinkParser {
                             loop {
                                 match reader.read_event_into(&mut buf) {
                                     Ok(Event::Text(e)) => {
-                                        url_content.push_str(&e.unescape().map_err(|e| {
-                                            ZuupError::Config(format!("XML unescape error: {}", e))
-                                        })?);
+                                        let text = std::str::from_utf8(e.as_ref()).map_err(|e| {
+                                            ZuupError::Config(format!("Invalid UTF-8 in XML: {}", e))
+                                        })?;
+                                        url_content.push_str(text);
                                     }
                                     Ok(Event::End(ref e)) if e.name().as_ref() == b"url" => break,
                                     Ok(Event::Eof) => {
@@ -388,12 +389,10 @@ impl MetalinkParser {
                                 loop {
                                     match reader.read_event_into(&mut buf) {
                                         Ok(Event::Text(e)) => {
-                                            hash_content.push_str(&e.unescape().map_err(|e| {
-                                                ZuupError::Config(format!(
-                                                    "XML unescape error: {}",
-                                                    e
-                                                ))
-                                            })?);
+                                            let text = std::str::from_utf8(e.as_ref()).map_err(|e| {
+                                                ZuupError::Config(format!("Invalid UTF-8 in XML: {}", e))
+                                            })?;
+                                            hash_content.push_str(text);
                                         }
                                         Ok(Event::End(ref e)) if e.name().as_ref() == b"hash" => {
                                             break;

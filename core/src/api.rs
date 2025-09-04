@@ -6,6 +6,7 @@ use url::Url;
 use crate::config::ZuupConfig;
 use crate::engine::ZuupEngine;
 use crate::types::{DownloadId, DownloadRequest};
+use crate::error::Result;
 
 /// Main entry point for the Zuup download Manager library
 ///
@@ -48,7 +49,7 @@ impl Zuup {
     pub async fn download(&self, url: Url) -> Result<DownloadId> {
         // Get the default download directory from config
         let config = self.engine.config().await;
-        let request = DownloadRequest::new(url).output_path(config.general.download_dir);
+        let request = DownloadRequest::new(vec![url]).output_path(config.general.download_dir);
         let id = self.engine.add_download(request).await?;
 
         // Auto-start the download for better UX

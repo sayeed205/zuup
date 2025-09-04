@@ -2,6 +2,7 @@ use async_trait::async_trait;
 use url::Url;
 
 use crate::types::{DownloadProgress, DownloadRequest, DownloadState};
+use crate::error::Result;
 
 /// Trait for protocol-specific download handlers
 #[async_trait]

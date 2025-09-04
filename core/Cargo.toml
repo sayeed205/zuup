@@ -28,5 +28,6 @@ serde_yaml = { workspace = true }
 bytes = "1"
 md5 = "0.8"
 hex = "0.4"
+which = "7"
 
 quick-xml = { version = "0.38", features = ['serialize'] }

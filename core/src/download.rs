@@ -10,7 +10,7 @@ use tokio::task::JoinHandle;
 use url::Url;
 
 use crate::bandwidth::BandwidthManager;
-use crate::error::ZuupError;
+use crate::error::{Result, ZuupError};
 use crate::metalink::{MetalinkFile, MetalinkUrl};
 use crate::protocol::{Download as ProtoDownload, ProtocolRegistry};
 use crate::types::{
@@ -195,10 +195,18 @@ impl DownloadTask {
             state,
             progress,
             priority,
+            download_type: crate::types::DownloadType::Standard,
+            category: self.request.category.clone(),
             created_at: self.created_at,
             started_at,
             completed_at,
             options: self.request.options.clone(),
+            error_message: None,
+            file_size: None,
+            content_type: None,
+            last_modified: None,
+            referrer: self.request.referrer.clone(),
+            cookies: self.request.cookies.clone(),
         }
     }
 
@@ -260,7 +268,7 @@ impl DownloadTask {
         let url = &self.request.urls[0];
 
         // Create protocol-specific download via handler from registry
-        let mut proto_download = {
+        let proto_download = {
             let registry = self.protocol_registry.read().await;
             if let Some(handler) = registry.find_handler(url) {
                 handler.create_download(&self.request).await?
@@ -1524,7 +1532,7 @@ impl MultiSourceCoordinator {
         status.current_speed = speed;
         status.last_activity = Utc::now();
 
-        if let Some(error) = error {
+        if let Some(_error) = error {
             status.error_count += 1;
             status.last_error = Some(Utc::now());
 

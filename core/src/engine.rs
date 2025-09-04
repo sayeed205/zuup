@@ -5,11 +5,10 @@ use std::time::Duration;
 use tokio::sync::RwLock;
 use url::Url;
 
-use crate::Zuup;
 use crate::config::ZuupConfig;
 use crate::download::DownloadManager;
-use crate::error::ZuupError;
-use crate::event::{EventBus, EventSubscriber};
+use crate::error::{ZuupError, Result};
+use crate::event::{Event, EventBus, EventSubscriber};
 use crate::protocol::ProtocolRegistry;
 use crate::session::SessionManager;
 use crate::types::{DownloadId, DownloadInfo, DownloadRequest, DownloadState};
@@ -50,10 +49,27 @@ pub enum EngineState {
     Stopped,
 }
 
+/// Engine statistics
+#[derive(Debug, Clone, Default)]
+pub struct EngineStats {
+    /// Total number of downloads
+    pub total_downloads: usize,
+    /// Number of active downloads
+    pub active_downloads: usize,
+    /// Number of completed downloads
+    pub completed_downloads: usize,
+    /// Number of failed downloads
+    pub failed_downloads: usize,
+    /// Total bytes downloaded
+    pub total_downloaded: u64,
+    /// Current download speed (bytes/sec)
+    pub current_speed: u64,
+}
+
 impl ZuupEngine {
     /// Create a new Zuup engine with given configuration
     pub async fn new(config: ZuupConfig) -> Result<Self> {
-        let session_manager = Arc::new(SessionManager::new().await?);
+        let session_manager = Arc::new(SessionManager::new()?);
         let protocol_registry = Arc::new(RwLock::new(ProtocolRegistry::new()));
         let download_manager = Arc::new(DownloadManager::new(
             config.general.max_concurrent_downloads,
@@ -101,7 +117,7 @@ impl ZuupEngine {
 
     /// Register all protocol handlers
     async fn register_protocol_handlers(&self) -> Result<()> {
-        let mut registry = self.protocol_registry.write().await;
+        let _registry = self.protocol_registry.write().await;
 
         // todo)) Protocol handlers should be registered externally via register_protocol_handler()
         // This allows for modular protocol support through separate crates like zuup-protocols
@@ -121,7 +137,7 @@ impl ZuupEngine {
         let parsed_url =
             url::Url::parse(url).map_err(|e| ZuupError::Config(format!("Invalid URL: {}", e)))?;
 
-        let request = DownloadRequest::new(parsed_url);
+        let request = DownloadRequest::new(vec![parsed_url]);
         self.add_download(request).await
     }
 
@@ -313,7 +329,7 @@ impl ZuupEngine {
         stats.total_downloaded = session_stats.downloaded_size;
 
         // Calculate current download speed
-        stats.current_speed = downloads.iter().map(|d| d.progress.speed).sum();
+        stats.current_speed = downloads.iter().map(|d| d.progress.download_speed).sum();
 
         stats
     }
@@ -331,7 +347,7 @@ impl ZuupEngine {
     /// event_bus.subscribe(subscriber).await?;
     /// ```
     pub fn event_bus(&self) -> Arc<EventBus> {
-        self.engine.event_bus()
+        self.event_bus.clone()
     }
 
     /// Subscribe to download events with a callback
@@ -366,21 +382,22 @@ impl ZuupEngine {
     }
 
     /// Get current configuration
-    pub async fn config(&self) -> Config {
-        self.engine.config().await
+    pub async fn config(&self) -> ZuupConfig {
+        self.config.read().await.clone()
     }
 
     /// Update configuration
     ///
     /// Note: Some configuration changes may require restarting active downloads
     /// to take effect.
-    pub async fn update_config(&self, config: Config) -> Result<()> {
-        self.engine.update_config(config).await
+    pub async fn update_config(&self, config: ZuupConfig) -> Result<()> {
+        *self.config.write().await = config;
+        Ok(())
     }
 
     /// Check if the engine is running
     pub async fn is_running(&self) -> bool {
-        self.engine.is_running().await
+        *self.state.read().await == EngineState::Running
     }
 
     /// Register a protocol handler
@@ -399,7 +416,8 @@ impl ZuupEngine {
         &self,
         handler: Box<dyn crate::protocol::ProtocolHandler>,
     ) -> Result<()> {
-        self.engine.register_protocol_handler(handler).await;
+        let mut registry = self.protocol_registry.write().await;
+        registry.register(handler);
         Ok(())
     }
 
@@ -407,7 +425,8 @@ impl ZuupEngine {
     ///
     /// Returns a list of protocol names that can be handled by registered handlers.
     pub async fn supported_protocols(&self) -> Vec<&'static str> {
-        self.engine.supported_protocols().await
+        let registry = self.protocol_registry.read().await;
+        registry.supported_protocols()
     }
 
     /// Shutdown the download manager
@@ -415,8 +434,16 @@ impl ZuupEngine {
     /// If `force` is true, all downloads will be cancelled immediately.
     /// If `force` is false, active downloads will be paused and can be
     /// resumed when the engine is restarted.
-    pub async fn shutdown(&self, force: bool) -> Result<()> {
-        self.engine.shutdown(force).await
+    pub async fn shutdown(&self, _force: bool) -> Result<()> {
+        *self.state.write().await = EngineState::Stopping;
+        
+        // TODO: Implement proper shutdown logic
+        // - Stop all active downloads
+        // - Save session if needed
+        // - Clean up resources
+        
+        *self.state.write().await = EngineState::Stopped;
+        Ok(())
     }
 }
 
@@ -428,7 +455,7 @@ impl ZuupEngine {
 /// # Examples
 ///
 /// ```rust
-/// let zuup = Zuup::builder()
+/// let zuup = ZuupBuilder::new()
 ///     .download_directory("/home/user/Downloads")
 ///     .max_concurrent_downloads(10)
 ///     .max_download_speed(1024 * 1024) // 1 MB/s
@@ -437,14 +464,14 @@ impl ZuupEngine {
 ///     .await?;
 /// ```
 pub struct ZuupBuilder {
-    config: Config,
+    config: ZuupConfig,
 }
 
 impl ZuupBuilder {
     /// Create a new builder with default configuration
     pub fn new() -> Self {
         Self {
-            config: Config::default(),
+            config: ZuupConfig::default(),
         }
     }
 
@@ -539,8 +566,8 @@ impl ZuupBuilder {
     }
 
     /// Build the Zuup instance with the configured options
-    pub async fn build(self) -> Result<Zuup> {
-        Zuup::new(self.config).await
+    pub async fn build(self) -> Result<ZuupEngine> {
+        ZuupEngine::new(self.config).await
     }
 }
 

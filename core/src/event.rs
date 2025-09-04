@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::{RwLock, broadcast};
 
 use crate::types::{DownloadId, DownloadInfo, DownloadProgress};
+use crate::error::Result;
 
 /// Events that can be emitted by the download system
 #[derive(Debug, Clone, Serialize, Deserialize)]
