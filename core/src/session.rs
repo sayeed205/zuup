@@ -68,16 +68,69 @@ pub struct SessionData {
     pub downloads: HashMap<DownloadId, DownloadInfo>,
 }
 
-pub struct SessionManager {
-    /// Session storage backend
-    storage: Arc<SessionStorage>,
+impl SessionData {
+    /// Create a new session
+    pub fn new() -> Self {
+        Self {
+            metadata: SessionMetadata::new(),
+            downloads: HashMap::new(),
+        }
+    }
+
+    /// Update the saved timestamp
+    pub fn touch(&mut self) {
+        self.metadata.touch();
+    }
+
+    /// Add a download to the session
+    pub fn add_download(&mut self, info: DownloadInfo) {
+        self.downloads.insert(info.id.clone(), info);
+        self.touch();
+    }
+
+    /// Remove a download from the session
+    pub fn remove_download(&mut self, id: &DownloadId) -> Option<DownloadInfo> {
+        let result = self.downloads.remove(id);
+        if result.is_some() {
+            self.touch();
+        }
+        result
+    }
+
+    /// Update download information
+    pub fn update_download(&mut self, info: DownloadInfo) {
+        if self.downloads.contains_key(&info.id) {
+            self.downloads.insert(info.id.clone(), info);
+            self.touch();
+        }
+    }
+
+    /// Get downloads that can be resumed
+    pub fn resumable_downloads(&self) -> Vec<&DownloadInfo> {
+        self.downloads
+            .values()
+            .filter(|info| info.state.can_resume())
+            .collect()
+    }
+
+    /// Get active downloads (should be paused on restore)
+    pub fn active_downloads(&self) -> Vec<&DownloadInfo> {
+        self.downloads
+            .values()
+            .filter(|info| info.state.is_active())
+            .collect()
+    }
+
+    /// Clean up completed and failed downloads
+    pub fn cleanup_terminal_downloads(&mut self) {
+        self.downloads.retain(|_, info| !info.state.is_terminal());
+        self.touch();
+    }
 }
 
-impl SessionManager {
-    /// Create a new session manager with given configuration
-    pub async fn new() -> Result<Self> {
-        let storage = Arc::new(SessionStorage::in_memory()?);
-        Ok(Self { storage })
+impl Default for SessionData {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -343,5 +396,18 @@ impl SessionStorage {
         );
 
         Ok(true)
+    }
+}
+
+pub struct SessionManager {
+    /// Session storage backend
+    storage: Arc<SessionStorage>,
+}
+
+impl SessionManager {
+    /// Create a new session manager with given configuration
+    pub async fn new() -> Result<Self> {
+        let storage = Arc::new(SessionStorage::in_memory()?);
+        Ok(Self { storage })
     }
 }

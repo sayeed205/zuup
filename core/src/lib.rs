@@ -13,3 +13,5 @@ pub mod types;
 
 // Re-export the high-level API
 pub use api::{DownloadResult, Zuup, ZuupBuilder};
+
+pub use bandwidth::{BandwidthLimit, BandwidthManager, BandwidthStats, DownloadBandwidthTracker};

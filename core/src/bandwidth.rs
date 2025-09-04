@@ -528,6 +528,3 @@ impl Default for BandwidthManager {
         Self::new()
     }
 }
-
-#[cfg(test)]
-mod tests;

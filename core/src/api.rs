@@ -1,7 +1,10 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::{config::ZuupConfig, engine::ZuupEngine};
+use crate::config::ZuupConfig;
+use crate::download::DownloadRequest;
+use crate::engine::ZuupEngine;
+use crate::types::DownloadId;
 
 /// Main entry point for the Zuup download Manager library
 ///
@@ -25,10 +28,37 @@ impl Zuup {
     }
 
     /// Create a new Zuup instance
-    pub fn new(engine: Arc<ZuupEngine>) -> Result<Self> {
-        let config = ZuupConfig::default();
+    pub async fn new(config: Option<ZuupConfig>) -> Result<Self> {
+        let config = config.unwrap_or_default();
         let engine = Arc::new(ZuupEngine::new(config).await?);
         Ok(Self { engine })
+    }
+
+    /// Add a simple download from a URL
+    ///
+    /// This is the simplest way to add a download. It uses default options
+    /// and downloads to the configured download directory.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// // todo))
+    /// ```
+    pub async fn download(&self, url: Url) -> Result<DownloadId> {
+        // Get the default download directory from config
+        let config = self.engine.config().await;
+        let request = DownloadRequest::new(url).output_path(config.general.download_dir);
+        let id = self.engine.add_download(request).await?;
+
+        // Auto-start the download for better UX
+        tracing::debug!("API: Attempting to auto-start download {}", id);
+        if let Err(e) = self.engine.start_download(&id).await {
+            tracing::warn!(error = %e, download_id = %id, "Failed to auto-start download");
+        } else {
+            tracing::debug!("API: Successfully auto-started download {}", id);
+        }
+
+        Ok(id)
     }
 }
 
