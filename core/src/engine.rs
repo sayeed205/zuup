@@ -7,6 +7,7 @@ use crate::download::DownloadManager;
 use crate::event::EventBus;
 use crate::protocol::ProtocolRegistry;
 use crate::session::SessionManager;
+use crate::types::DownloadRequest;
 
 pub struct ZuupEngine {
     /// Configuration for the Zuup engine.
@@ -69,5 +70,38 @@ impl ZuupEngine {
         engine.initialize().await?;
 
         Ok(engine)
+    }
+
+    /// Initialize the engine
+    async fn initialize(&self) -> Result<()> {
+        // Register protocol handlers
+        self.register_protocol_handlers().await?;
+
+        // Load session if configured
+        if let Some(_session_file) = &self.config.read().await.general.session_file {
+            if let Err(e) = self.session_manager.load().await {
+                tracing::warn!(error = %e, "Failed to load session");
+            }
+        }
+
+        // Start auto-save if enabled
+        self.session_manager.start_auto_save().await?;
+
+        // Set state to running
+        *self.state.write().await = EngineState::Running;
+
+        tracing::info!("Zuup engine initialized successfully");
+        Ok(())
+    }
+
+    /// Register all protocol handlers
+    async fn register_protocol_handlers(&self) -> Result<()> {
+        let mut registry = self.protocol_registry.write().await;
+
+        // todo)) Protocol handlers should be registered externally via register_protocol_handler()
+        // This allows for modular protocol support through separate crates like zuup-protocols
+
+        tracing::debug!("Protocol registry initialized, handlers can be registered externally");
+        Ok(())
     }
 }

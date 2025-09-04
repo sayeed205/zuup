@@ -1,4 +1,4 @@
-//! Configuration management for Ruso
+//! Configuration management for Zuup
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -144,7 +144,7 @@ pub struct NetworkConfig {
 impl Default for NetworkConfig {
     fn default() -> Self {
         Self {
-            user_agent: format!("Ruso/{}", env!("CARGO_PKG_VERSION")),
+            user_agent: format!("Zuup/{}", env!("CARGO_PKG_VERSION")),
             timeout: Duration::from_secs(30),
             max_connections_per_server: 4,
             max_tries: 3,
