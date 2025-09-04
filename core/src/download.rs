@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::{collections::HashMap, time::Duration};
@@ -759,8 +760,372 @@ impl DownloadTask {
     }
 }
 
-/// Download manager responsible for coordinating downloads.
-pub struct DownloadManager {
-    /// All downloads(active, pending, completed, failed, stopped)
-    downloads: Arc<RwLock<HashMap<DownloadId, Arc<DownloadTask>>>>,
+/// Resource usage information
+#[derive(Debug, Clone)]
+pub struct ResourceUsage {
+    /// Number of active downloads
+    pub active_downloads: u32,
+
+    /// Number of pending downloads
+    pub pending_downloads: u32,
+
+    /// Total memory usage estimate (bytes)
+    pub memory_usage: u64,
+
+    /// Total network connections
+    pub network_connections: u32,
+
+    /// Available slots for new downloads
+    pub available_slots: u32,
 }
+
+/// Queue statistics
+#[derive(Debug, Clone)]
+pub struct QueueStats {
+    /// Total tasks in queue
+    pub total_queued: usize,
+
+    /// Tasks by priority
+    pub by_priority: HashMap<DownloadPriority, usize>,
+
+    /// Average wait time for tasks
+    pub average_wait_time: Option<Duration>,
+
+    /// Longest waiting task
+    pub longest_wait_time: Option<Duration>,
+}
+
+/// Task scheduler for managing download priorities and queuing
+pub struct TaskScheduler {
+    /// Priority queue for pending downloads
+    pending_queue: Arc<Mutex<VecDeque<Arc<DownloadTask>>>>,
+
+    /// Currently running tasks
+    running_tasks: Arc<RwLock<HashMap<DownloadId, Arc<DownloadTask>>>>,
+
+    /// Maximum concurrent downloads
+    max_concurrent: u32,
+
+    /// Resource usage tracking
+    resource_usage: Arc<RwLock<ResourceUsage>>,
+}
+
+impl TaskScheduler {
+    /// Create a new task scheduler
+    pub fn new(max_concurrent: u32) -> Self {
+        Self {
+            pending_queue: Arc::new(Mutex::new(VecDeque::new())),
+            running_tasks: Arc::new(RwLock::new(HashMap::new())),
+            max_concurrent,
+            resource_usage: Arc::new(RwLock::new(ResourceUsage {
+                active_downloads: 0,
+                pending_downloads: 0,
+                memory_usage: 0,
+                network_connections: 0,
+                available_slots: max_concurrent,
+            })),
+        }
+    }
+
+    /// Add a task to the scheduler
+    pub async fn add_task(&self, task: Arc<DownloadTask>) -> Result<()> {
+        tracing::debug!("TaskScheduler: Adding task {} to scheduler", task.id);
+        let mut queue = self.pending_queue.lock().await;
+        tracing::debug!(
+            "TaskScheduler: Acquired queue lock, current queue size: {}",
+            queue.len()
+        );
+
+        // Insert task in priority order (higher priority first)
+        tracing::debug!("TaskScheduler: Getting priority for task {}", task.id);
+        let task_priority = task.priority().await;
+        tracing::debug!(
+            "TaskScheduler: Task {} has priority {:?}",
+            task.id,
+            task_priority
+        );
+        let mut insert_pos = queue.len();
+
+        for (i, existing_task) in queue.iter().enumerate() {
+            tracing::debug!(
+                "TaskScheduler: Checking existing task {} at position {}",
+                existing_task.id,
+                i
+            );
+            let existing_priority = existing_task.priority().await;
+            tracing::debug!(
+                "TaskScheduler: Existing task {} has priority {:?}",
+                existing_task.id,
+                existing_priority
+            );
+            if task_priority > existing_priority {
+                insert_pos = i;
+                break;
+            }
+        }
+
+        tracing::debug!(
+            "TaskScheduler: Inserting task {} at position {}",
+            task.id,
+            insert_pos
+        );
+        queue.insert(insert_pos, task.clone());
+        tracing::debug!(
+            "TaskScheduler: Task {} inserted, queue size now: {}",
+            task.id,
+            queue.len()
+        );
+
+        // Release queue lock before updating resource usage
+        drop(queue);
+
+        // Update resource usage
+        tracing::debug!(
+            "TaskScheduler: Updating resource usage after adding task {}",
+            task.id
+        );
+        self.update_resource_usage().await;
+        tracing::debug!(
+            "TaskScheduler: Successfully added task {} to scheduler",
+            task.id
+        );
+
+        Ok(())
+    }
+
+    /// Try to start the next task if resources are available
+    pub async fn try_start_next(&self) -> Result<Option<Arc<DownloadTask>>> {
+        tracing::debug!("TaskScheduler: try_start_next called");
+        let running_count = self.running_tasks.read().await.len();
+        tracing::debug!(
+            "TaskScheduler: running_count={}, max_concurrent={}",
+            running_count,
+            self.max_concurrent
+        );
+
+        if running_count >= self.max_concurrent as usize {
+            tracing::debug!("TaskScheduler: At max concurrent limit, returning None");
+            return Ok(None);
+        }
+
+        tracing::debug!("TaskScheduler: Acquiring pending queue lock");
+        let mut queue = self.pending_queue.lock().await;
+        tracing::debug!("TaskScheduler: Queue has {} tasks", queue.len());
+
+        // Find the highest priority task that can be started
+        let mut task_index = None;
+        for (i, task) in queue.iter().enumerate() {
+            tracing::debug!("TaskScheduler: Checking task {} at index {}", task.id, i);
+            let state = task.state.read().await;
+            tracing::debug!("TaskScheduler: Task {} state is {:?}", task.id, state);
+            if state.can_start() {
+                tracing::debug!("TaskScheduler: Task {} can start, selecting it", task.id);
+                task_index = Some(i);
+                break;
+            }
+        }
+
+        if let Some(index) = task_index {
+            let task = queue.remove(index).unwrap();
+            tracing::debug!("TaskScheduler: Removed task {} from queue", task.id);
+            drop(queue); // Release queue lock before acquiring running lock
+
+            tracing::debug!("TaskScheduler: Adding task {} to running tasks", task.id);
+            let mut running = self.running_tasks.write().await;
+            running.insert(task.id.clone(), task.clone());
+            drop(running); // Release running lock before updating resource usage
+
+            // Update resource usage
+            tracing::debug!(
+                "TaskScheduler: Updating resource usage for task {}",
+                task.id
+            );
+            self.update_resource_usage().await;
+
+            tracing::debug!("TaskScheduler: Returning task {}", task.id);
+            Ok(Some(task))
+        } else {
+            tracing::debug!("TaskScheduler: No startable task found in queue");
+            Ok(None)
+        }
+    }
+
+    /// Mark a task as completed and remove from running tasks
+    pub async fn complete_task(&self, task_id: &DownloadId) -> Result<()> {
+        let mut running = self.running_tasks.write().await;
+        running.remove(task_id);
+        drop(running); // Release lock before updating resource usage
+
+        // Update resource usage
+        self.update_resource_usage().await;
+
+        Ok(())
+    }
+
+    /// Get running task count
+    pub async fn running_count(&self) -> usize {
+        self.running_tasks.read().await.len()
+    }
+
+    /// Get pending task count
+    pub async fn pending_count(&self) -> usize {
+        self.pending_queue.lock().await.len()
+    }
+
+    /// Update task priority and reorder queue if necessary
+    pub async fn update_task_priority(
+        &self,
+        task_id: &DownloadId,
+        priority: DownloadPriority,
+    ) -> Result<()> {
+        // Check if task is in running tasks
+        if let Some(task) = self.running_tasks.read().await.get(task_id) {
+            task.set_priority(priority).await?;
+            return Ok(());
+        }
+
+        // Check if task is in pending queue
+        let mut queue = self.pending_queue.lock().await;
+        let mut task_index = None;
+
+        for (i, task) in queue.iter().enumerate() {
+            if task.id == *task_id {
+                task_index = Some(i);
+                break;
+            }
+        }
+
+        if let Some(index) = task_index {
+            let task = queue.remove(index).unwrap();
+            task.set_priority(priority).await?;
+
+            // Re-insert in correct priority position
+            let mut insert_pos = queue.len();
+            for (i, existing_task) in queue.iter().enumerate() {
+                let existing_priority = existing_task.priority().await;
+                if priority > existing_priority {
+                    insert_pos = i;
+                    break;
+                }
+            }
+
+            queue.insert(insert_pos, task);
+            return Ok(());
+        }
+
+        // Task not found in scheduler
+        Err(ZuupError::DownloadNotFound(task_id.clone()))
+    }
+
+    /// Get current resource usage
+    pub async fn resource_usage(&self) -> ResourceUsage {
+        self.resource_usage.read().await.clone()
+    }
+
+    /// Get queue statistics
+    pub async fn queue_stats(&self) -> QueueStats {
+        let queue = self.pending_queue.lock().await;
+        let mut by_priority = HashMap::new();
+        let mut wait_times = Vec::new();
+        let now = Utc::now();
+
+        for task in queue.iter() {
+            let priority = task.priority().await;
+            *by_priority.entry(priority).or_insert(0) += 1;
+
+            let wait_time = now.signed_duration_since(task.created_at);
+            if let Ok(duration) = wait_time.to_std() {
+                wait_times.push(duration);
+            }
+        }
+
+        let average_wait_time = if !wait_times.is_empty() {
+            let total: Duration = wait_times.iter().sum();
+            Some(total / wait_times.len() as u32)
+        } else {
+            None
+        };
+
+        let longest_wait_time = wait_times.into_iter().max();
+
+        QueueStats {
+            total_queued: queue.len(),
+            by_priority,
+            average_wait_time,
+            longest_wait_time,
+        }
+    }
+
+    /// Check if scheduler can accept more tasks
+    pub async fn can_accept_more(&self) -> bool {
+        let usage = self.resource_usage.read().await;
+        usage.available_slots > 0 || usage.pending_downloads < 1000 // Reasonable queue limit
+    }
+
+    /// Get tasks waiting longer than specified duration
+    pub async fn get_stale_tasks(&self, max_wait_time: Duration) -> Vec<DownloadId> {
+        let queue = self.pending_queue.lock().await;
+        let now = Utc::now();
+        let mut stale_tasks = Vec::new();
+
+        for task in queue.iter() {
+            let wait_time = now.signed_duration_since(task.created_at);
+            if let Ok(duration) = wait_time.to_std() {
+                if duration > max_wait_time {
+                    stale_tasks.push(task.id.clone());
+                }
+            }
+        }
+
+        stale_tasks
+    }
+
+    /// Update resource usage statistics
+    async fn update_resource_usage(&self) {
+        tracing::debug!("TaskScheduler: update_resource_usage called");
+        tracing::debug!("TaskScheduler: Getting running tasks count");
+        let running_count = self.running_tasks.read().await.len() as u32;
+        tracing::debug!("TaskScheduler: Running count: {}", running_count);
+
+        tracing::debug!("TaskScheduler: Getting pending queue count");
+        let pending_count = self.pending_queue.lock().await.len() as u32;
+        tracing::debug!("TaskScheduler: Pending count: {}", pending_count);
+
+        tracing::debug!("TaskScheduler: Updating resource usage");
+        let mut usage = self.resource_usage.write().await;
+        usage.active_downloads = running_count;
+        usage.pending_downloads = pending_count;
+        usage.available_slots = self.max_concurrent.saturating_sub(running_count);
+
+        // Estimate memory usage (rough calculation)
+        usage.memory_usage = (running_count as u64 * 1024 * 1024) + (pending_count as u64 * 1024); // 1MB per active, 1KB per pending
+
+        // Estimate network connections (assume 4 connections per active download on average)
+        usage.network_connections = running_count * 4;
+        tracing::debug!("TaskScheduler: Resource usage updated successfully");
+    }
+
+    /// Set maximum concurrent downloads
+    pub async fn set_max_concurrent(&mut self, max_concurrent: u32) {
+        self.max_concurrent = max_concurrent;
+        self.update_resource_usage().await;
+    }
+
+    /// Get maximum concurrent downloads
+    pub fn max_concurrent(&self) -> u32 {
+        self.max_concurrent
+    }
+}
+
+/// Download manager responsible for coordinating downloads
+pub struct DownloadManager {
+    /// Protocol registry reference
+    protocol_registry: Arc<RwLock<ProtocolRegistry>>,
+    /// All downloads (active, pending, completed)
+    downloads: Arc<RwLock<HashMap<DownloadId, Arc<DownloadTask>>>>,
+
+    /// Task scheduler
+    scheduler: Arc<TaskScheduler>,
+}
+
+impl DownloadManager {}
