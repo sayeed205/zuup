@@ -675,8 +675,8 @@ impl EventSubscriber for CallbackEventSubscriber {
                 manager.handle_completion(id, result)?;
             }
             Event::DownloadFailed { id, error } => {
-                let ruso_error = ZuupError::Internal(error.clone());
-                let _recovery_action = manager.handle_error(id.clone(), ruso_error);
+                let zuup_error = ZuupError::Internal(error.clone());
+                let _recovery_action = manager.handle_error(id.clone(), zuup_error);
 
                 // TODO: Apply recovery action
 
