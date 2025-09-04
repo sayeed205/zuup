@@ -6,6 +6,7 @@ pub mod download;
 pub mod engine;
 pub mod error;
 pub mod event;
+pub mod media;
 pub mod metalink;
 pub mod protocol;
 pub mod session;
