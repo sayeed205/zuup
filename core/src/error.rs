@@ -5,8 +5,7 @@ use std::time::Duration;
 
 use thiserror::Error;
 
-use crate::download::DownloadState;
-use crate::types::DownloadId;
+use crate::types::{DownloadId, DownloadState};
 
 /// Main error type for Zuup operations
 #[derive(Debug, Error)]
