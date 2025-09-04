@@ -12,13 +12,16 @@ pub struct ZuupEngine {
     /// Configuration for the Zuup engine.
     config: Arc<RwLock<ZuupConfig>>,
 
-    /// Session manager for persistence.
+    /// Session manager for persistence
     session_manager: Arc<SessionManager>,
 
-    /// Download manager for handling downloads.
+    /// Download manager
     download_manager: Arc<DownloadManager>,
 
-    /// Event bus for notifications.
+    /// Protocol registry
+    protocol_registry: Arc<RwLock<ProtocolRegistry>>,
+
+    /// Event bus for notifications
     event_bus: Arc<EventBus>,
 
     /// Engine state
