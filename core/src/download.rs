@@ -11,6 +11,7 @@ use url::Url;
 
 use crate::bandwidth::BandwidthManager;
 use crate::error::ZuupError;
+use crate::metalink::{MetalinkFile, MetalinkUrl};
 use crate::protocol::{Download as ProtoDownload, ProtocolRegistry};
 use crate::types::{DownloadId, DownloadOptions, DownloadSegment, SegmentProgress};
 
@@ -1589,5 +1590,397 @@ impl DownloadManager {
     /// Get bandwidth manager reference
     pub fn bandwidth_manager(&self) -> &Arc<BandwidthManager> {
         &self.bandwidth_manager
+    }
+}
+
+/// Multi-source download coordinator for handling downloads from multiple URLs
+pub struct MultiSourceCoordinator {
+    /// Available sources for the download
+    sources: Vec<DownloadSource>,
+    /// Current active sources
+    active_sources: HashMap<Url, SourceStatus>,
+    /// Source health monitoring
+    health_monitor: SourceHealthMonitor,
+    /// Failover configuration
+    failover_config: FailoverConfig,
+}
+
+/// Information about a download source
+#[derive(Debug, Clone)]
+pub struct DownloadSource {
+    /// Source URL
+    pub url: Url,
+    /// Priority (higher = preferred)
+    pub priority: u32,
+    /// Location hint (country code, etc.)
+    pub location: Option<String>,
+    /// Maximum connections allowed
+    pub max_connections: Option<u32>,
+    /// Source reliability score (0.0 - 1.0)
+    pub reliability_score: f64,
+    /// Last known speed (bytes per second)
+    pub last_speed: Option<u64>,
+    /// Connection latency
+    pub latency: Option<Duration>,
+}
+
+/// Status of a download source
+#[derive(Debug, Clone)]
+pub struct SourceStatus {
+    /// Current state
+    pub state: SourceState,
+    /// Number of active connections
+    pub active_connections: u32,
+    /// Bytes downloaded from this source
+    pub bytes_downloaded: u64,
+    /// Current download speed
+    pub current_speed: u64,
+    /// Error count
+    pub error_count: u32,
+    /// Last error time
+    pub last_error: Option<DateTime<Utc>>,
+    /// Last successful activity
+    pub last_activity: DateTime<Utc>,
+}
+
+/// State of a download source
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SourceState {
+    /// Source is available and ready
+    Available,
+    /// Source is currently being used
+    Active,
+    /// Source is temporarily unavailable
+    Unavailable,
+    /// Source has failed and should not be retried
+    Failed,
+    /// Source is being tested for availability
+    Testing,
+}
+
+/// Source health monitoring
+pub struct SourceHealthMonitor {
+    /// Health check interval
+    check_interval: Duration,
+    /// Timeout for health checks
+    check_timeout: Duration,
+    /// Minimum reliability threshold
+    min_reliability: f64,
+    /// Maximum error rate before marking as failed
+    max_error_rate: f64,
+}
+
+/// Failover configuration
+#[derive(Debug, Clone)]
+pub struct FailoverConfig {
+    /// Maximum time to wait before switching sources
+    max_wait_time: Duration,
+    /// Minimum speed threshold before considering failover
+    min_speed_threshold: u64,
+    /// Enable automatic source switching
+    auto_switch: bool,
+    /// Prefer sources by location
+    prefer_location: Option<String>,
+}
+
+impl MultiSourceCoordinator {
+    /// Create a new multi-source coordinator
+    pub fn new(sources: Vec<DownloadSource>, failover_config: FailoverConfig) -> Self {
+        let active_sources = HashMap::new();
+        let health_monitor = SourceHealthMonitor {
+            check_interval: Duration::from_secs(30),
+            check_timeout: Duration::from_secs(10),
+            min_reliability: 0.7,
+            max_error_rate: 0.3,
+        };
+
+        Self {
+            sources,
+            active_sources,
+            health_monitor,
+            failover_config,
+        }
+    }
+
+    /// Create from Metalink file
+    pub fn from_metalink(metalink_file: &MetalinkFile, failover_config: FailoverConfig) -> Self {
+        let sources = metalink_file
+            .urls
+            .iter()
+            .map(|metalink_url| {
+                DownloadSource {
+                    url: metalink_url.url.clone(),
+                    priority: metalink_url.priority.unwrap_or(0),
+                    location: metalink_url.location.clone(),
+                    max_connections: metalink_url.max_connections,
+                    reliability_score: 1.0, // Start with full reliability
+                    last_speed: None,
+                    latency: None,
+                }
+            })
+            .collect();
+
+        Self::new(sources, failover_config)
+    }
+
+    /// Get the best sources for downloading, sorted by preference
+    pub fn get_best_sources(&self, max_sources: usize) -> Vec<&DownloadSource> {
+        let mut available_sources: Vec<&DownloadSource> = self
+            .sources
+            .iter()
+            .filter(|source| {
+                self.active_sources
+                    .get(&source.url)
+                    .map(|status| status.state != SourceState::Failed)
+                    .unwrap_or(true)
+            })
+            .collect();
+
+        // Sort by priority, reliability, and speed
+        available_sources.sort_by(|a, b| {
+            // First by priority (higher is better)
+            let priority_cmp = b.priority.cmp(&a.priority);
+            if priority_cmp != std::cmp::Ordering::Equal {
+                return priority_cmp;
+            }
+
+            // Then by reliability score (higher is better)
+            let reliability_cmp = b
+                .reliability_score
+                .partial_cmp(&a.reliability_score)
+                .unwrap_or(std::cmp::Ordering::Equal);
+            if reliability_cmp != std::cmp::Ordering::Equal {
+                return reliability_cmp;
+            }
+
+            // Finally by last known speed (higher is better)
+            match (b.last_speed, a.last_speed) {
+                (Some(b_speed), Some(a_speed)) => b_speed.cmp(&a_speed),
+                (Some(_), None) => std::cmp::Ordering::Less,
+                (None, Some(_)) => std::cmp::Ordering::Greater,
+                (None, None) => std::cmp::Ordering::Equal,
+            }
+        });
+
+        // Apply location preference if configured
+        if let Some(preferred_location) = &self.failover_config.prefer_location {
+            available_sources.sort_by(|a, b| {
+                let a_matches = a
+                    .location
+                    .as_ref()
+                    .map(|loc| loc == preferred_location)
+                    .unwrap_or(false);
+                let b_matches = b
+                    .location
+                    .as_ref()
+                    .map(|loc| loc == preferred_location)
+                    .unwrap_or(false);
+
+                match (a_matches, b_matches) {
+                    (true, false) => std::cmp::Ordering::Less,
+                    (false, true) => std::cmp::Ordering::Greater,
+                    _ => std::cmp::Ordering::Equal,
+                }
+            });
+        }
+
+        available_sources.into_iter().take(max_sources).collect()
+    }
+
+    /// Update source status based on download performance
+    pub fn update_source_status(
+        &mut self,
+        url: &Url,
+        bytes_downloaded: u64,
+        speed: u64,
+        error: Option<&ZuupError>,
+    ) {
+        let status = self
+            .active_sources
+            .entry(url.clone())
+            .or_insert_with(|| SourceStatus {
+                state: SourceState::Available,
+                active_connections: 0,
+                bytes_downloaded: 0,
+                current_speed: 0,
+                error_count: 0,
+                last_error: None,
+                last_activity: Utc::now(),
+            });
+
+        status.bytes_downloaded += bytes_downloaded;
+        status.current_speed = speed;
+        status.last_activity = Utc::now();
+
+        if let Some(error) = error {
+            status.error_count += 1;
+            status.last_error = Some(Utc::now());
+
+            // Update source reliability based on error rate
+            if let Some(source) = self.sources.iter_mut().find(|s| s.url == *url) {
+                let error_rate = status.error_count as f64 / (status.error_count + 1) as f64;
+                source.reliability_score = (1.0 - error_rate).max(0.0);
+
+                // Mark as failed if error rate is too high
+                if error_rate > self.health_monitor.max_error_rate {
+                    status.state = SourceState::Failed;
+                }
+            }
+        } else {
+            // Update source speed information on successful activity
+            if let Some(source) = self.sources.iter_mut().find(|s| s.url == *url) {
+                source.last_speed = Some(speed);
+            }
+        }
+    }
+
+    /// Check if failover should be triggered
+    pub fn should_failover(&self, current_sources: &[Url]) -> bool {
+        if !self.failover_config.auto_switch {
+            return false;
+        }
+
+        // Check if any current source is performing poorly
+        for url in current_sources {
+            if let Some(status) = self.active_sources.get(url) {
+                // Failover if speed is below threshold
+                if status.current_speed < self.failover_config.min_speed_threshold {
+                    return true;
+                }
+
+                // Failover if source has been inactive for too long
+                let inactive_duration = Utc::now().signed_duration_since(status.last_activity);
+                if inactive_duration.to_std().unwrap_or(Duration::ZERO)
+                    > self.failover_config.max_wait_time
+                {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+
+    /// Get alternative sources for failover
+    pub fn get_failover_sources(
+        &self,
+        failed_sources: &[Url],
+        max_sources: usize,
+    ) -> Vec<&DownloadSource> {
+        self.sources
+            .iter()
+            .filter(|source| {
+                // Exclude failed sources
+                !failed_sources.contains(&source.url) &&
+                // Only include available sources
+                self.active_sources.get(&source.url)
+                    .map(|status| status.state == SourceState::Available)
+                    .unwrap_or(true)
+            })
+            .take(max_sources)
+            .collect()
+    }
+
+    /// Mark a source as active
+    pub fn mark_source_active(&mut self, url: &Url) {
+        let status = self
+            .active_sources
+            .entry(url.clone())
+            .or_insert_with(|| SourceStatus {
+                state: SourceState::Available,
+                active_connections: 0,
+                bytes_downloaded: 0,
+                current_speed: 0,
+                error_count: 0,
+                last_error: None,
+                last_activity: Utc::now(),
+            });
+
+        status.state = SourceState::Active;
+        status.active_connections += 1;
+    }
+
+    /// Mark a source as inactive
+    pub fn mark_source_inactive(&mut self, url: &Url) {
+        if let Some(status) = self.active_sources.get_mut(url) {
+            status.active_connections = status.active_connections.saturating_sub(1);
+            if status.active_connections == 0 {
+                status.state = SourceState::Available;
+            }
+        }
+    }
+
+    /// Get statistics for all sources
+    pub fn get_source_statistics(&self) -> Vec<SourceStatistics> {
+        self.sources
+            .iter()
+            .map(|source| {
+                let status = self.active_sources.get(&source.url);
+                SourceStatistics {
+                    url: source.url.clone(),
+                    priority: source.priority,
+                    reliability_score: source.reliability_score,
+                    state: status
+                        .map(|s| s.state.clone())
+                        .unwrap_or(SourceState::Available),
+                    bytes_downloaded: status.map(|s| s.bytes_downloaded).unwrap_or(0),
+                    current_speed: status.map(|s| s.current_speed).unwrap_or(0),
+                    error_count: status.map(|s| s.error_count).unwrap_or(0),
+                    last_activity: status.map(|s| s.last_activity),
+                }
+            })
+            .collect()
+    }
+}
+
+/// Statistics for a download source
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SourceStatistics {
+    pub url: Url,
+    pub priority: u32,
+    pub reliability_score: f64,
+    pub state: SourceState,
+    pub bytes_downloaded: u64,
+    pub current_speed: u64,
+    pub error_count: u32,
+    pub last_activity: Option<DateTime<Utc>>,
+}
+
+impl Default for FailoverConfig {
+    fn default() -> Self {
+        Self {
+            max_wait_time: Duration::from_secs(30),
+            min_speed_threshold: 1024, // 1 KB/s
+            auto_switch: true,
+            prefer_location: None,
+        }
+    }
+}
+
+impl DownloadSource {
+    /// Create a new download source
+    pub fn new(url: Url) -> Self {
+        Self {
+            url,
+            priority: 0,
+            location: None,
+            max_connections: None,
+            reliability_score: 1.0,
+            last_speed: None,
+            latency: None,
+        }
+    }
+
+    /// Create from MetalinkUrl
+    pub fn from_metalink_url(metalink_url: &MetalinkUrl) -> Self {
+        Self {
+            url: metalink_url.url.clone(),
+            priority: metalink_url.priority.unwrap_or(0),
+            location: metalink_url.location.clone(),
+            max_connections: metalink_url.max_connections,
+            reliability_score: 1.0,
+            last_speed: None,
+            latency: None,
+        }
     }
 }

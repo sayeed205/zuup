@@ -10,7 +10,7 @@ use crate::types::DownloadId;
 
 /// Main error type for Ruso operations
 #[derive(Debug, Error)]
-pub enum RusoError {
+pub enum ZuupError {
     #[error("Network error: {0}")]
     Network(#[from] NetworkError),
 
@@ -220,33 +220,33 @@ pub enum ProtocolError {
 }
 
 /// Result type alias for Ruso operations
-pub type Result<T> = std::result::Result<T, RusoError>;
+pub type Result<T> = std::result::Result<T, ZuupError>;
 
-impl RusoError {
+impl ZuupError {
     /// Check if the error is recoverable (can be retried)
     pub fn is_recoverable(&self) -> bool {
         match self {
-            RusoError::Network(NetworkError::Timeout) => true,
-            RusoError::Network(NetworkError::ConnectionReset) => true,
-            RusoError::Network(NetworkError::ConnectionRefused) => true,
-            RusoError::Protocol(ProtocolError::Http { status, .. }) => {
+            ZuupError::Network(NetworkError::Timeout) => true,
+            ZuupError::Network(NetworkError::ConnectionReset) => true,
+            ZuupError::Network(NetworkError::ConnectionRefused) => true,
+            ZuupError::Protocol(ProtocolError::Http { status, .. }) => {
                 // 5xx errors are generally recoverable
                 *status >= 500 && *status < 600
             }
-            RusoError::Io(_) => true,
-            RusoError::Timeout => true,
+            ZuupError::Io(_) => true,
+            ZuupError::Timeout => true,
             _ => false,
         }
     }
 
     /// Check if the error is a network-related error
     pub fn is_network_error(&self) -> bool {
-        matches!(self, RusoError::Network(_))
+        matches!(self, ZuupError::Network(_))
     }
 
     /// Check if the error is a protocol-related error
     pub fn is_protocol_error(&self) -> bool {
-        matches!(self, RusoError::Protocol(_))
+        matches!(self, ZuupError::Protocol(_))
     }
 }
 
@@ -380,7 +380,7 @@ impl Default for RecoveryStrategy {
 #[derive(Debug)]
 pub struct EnhancedError {
     /// The underlying error
-    pub error: RusoError,
+    pub error: ZuupError,
     /// Error context with debugging information
     pub context: ErrorContext,
     /// Error severity level
@@ -390,12 +390,12 @@ pub struct EnhancedError {
     /// Suggested recovery strategy
     pub recovery_strategy: RecoveryStrategy,
     /// Chain of related errors
-    pub error_chain: Vec<RusoError>,
+    pub error_chain: Vec<ZuupError>,
 }
 
 impl EnhancedError {
     /// Create a new enhanced error
-    pub fn new(error: RusoError, context: ErrorContext) -> Self {
+    pub fn new(error: ZuupError, context: ErrorContext) -> Self {
         let severity = error.severity();
         let category = error.category();
         let recovery_strategy = error.recovery_strategy();
@@ -411,7 +411,7 @@ impl EnhancedError {
     }
 
     /// Add an error to the chain
-    pub fn with_chain_error(mut self, error: RusoError) -> Self {
+    pub fn with_chain_error(mut self, error: ZuupError) -> Self {
         self.error_chain.push(error);
         self
     }
@@ -480,120 +480,120 @@ impl std::error::Error for EnhancedError {
     }
 }
 
-impl RusoError {
+impl ZuupError {
     /// Get the severity level of this error
     pub fn severity(&self) -> ErrorSeverity {
         match self {
-            RusoError::Network(NetworkError::Timeout) => ErrorSeverity::Medium,
-            RusoError::Network(NetworkError::ConnectionReset) => ErrorSeverity::Medium,
-            RusoError::Network(NetworkError::ConnectionRefused) => ErrorSeverity::Medium,
-            RusoError::Network(NetworkError::DnsResolutionFailed(_)) => ErrorSeverity::High,
-            RusoError::Network(NetworkError::TooManyRedirects) => ErrorSeverity::High,
-            RusoError::Network(_) => ErrorSeverity::Medium,
+            ZuupError::Network(NetworkError::Timeout) => ErrorSeverity::Medium,
+            ZuupError::Network(NetworkError::ConnectionReset) => ErrorSeverity::Medium,
+            ZuupError::Network(NetworkError::ConnectionRefused) => ErrorSeverity::Medium,
+            ZuupError::Network(NetworkError::DnsResolutionFailed(_)) => ErrorSeverity::High,
+            ZuupError::Network(NetworkError::TooManyRedirects) => ErrorSeverity::High,
+            ZuupError::Network(_) => ErrorSeverity::Medium,
 
-            RusoError::Protocol(ProtocolError::Http { status, .. }) => {
+            ZuupError::Protocol(ProtocolError::Http { status, .. }) => {
                 match *status {
                     400..=499 => ErrorSeverity::High,   // Client errors
                     500..=599 => ErrorSeverity::Medium, // Server errors (retryable)
                     _ => ErrorSeverity::Medium,
                 }
             }
-            RusoError::Protocol(ProtocolError::UnsupportedProtocol(_)) => ErrorSeverity::High,
-            RusoError::Protocol(ProtocolError::AuthenticationRequired) => ErrorSeverity::High,
-            RusoError::Protocol(_) => ErrorSeverity::Medium,
+            ZuupError::Protocol(ProtocolError::UnsupportedProtocol(_)) => ErrorSeverity::High,
+            ZuupError::Protocol(ProtocolError::AuthenticationRequired) => ErrorSeverity::High,
+            ZuupError::Protocol(_) => ErrorSeverity::Medium,
 
-            RusoError::Io(_) => ErrorSeverity::Medium,
-            RusoError::Config(_) => ErrorSeverity::High,
-            RusoError::DownloadNotFound(_) => ErrorSeverity::Medium,
-            RusoError::InvalidStateTransition { .. } => ErrorSeverity::Medium,
-            RusoError::ChecksumMismatch => ErrorSeverity::High,
-            RusoError::AuthenticationFailed => ErrorSeverity::High,
-            RusoError::PermissionDenied => ErrorSeverity::High,
-            RusoError::InsufficientDiskSpace => ErrorSeverity::Critical,
-            RusoError::Session(_) => ErrorSeverity::Medium,
-            RusoError::Event(_) => ErrorSeverity::Low,
-            RusoError::Serialization(_) => ErrorSeverity::Medium,
-            RusoError::UrlParse(_) => ErrorSeverity::High,
-            RusoError::TaskJoin(_) => ErrorSeverity::Medium,
-            RusoError::ChannelSend => ErrorSeverity::Medium,
-            RusoError::ChannelReceive => ErrorSeverity::Medium,
-            RusoError::Timeout => ErrorSeverity::Medium,
-            RusoError::Cancelled => ErrorSeverity::Low,
-            RusoError::Internal(_) => ErrorSeverity::Critical,
-            RusoError::InvalidInput(_) => ErrorSeverity::High,
-            RusoError::FileExists(_) => ErrorSeverity::Medium,
-            RusoError::InvalidPath(_) => ErrorSeverity::High,
-            RusoError::TooManyConflicts(_) => ErrorSeverity::High,
-            RusoError::InvalidUrl(_) => ErrorSeverity::High,
-            RusoError::MediaDownload(MediaError::YtDlpNotFound) => ErrorSeverity::Critical,
-            RusoError::MediaDownload(MediaError::YtDlpExecutionFailed(_)) => ErrorSeverity::Medium,
-            RusoError::MediaDownload(MediaError::ExtractionFailed(_)) => ErrorSeverity::Medium,
-            RusoError::MediaDownload(MediaError::UnsupportedUrl(_)) => ErrorSeverity::High,
-            RusoError::MediaDownload(_) => ErrorSeverity::Medium,
+            ZuupError::Io(_) => ErrorSeverity::Medium,
+            ZuupError::Config(_) => ErrorSeverity::High,
+            ZuupError::DownloadNotFound(_) => ErrorSeverity::Medium,
+            ZuupError::InvalidStateTransition { .. } => ErrorSeverity::Medium,
+            ZuupError::ChecksumMismatch => ErrorSeverity::High,
+            ZuupError::AuthenticationFailed => ErrorSeverity::High,
+            ZuupError::PermissionDenied => ErrorSeverity::High,
+            ZuupError::InsufficientDiskSpace => ErrorSeverity::Critical,
+            ZuupError::Session(_) => ErrorSeverity::Medium,
+            ZuupError::Event(_) => ErrorSeverity::Low,
+            ZuupError::Serialization(_) => ErrorSeverity::Medium,
+            ZuupError::UrlParse(_) => ErrorSeverity::High,
+            ZuupError::TaskJoin(_) => ErrorSeverity::Medium,
+            ZuupError::ChannelSend => ErrorSeverity::Medium,
+            ZuupError::ChannelReceive => ErrorSeverity::Medium,
+            ZuupError::Timeout => ErrorSeverity::Medium,
+            ZuupError::Cancelled => ErrorSeverity::Low,
+            ZuupError::Internal(_) => ErrorSeverity::Critical,
+            ZuupError::InvalidInput(_) => ErrorSeverity::High,
+            ZuupError::FileExists(_) => ErrorSeverity::Medium,
+            ZuupError::InvalidPath(_) => ErrorSeverity::High,
+            ZuupError::TooManyConflicts(_) => ErrorSeverity::High,
+            ZuupError::InvalidUrl(_) => ErrorSeverity::High,
+            ZuupError::MediaDownload(MediaError::YtDlpNotFound) => ErrorSeverity::Critical,
+            ZuupError::MediaDownload(MediaError::YtDlpExecutionFailed(_)) => ErrorSeverity::Medium,
+            ZuupError::MediaDownload(MediaError::ExtractionFailed(_)) => ErrorSeverity::Medium,
+            ZuupError::MediaDownload(MediaError::UnsupportedUrl(_)) => ErrorSeverity::High,
+            ZuupError::MediaDownload(_) => ErrorSeverity::Medium,
         }
     }
 
     /// Get the category of this error
     pub fn category(&self) -> ErrorCategory {
         match self {
-            RusoError::Network(_) => ErrorCategory::Network,
-            RusoError::Protocol(_) => ErrorCategory::Protocol,
-            RusoError::Io(_) => ErrorCategory::FileSystem,
-            RusoError::Config(_) => ErrorCategory::Configuration,
-            RusoError::AuthenticationFailed => ErrorCategory::Security,
-            RusoError::PermissionDenied => ErrorCategory::Security,
-            RusoError::InsufficientDiskSpace => ErrorCategory::Resource,
-            RusoError::DownloadNotFound(_) => ErrorCategory::UserInput,
-            RusoError::InvalidStateTransition { .. } => ErrorCategory::System,
-            RusoError::ChecksumMismatch => ErrorCategory::FileSystem,
-            RusoError::Session(_) => ErrorCategory::System,
-            RusoError::Event(_) => ErrorCategory::System,
-            RusoError::Serialization(_) => ErrorCategory::System,
-            RusoError::UrlParse(_) => ErrorCategory::UserInput,
-            RusoError::TaskJoin(_) => ErrorCategory::System,
-            RusoError::ChannelSend => ErrorCategory::System,
-            RusoError::ChannelReceive => ErrorCategory::System,
-            RusoError::Timeout => ErrorCategory::Network,
-            RusoError::Cancelled => ErrorCategory::System,
-            RusoError::Internal(_) => ErrorCategory::System,
-            RusoError::InvalidInput(_) => ErrorCategory::UserInput,
-            RusoError::FileExists(_) => ErrorCategory::FileSystem,
-            RusoError::InvalidPath(_) => ErrorCategory::FileSystem,
-            RusoError::TooManyConflicts(_) => ErrorCategory::FileSystem,
-            RusoError::InvalidUrl(_) => ErrorCategory::UserInput,
-            RusoError::MediaDownload(_) => ErrorCategory::Protocol,
+            ZuupError::Network(_) => ErrorCategory::Network,
+            ZuupError::Protocol(_) => ErrorCategory::Protocol,
+            ZuupError::Io(_) => ErrorCategory::FileSystem,
+            ZuupError::Config(_) => ErrorCategory::Configuration,
+            ZuupError::AuthenticationFailed => ErrorCategory::Security,
+            ZuupError::PermissionDenied => ErrorCategory::Security,
+            ZuupError::InsufficientDiskSpace => ErrorCategory::Resource,
+            ZuupError::DownloadNotFound(_) => ErrorCategory::UserInput,
+            ZuupError::InvalidStateTransition { .. } => ErrorCategory::System,
+            ZuupError::ChecksumMismatch => ErrorCategory::FileSystem,
+            ZuupError::Session(_) => ErrorCategory::System,
+            ZuupError::Event(_) => ErrorCategory::System,
+            ZuupError::Serialization(_) => ErrorCategory::System,
+            ZuupError::UrlParse(_) => ErrorCategory::UserInput,
+            ZuupError::TaskJoin(_) => ErrorCategory::System,
+            ZuupError::ChannelSend => ErrorCategory::System,
+            ZuupError::ChannelReceive => ErrorCategory::System,
+            ZuupError::Timeout => ErrorCategory::Network,
+            ZuupError::Cancelled => ErrorCategory::System,
+            ZuupError::Internal(_) => ErrorCategory::System,
+            ZuupError::InvalidInput(_) => ErrorCategory::UserInput,
+            ZuupError::FileExists(_) => ErrorCategory::FileSystem,
+            ZuupError::InvalidPath(_) => ErrorCategory::FileSystem,
+            ZuupError::TooManyConflicts(_) => ErrorCategory::FileSystem,
+            ZuupError::InvalidUrl(_) => ErrorCategory::UserInput,
+            ZuupError::MediaDownload(_) => ErrorCategory::Protocol,
         }
     }
 
     /// Get the suggested recovery strategy for this error
     pub fn recovery_strategy(&self) -> RecoveryStrategy {
         match self {
-            RusoError::Network(NetworkError::Timeout) => RecoveryStrategy::Retry {
+            ZuupError::Network(NetworkError::Timeout) => RecoveryStrategy::Retry {
                 max_attempts: 3,
                 initial_delay: Duration::from_secs(1),
                 max_delay: Duration::from_secs(30),
                 backoff_multiplier: 2.0,
             },
-            RusoError::Network(NetworkError::ConnectionReset) => RecoveryStrategy::Retry {
+            ZuupError::Network(NetworkError::ConnectionReset) => RecoveryStrategy::Retry {
                 max_attempts: 5,
                 initial_delay: Duration::from_millis(500),
                 max_delay: Duration::from_secs(10),
                 backoff_multiplier: 1.5,
             },
-            RusoError::Network(NetworkError::ConnectionRefused) => RecoveryStrategy::Retry {
+            ZuupError::Network(NetworkError::ConnectionRefused) => RecoveryStrategy::Retry {
                 max_attempts: 3,
                 initial_delay: Duration::from_secs(2),
                 max_delay: Duration::from_secs(60),
                 backoff_multiplier: 2.0,
             },
-            RusoError::Network(NetworkError::DnsResolutionFailed(_)) => RecoveryStrategy::Retry {
+            ZuupError::Network(NetworkError::DnsResolutionFailed(_)) => RecoveryStrategy::Retry {
                 max_attempts: 2,
                 initial_delay: Duration::from_secs(5),
                 max_delay: Duration::from_secs(30),
                 backoff_multiplier: 2.0,
             },
 
-            RusoError::Protocol(ProtocolError::Http { status, .. }) => {
+            ZuupError::Protocol(ProtocolError::Http { status, .. }) => {
                 match *status {
                     429 => RecoveryStrategy::Retry {
                         // Too Many Requests
@@ -616,32 +616,32 @@ impl RusoError {
                 }
             }
 
-            RusoError::Io(_) => RecoveryStrategy::Retry {
+            ZuupError::Io(_) => RecoveryStrategy::Retry {
                 max_attempts: 2,
                 initial_delay: Duration::from_millis(100),
                 max_delay: Duration::from_secs(5),
                 backoff_multiplier: 2.0,
             },
 
-            RusoError::ChecksumMismatch => RecoveryStrategy::Retry {
+            ZuupError::ChecksumMismatch => RecoveryStrategy::Retry {
                 max_attempts: 2,
                 initial_delay: Duration::from_secs(1),
                 max_delay: Duration::from_secs(10),
                 backoff_multiplier: 2.0,
             },
 
-            RusoError::Timeout => RecoveryStrategy::Retry {
+            ZuupError::Timeout => RecoveryStrategy::Retry {
                 max_attempts: 3,
                 initial_delay: Duration::from_secs(1),
                 max_delay: Duration::from_secs(30),
                 backoff_multiplier: 2.0,
             },
 
-            RusoError::InvalidStateTransition { .. } => RecoveryStrategy::Reset,
-            RusoError::Event(_) => RecoveryStrategy::Skip,
-            RusoError::Cancelled => RecoveryStrategy::None,
+            ZuupError::InvalidStateTransition { .. } => RecoveryStrategy::Reset,
+            ZuupError::Event(_) => RecoveryStrategy::Skip,
+            ZuupError::Cancelled => RecoveryStrategy::None,
 
-            RusoError::MediaDownload(MediaError::YtDlpExecutionFailed(_)) => {
+            ZuupError::MediaDownload(MediaError::YtDlpExecutionFailed(_)) => {
                 RecoveryStrategy::Retry {
                     max_attempts: 2,
                     initial_delay: Duration::from_secs(2),
@@ -650,7 +650,7 @@ impl RusoError {
                 }
             }
 
-            RusoError::MediaDownload(MediaError::ExtractionFailed(_)) => RecoveryStrategy::Retry {
+            ZuupError::MediaDownload(MediaError::ExtractionFailed(_)) => RecoveryStrategy::Retry {
                 max_attempts: 2,
                 initial_delay: Duration::from_secs(5),
                 max_delay: Duration::from_secs(60),
@@ -685,7 +685,7 @@ pub trait ErrorExt<T> {
 
 impl<T, E> ErrorExt<T> for std::result::Result<T, E>
 where
-    E: Into<RusoError>,
+    E: Into<ZuupError>,
 {
     fn with_context(self, context: ErrorContext) -> std::result::Result<T, EnhancedError> {
         self.map_err(|e| e.into().with_context(context))
@@ -699,46 +699,46 @@ where
     }
 }
 
-impl Clone for RusoError {
+impl Clone for ZuupError {
     fn clone(&self) -> Self {
         match self {
-            RusoError::Network(e) => RusoError::Network(e.clone()),
-            RusoError::Protocol(e) => RusoError::Protocol(e.clone()),
-            RusoError::Io(e) => RusoError::Io(std::io::Error::new(e.kind(), e.to_string())),
-            RusoError::Config(s) => RusoError::Config(s.clone()),
-            RusoError::DownloadNotFound(id) => RusoError::DownloadNotFound(id.clone()),
-            RusoError::InvalidStateTransition { from, to } => RusoError::InvalidStateTransition {
+            ZuupError::Network(e) => ZuupError::Network(e.clone()),
+            ZuupError::Protocol(e) => ZuupError::Protocol(e.clone()),
+            ZuupError::Io(e) => ZuupError::Io(std::io::Error::new(e.kind(), e.to_string())),
+            ZuupError::Config(s) => ZuupError::Config(s.clone()),
+            ZuupError::DownloadNotFound(id) => ZuupError::DownloadNotFound(id.clone()),
+            ZuupError::InvalidStateTransition { from, to } => ZuupError::InvalidStateTransition {
                 from: from.clone(),
                 to: to.clone(),
             },
-            RusoError::ChecksumMismatch => RusoError::ChecksumMismatch,
-            RusoError::AuthenticationFailed => RusoError::AuthenticationFailed,
-            RusoError::PermissionDenied => RusoError::PermissionDenied,
-            RusoError::InsufficientDiskSpace => RusoError::InsufficientDiskSpace,
-            RusoError::Session(s) => RusoError::Session(s.clone()),
-            RusoError::Event(s) => RusoError::Event(s.clone()),
-            RusoError::Serialization(_) => {
-                RusoError::Internal("Serialization error (cloned)".to_string())
+            ZuupError::ChecksumMismatch => ZuupError::ChecksumMismatch,
+            ZuupError::AuthenticationFailed => ZuupError::AuthenticationFailed,
+            ZuupError::PermissionDenied => ZuupError::PermissionDenied,
+            ZuupError::InsufficientDiskSpace => ZuupError::InsufficientDiskSpace,
+            ZuupError::Session(s) => ZuupError::Session(s.clone()),
+            ZuupError::Event(s) => ZuupError::Event(s.clone()),
+            ZuupError::Serialization(_) => {
+                ZuupError::Internal("Serialization error (cloned)".to_string())
             }
-            RusoError::UrlParse(e) => RusoError::UrlParse(e.clone()),
-            RusoError::TaskJoin(_) => RusoError::Internal("Task join error (cloned)".to_string()),
-            RusoError::ChannelSend => RusoError::ChannelSend,
-            RusoError::ChannelReceive => RusoError::ChannelReceive,
-            RusoError::Timeout => RusoError::Timeout,
-            RusoError::Cancelled => RusoError::Cancelled,
-            RusoError::Internal(s) => RusoError::Internal(s.clone()),
-            RusoError::InvalidInput(s) => RusoError::InvalidInput(s.clone()),
-            RusoError::FileExists(p) => RusoError::FileExists(p.clone()),
-            RusoError::InvalidPath(p) => RusoError::InvalidPath(p.clone()),
-            RusoError::TooManyConflicts(p) => RusoError::TooManyConflicts(p.clone()),
-            RusoError::InvalidUrl(s) => RusoError::InvalidUrl(s.clone()),
-            RusoError::MediaDownload(e) => RusoError::MediaDownload(e.clone()),
+            ZuupError::UrlParse(e) => ZuupError::UrlParse(e.clone()),
+            ZuupError::TaskJoin(_) => ZuupError::Internal("Task join error (cloned)".to_string()),
+            ZuupError::ChannelSend => ZuupError::ChannelSend,
+            ZuupError::ChannelReceive => ZuupError::ChannelReceive,
+            ZuupError::Timeout => ZuupError::Timeout,
+            ZuupError::Cancelled => ZuupError::Cancelled,
+            ZuupError::Internal(s) => ZuupError::Internal(s.clone()),
+            ZuupError::InvalidInput(s) => ZuupError::InvalidInput(s.clone()),
+            ZuupError::FileExists(p) => ZuupError::FileExists(p.clone()),
+            ZuupError::InvalidPath(p) => ZuupError::InvalidPath(p.clone()),
+            ZuupError::TooManyConflicts(p) => ZuupError::TooManyConflicts(p.clone()),
+            ZuupError::InvalidUrl(s) => ZuupError::InvalidUrl(s.clone()),
+            ZuupError::MediaDownload(e) => ZuupError::MediaDownload(e.clone()),
         }
     }
 }
 
-impl From<config::ConfigError> for RusoError {
+impl From<config::ConfigError> for ZuupError {
     fn from(err: config::ConfigError) -> Self {
-        RusoError::Config(err.to_string())
+        ZuupError::Config(err.to_string())
     }
 }

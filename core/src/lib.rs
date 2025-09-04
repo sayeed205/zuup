@@ -1,10 +1,12 @@
 pub mod api;
 pub mod bandwidth;
+pub mod checksum;
 pub mod config;
 pub mod download;
 pub mod engine;
 pub mod error;
 pub mod event;
+pub mod metalink;
 pub mod protocol;
 pub mod session;
 pub mod types;
