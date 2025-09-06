@@ -369,12 +369,6 @@ pub enum RecoveryStrategy {
     Degrade,
 }
 
-impl Default for RecoveryStrategy {
-    fn default() -> Self {
-        RecoveryStrategy::None
-    }
-}
-
 /// Enhanced error with context and recovery information
 #[derive(Debug)]
 pub struct EnhancedError {
@@ -674,10 +668,10 @@ impl ZuupError {
 /// Trait for converting errors to enhanced errors with context
 pub trait ErrorExt<T> {
     /// Add context to an error result
-    fn with_context(self, context: ErrorContext) -> std::result::Result<T, EnhancedError>;
+    fn with_context(self, context: ErrorContext) -> std::result::Result<T, Box<EnhancedError>>;
 
     /// Add context using a closure
-    fn with_context_fn<F>(self, f: F) -> std::result::Result<T, EnhancedError>
+    fn with_context_fn<F>(self, f: F) -> std::result::Result<T, Box<EnhancedError>>
     where
         F: FnOnce() -> ErrorContext;
 }
@@ -686,15 +680,15 @@ impl<T, E> ErrorExt<T> for std::result::Result<T, E>
 where
     E: Into<ZuupError>,
 {
-    fn with_context(self, context: ErrorContext) -> std::result::Result<T, EnhancedError> {
-        self.map_err(|e| e.into().with_context(context))
+    fn with_context(self, context: ErrorContext) -> std::result::Result<T, Box<EnhancedError>> {
+        self.map_err(|e| Box::new(e.into().with_context(context)))
     }
 
-    fn with_context_fn<F>(self, f: F) -> std::result::Result<T, EnhancedError>
+    fn with_context_fn<F>(self, f: F) -> std::result::Result<T, Box<EnhancedError>>
     where
         F: FnOnce() -> ErrorContext,
     {
-        self.map_err(|e| e.into().with_context(f()))
+        self.map_err(|e| Box::new(e.into().with_context(f())))
     }
 }
 
@@ -719,7 +713,7 @@ impl Clone for ZuupError {
             ZuupError::Serialization(_) => {
                 ZuupError::Internal("Serialization error (cloned)".to_string())
             }
-            ZuupError::UrlParse(e) => ZuupError::UrlParse(e.clone()),
+            ZuupError::UrlParse(e) => ZuupError::UrlParse(*e),
             ZuupError::TaskJoin(_) => ZuupError::Internal("Task join error (cloned)".to_string()),
             ZuupError::ChannelSend => ZuupError::ChannelSend,
             ZuupError::ChannelReceive => ZuupError::ChannelReceive,
