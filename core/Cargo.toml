@@ -31,5 +31,10 @@ bytes = "1"
 md5 = "0.8"
 hex = "0.4"
 which = "7"
+percent-encoding = "2"
+rand = "0.9"
 
 quick-xml = { version = "0.38", features = ['serialize'] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
