@@ -2,12 +2,13 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
+use async_trait::async_trait;
 use tokio::sync::RwLock;
 use url::Url;
 
 use crate::config::ZuupConfig;
 use crate::download::DownloadManager;
-use crate::error::{ZuupError, Result};
+use crate::error::{Result, ZuupError};
 use crate::event::{Event, EventBus, EventSubscriber};
 use crate::protocol::ProtocolRegistry;
 use crate::session::SessionManager;
@@ -47,23 +48,6 @@ pub enum EngineState {
 
     /// Engine has stopped
     Stopped,
-}
-
-/// Engine statistics
-#[derive(Debug, Clone, Default)]
-pub struct EngineStats {
-    /// Total number of downloads
-    pub total_downloads: usize,
-    /// Number of active downloads
-    pub active_downloads: usize,
-    /// Number of completed downloads
-    pub completed_downloads: usize,
-    /// Number of failed downloads
-    pub failed_downloads: usize,
-    /// Total bytes downloaded
-    pub total_downloaded: u64,
-    /// Current download speed (bytes/sec)
-    pub current_speed: u64,
 }
 
 impl ZuupEngine {
@@ -132,7 +116,7 @@ impl ZuupEngine {
         url: &str,
         _options: crate::media::MediaDownloadOptions,
     ) -> Result<DownloadId> {
-        // TODO: Implement media download integration
+        // TODO)) Implement media download integration
         // For now, create a regular download request
         let parsed_url =
             url::Url::parse(url).map_err(|e| ZuupError::Config(format!("Invalid URL: {}", e)))?;
@@ -143,7 +127,7 @@ impl ZuupEngine {
 
     /// Get available media formats for a URL
     pub async fn get_media_formats(&self, url: &str) -> Result<Vec<crate::media::MediaFormat>> {
-        // TODO: Implement yt-dlp format extraction
+        // TODO)) Implement yt-dlp format extraction
         // For now, return empty list
         let _ = url;
         Ok(Vec::new())
@@ -270,7 +254,7 @@ impl ZuupEngine {
             });
         }
 
-        // TODO: Implement actual resume logic
+        // TODO)) Implement actual resume logic
         // This would involve starting the download task and updating state
 
         // Update session
@@ -319,19 +303,19 @@ impl ZuupEngine {
             .list_downloads()
             .await
             .unwrap_or_default();
+
         let session_stats = self.session_manager.stats().await.unwrap_or_default();
 
-        let mut stats = EngineStats::default();
-        stats.total_downloads = downloads.len();
-        stats.active_downloads = downloads.iter().filter(|d| d.state.is_active()).count();
-        stats.completed_downloads = session_stats.completed;
-        stats.failed_downloads = session_stats.failed;
-        stats.total_downloaded = session_stats.downloaded_size;
-
-        // Calculate current download speed
-        stats.current_speed = downloads.iter().map(|d| d.progress.download_speed).sum();
-
-        stats
+        EngineStats {
+            total_downloads: downloads.len(),
+            active_downloads: downloads.iter().filter(|d| d.state.is_active()).count(),
+            completed_downloads: session_stats.completed,
+            failed_downloads: session_stats.failed,
+            total_downloaded: session_stats.downloaded_size,
+            download_speed: downloads.iter().map(|d| d.progress.download_speed).sum(),
+            upload_speed: downloads.iter().map(|d| d.progress.upload_speed).sum(),
+            ..Default::default()
+        }
     }
 
     /// Get the event bus for subscribing to download events
@@ -434,203 +418,68 @@ impl ZuupEngine {
     /// If `force` is true, all downloads will be cancelled immediately.
     /// If `force` is false, active downloads will be paused and can be
     /// resumed when the engine is restarted.
-    pub async fn shutdown(&self, _force: bool) -> Result<()> {
+    pub async fn shutdown(&self, force: bool) -> Result<()> {
         *self.state.write().await = EngineState::Stopping;
-        
-        // TODO: Implement proper shutdown logic
-        // - Stop all active downloads
-        // - Save session if needed
-        // - Clean up resources
-        
+
+        // Publish shutdown event
+        self.event_bus
+            .publish(crate::event::Event::SystemShutdown)
+            .await?;
+
+        // Stop all active downloads if not forced
+        if !force {
+            let downloads = self.list_downloads().await?;
+            for download in downloads {
+                if download.state.is_active() {
+                    let _ = self.pause_download(download.id).await;
+                }
+            }
+        }
+
+        // Save session if configured
+        if self.config.read().await.general.save_session_on_exit
+            && let Err(e) = self.session_manager.save().await
+        {
+            tracing::error!(error = %e, "Failed to save session on shutdown");
+        }
+
+        // Set state to stopped
         *self.state.write().await = EngineState::Stopped;
+
+        tracing::info!("Zuup engine shutdown complete");
         Ok(())
     }
-}
 
-/// Builder for configuring and creating a Zuup instance
-///
-/// This provides a fluent interface for setting up the download manager
-/// with custom configuration options.
-///
-/// # Examples
-///
-/// ```rust
-/// let zuup = ZuupBuilder::new()
-///     .download_directory("/home/user/Downloads")
-///     .max_concurrent_downloads(10)
-///     .max_download_speed(1024 * 1024) // 1 MB/s
-///     .user_agent("MyApp/1.0")
-///     .build()
-///     .await?;
-/// ```
-pub struct ZuupBuilder {
-    config: ZuupConfig,
-}
-
-impl ZuupBuilder {
-    /// Create a new builder with default configuration
-    pub fn new() -> Self {
-        Self {
-            config: ZuupConfig::default(),
-        }
-    }
-
-    /// Set the download directory
-    pub fn download_directory<P: Into<PathBuf>>(mut self, path: P) -> Self {
-        self.config.general.download_dir = path.into();
-        self
-    }
-
-    /// Set the maximum number of concurrent downloads
-    pub fn max_concurrent_downloads(mut self, max: u32) -> Self {
-        self.config.general.max_concurrent_downloads = max;
-        self
-    }
-
-    /// Set the maximum overall download speed in bytes per second
-    pub fn max_download_speed(mut self, speed: u64) -> Self {
-        self.config.general.max_overall_download_speed = Some(speed);
-        self
-    }
-
-    /// Set the maximum overall upload speed in bytes per second (for BitTorrent)
-    pub fn max_upload_speed(mut self, speed: u64) -> Self {
-        self.config.general.max_overall_upload_speed = Some(speed);
-        self
-    }
-
-    /// Set the user agent string for HTTP requests
-    pub fn user_agent<S: Into<String>>(mut self, user_agent: S) -> Self {
-        self.config.network.user_agent = user_agent.into();
-        self
-    }
-
-    /// Set the request timeout duration
-    pub fn timeout(mut self, timeout: Duration) -> Self {
-        self.config.network.timeout = timeout;
-        self
-    }
-
-    /// Set the maximum number of connections per server
-    pub fn max_connections_per_server(mut self, max: u32) -> Self {
-        self.config.network.max_connections_per_server = max;
-        self
-    }
-
-    /// Set the maximum number of retry attempts
-    pub fn max_retries(mut self, retries: u32) -> Self {
-        self.config.network.max_tries = retries;
-        self
-    }
-
-    /// Enable or disable session persistence
-    pub fn session_file<P: Into<PathBuf>>(mut self, path: Option<P>) -> Self {
-        self.config.general.session_file = path.map(|p| p.into());
-        self
-    }
-
-    /// Set the auto-save interval for session data
-    pub fn auto_save_interval(mut self, interval: Duration) -> Self {
-        self.config.general.auto_save_interval = interval;
-        self
-    }
-
-    /// Enable or disable certificate verification for HTTPS
-    pub fn verify_certificates(mut self, verify: bool) -> Self {
-        self.config.network.tls.verify_certificates = verify;
-        self
-    }
-
-    /// Add a custom CA certificate file
-    pub fn add_ca_certificate<P: Into<PathBuf>>(mut self, path: P) -> Self {
-        self.config.network.tls.ca_certificates.push(path.into());
-        self
-    }
-
-    /// Set a proxy for all connections
-    pub fn proxy(mut self, proxy_url: Url) -> Self {
-        self.config.network.proxy = Some(crate::types::ProxyConfig {
-            url: proxy_url,
-            auth: None,
-        });
-        self
-    }
-
-    /// Set a proxy with authentication
-    pub fn proxy_with_auth(mut self, proxy_url: Url, username: String, password: String) -> Self {
-        self.config.network.proxy = Some(crate::types::ProxyConfig {
-            url: proxy_url,
-            auth: Some(crate::types::ProxyAuth { username, password }),
-        });
-        self
-    }
-
-    /// Build the Zuup instance with the configured options
-    pub async fn build(self) -> Result<ZuupEngine> {
-        ZuupEngine::new(self.config).await
+    /// Get current engine state
+    pub async fn state(&self) -> EngineState {
+        self.state.read().await.clone()
     }
 }
 
-impl Default for ZuupBuilder {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+/// Engine statistics
+#[derive(Debug, Clone, Default)]
+pub struct EngineStats {
+    /// Total number of downloads
+    pub total_downloads: usize,
 
-/// Result of a completed download operation
-#[derive(Debug, Clone)]
-pub struct DownloadResult {
-    /// Download ID
-    pub id: DownloadId,
+    /// Number of active downloads
+    pub active_downloads: usize,
 
-    /// Whether the download was successful
-    pub success: bool,
+    /// Number of completed downloads
+    pub completed_downloads: usize,
 
-    /// Path to the downloaded file (if successful)
-    pub file_path: Option<PathBuf>,
+    /// Number of failed downloads
+    pub failed_downloads: usize,
 
     /// Total bytes downloaded
-    pub bytes_downloaded: u64,
+    pub total_downloaded: u64,
 
-    /// Total time taken for the download
-    pub duration: Duration,
+    /// Current download speed (bytes/sec)
+    pub download_speed: u64,
 
-    /// Average download speed in bytes per second
-    pub average_speed: u64,
+    /// Current upload speed (bytes/sec)
+    pub upload_speed: Option<u64>,
 
-    /// Error message (if failed)
-    pub error: Option<String>,
-
-    /// Whether checksum verification passed (if applicable)
-    pub checksum_verified: Option<bool>,
-}
-
-/// Event subscriber that wraps a callback function
-struct CallbackEventSubscriber<F, Fut>
-where
-    F: Fn(Event) -> Fut + Send + Sync + 'static,
-    Fut: std::future::Future<Output = Result<()>> + Send + 'static,
-{
-    callback: F,
-}
-
-impl<F, Fut> CallbackEventSubscriber<F, Fut>
-where
-    F: Fn(Event) -> Fut + Send + Sync + 'static,
-    Fut: std::future::Future<Output = Result<()>> + Send + 'static,
-{
-    fn new(callback: F) -> Self {
-        Self { callback }
-    }
-}
-
-#[async_trait::async_trait]
-impl<F, Fut> EventSubscriber for CallbackEventSubscriber<F, Fut>
-where
-    F: Fn(Event) -> Fut + Send + Sync + 'static,
-    Fut: std::future::Future<Output = Result<()>> + Send + 'static,
-{
-    async fn handle_event(&self, event: Event) -> Result<()> {
-        (self.callback)(event).await
-    }
+    /// Engine uptime
+    pub uptime: Duration,
 }
