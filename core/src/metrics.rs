@@ -1,4 +1,4 @@
-//! Metrics and monitoring system for Ruso download manager
+//! Metrics and monitoring system for Zuup download manager
 //!
 //! This module provides comprehensive metrics collection, performance monitoring,
 //! and health check capabilities for the download manager.
@@ -336,29 +336,29 @@ impl MetricsCollector {
         let _download_stats = self.download_stats.read().await;
 
         // Update download metrics
-        gauge!("ruso_downloads_active").set(system_metrics.active_downloads as f64);
-        counter!("ruso_downloads_completed").absolute(system_metrics.completed_downloads);
-        counter!("ruso_downloads_failed").absolute(system_metrics.failed_downloads);
-        counter!("ruso_bytes_downloaded_total").absolute(system_metrics.total_bytes_downloaded);
-        gauge!("ruso_download_speed_bps").set(system_metrics.aggregate_download_speed as f64);
+        gauge!("zuup_downloads_active").set(system_metrics.active_downloads as f64);
+        counter!("zuup_downloads_completed").absolute(system_metrics.completed_downloads);
+        counter!("zuup_downloads_failed").absolute(system_metrics.failed_downloads);
+        counter!("zuup_bytes_downloaded_total").absolute(system_metrics.total_bytes_downloaded);
+        gauge!("zuup_download_speed_bps").set(system_metrics.aggregate_download_speed as f64);
 
         // Update connection metrics
-        gauge!("ruso_connections_active").set(system_metrics.total_active_connections as f64);
-        counter!("ruso_connections_successful")
+        gauge!("zuup_connections_active").set(system_metrics.total_active_connections as f64);
+        counter!("zuup_connections_successful")
             .absolute(system_metrics.network_stats.successful_connections);
-        counter!("ruso_connections_failed")
+        counter!("zuup_connections_failed")
             .absolute(system_metrics.network_stats.failed_connections);
 
         // Update system metrics
-        gauge!("ruso_memory_usage_bytes").set(system_metrics.memory_usage as f64);
-        gauge!("ruso_cpu_usage_percent").set(system_metrics.cpu_usage);
-        gauge!("ruso_disk_total_bytes").set(system_metrics.disk_usage.total as f64);
-        gauge!("ruso_disk_available_bytes").set(system_metrics.disk_usage.available as f64);
-        gauge!("ruso_disk_used_bytes").set(system_metrics.disk_usage.used as f64);
+        gauge!("zuup_memory_usage_bytes").set(system_metrics.memory_usage as f64);
+        gauge!("zuup_cpu_usage_percent").set(system_metrics.cpu_usage);
+        gauge!("zuup_disk_total_bytes").set(system_metrics.disk_usage.total as f64);
+        gauge!("zuup_disk_available_bytes").set(system_metrics.disk_usage.available as f64);
+        gauge!("zuup_disk_used_bytes").set(system_metrics.disk_usage.used as f64);
 
         // Update network metrics
-        counter!("ruso_network_bytes_sent").absolute(system_metrics.network_stats.bytes_sent);
-        counter!("ruso_network_bytes_received")
+        counter!("zuup_network_bytes_sent").absolute(system_metrics.network_stats.bytes_sent);
+        counter!("zuup_network_bytes_received")
             .absolute(system_metrics.network_stats.bytes_received);
 
         Ok(())
@@ -381,7 +381,7 @@ impl MetricsCollector {
         self.download_stats.write().await.insert(id, stats);
 
         if self.config.enabled {
-            counter!("ruso_downloads_total").increment(1);
+            counter!("zuup_downloads_total").increment(1);
             debug!("Recorded download start");
         }
     }
@@ -433,7 +433,7 @@ impl MetricsCollector {
         }
 
         self.total_connections.fetch_add(1, Ordering::Relaxed);
-        histogram!("ruso_connection_duration_seconds").record(duration.as_secs_f64());
+        histogram!("zuup_connection_duration_seconds").record(duration.as_secs_f64());
 
         debug!("Recorded successful connection: {:?}", duration);
     }
