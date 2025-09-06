@@ -843,6 +843,7 @@ impl TaskScheduler {
 pub struct DownloadManager {
     /// Protocol registry reference
     protocol_registry: Arc<RwLock<ProtocolRegistry>>,
+
     /// All downloads (active, pending, completed)
     downloads: Arc<RwLock<HashMap<DownloadId, Arc<DownloadTask>>>>,
 
@@ -1330,16 +1331,22 @@ pub struct MultiSourceCoordinator {
 pub struct DownloadSource {
     /// Source URL
     pub url: Url,
+
     /// Priority (higher = preferred)
     pub priority: u32,
+
     /// Location hint (country code, etc.)
     pub location: Option<String>,
+
     /// Maximum connections allowed
     pub max_connections: Option<u32>,
+
     /// Source reliability score (0.0 - 1.0)
     pub reliability_score: f64,
+
     /// Last known speed (bytes per second)
     pub last_speed: Option<u64>,
+
     /// Connection latency
     pub latency: Option<Duration>,
 }
@@ -1349,16 +1356,22 @@ pub struct DownloadSource {
 pub struct SourceStatus {
     /// Current state
     pub state: SourceState,
+
     /// Number of active connections
     pub active_connections: u32,
+
     /// Bytes downloaded from this source
     pub bytes_downloaded: u64,
+
     /// Current download speed
     pub current_speed: u64,
+
     /// Error count
     pub error_count: u32,
+
     /// Last error time
     pub last_error: Option<DateTime<Utc>>,
+
     /// Last successful activity
     pub last_activity: DateTime<Utc>,
 }
@@ -1368,12 +1381,16 @@ pub struct SourceStatus {
 pub enum SourceState {
     /// Source is available and ready
     Available,
+
     /// Source is currently being used
     Active,
+
     /// Source is temporarily unavailable
     Unavailable,
+
     /// Source has failed and should not be retried
     Failed,
+
     /// Source is being tested for availability
     Testing,
 }
@@ -1382,10 +1399,13 @@ pub enum SourceState {
 pub struct SourceHealthMonitor {
     /// Health check interval
     check_interval: Duration,
+
     /// Timeout for health checks
     check_timeout: Duration,
+
     /// Minimum reliability threshold
     min_reliability: f64,
+
     /// Maximum error rate before marking as failed
     max_error_rate: f64,
 }
@@ -1395,12 +1415,26 @@ pub struct SourceHealthMonitor {
 pub struct FailoverConfig {
     /// Maximum time to wait before switching sources
     max_wait_time: Duration,
+
     /// Minimum speed threshold before considering failover
     min_speed_threshold: u64,
+
     /// Enable automatic source switching
     auto_switch: bool,
+
     /// Prefer sources by location
     prefer_location: Option<String>,
+}
+
+impl Default for FailoverConfig {
+    fn default() -> Self {
+        Self {
+            max_wait_time: Duration::from_secs(30),
+            min_speed_threshold: 1024, // 1 KB/s
+            auto_switch: true,
+            prefer_location: None,
+        }
+    }
 }
 
 impl MultiSourceCoordinator {
@@ -1664,17 +1698,6 @@ pub struct SourceStatistics {
     pub current_speed: u64,
     pub error_count: u32,
     pub last_activity: Option<DateTime<Utc>>,
-}
-
-impl Default for FailoverConfig {
-    fn default() -> Self {
-        Self {
-            max_wait_time: Duration::from_secs(30),
-            min_speed_threshold: 1024, // 1 KB/s
-            auto_switch: true,
-            prefer_location: None,
-        }
-    }
 }
 
 impl DownloadSource {
