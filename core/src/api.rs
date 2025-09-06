@@ -279,7 +279,18 @@ impl Zuup {
     /// # Examples
     ///
     /// ```rust
-    /// // todo)) add example
+    /// zuup.on_event(|event| async move {
+    ///     match event {
+    ///         Event::DownloadCompleted { id, .. } => {
+    ///             println!("Download {} completed!", id);
+    ///         }
+    ///         Event::DownloadFailed { id, error } => {
+    ///             println!("Download {} failed: {}", id, error);
+    ///         }
+    ///         _ => {}
+    ///     }
+    ///     Ok(())
+    /// }).await?;
     /// ```
     pub async fn on_event<F, Fut>(&self, callback: F) -> Result<()>
     where

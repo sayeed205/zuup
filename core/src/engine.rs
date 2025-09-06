@@ -1,15 +1,12 @@
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use async_trait::async_trait;
 use tokio::sync::RwLock;
-use url::Url;
 
 use crate::config::ZuupConfig;
 use crate::download::DownloadManager;
 use crate::error::{Result, ZuupError};
-use crate::event::{Event, EventBus, EventSubscriber};
+use crate::event::EventBus;
 use crate::protocol::ProtocolRegistry;
 use crate::session::SessionManager;
 use crate::types::{DownloadId, DownloadInfo, DownloadRequest, DownloadState};
@@ -83,10 +80,10 @@ impl ZuupEngine {
         self.register_protocol_handlers().await?;
 
         // Load session if configured
-        if let Some(_session_file) = &self.config.read().await.general.session_file {
-            if let Err(e) = self.session_manager.load().await {
-                tracing::warn!(error = %e, "Failed to load session");
-            }
+        if self.config.read().await.general.session_file.is_some()
+            && let Err(e) = self.session_manager.load().await
+        {
+            tracing::warn!(error = %e, "Failed to load session");
         }
 
         // Start auto-save if enabled
@@ -216,7 +213,7 @@ impl ZuupEngine {
         if !info.state.can_pause() {
             return Err(ZuupError::InvalidStateTransition {
                 from: info.state.clone(),
-                to: crate::types::DownloadState::Paused,
+                to: DownloadState::Paused,
             });
         }
 
@@ -225,7 +222,7 @@ impl ZuupEngine {
 
         // Update session
         let mut updated_info = info;
-        updated_info.state = crate::types::DownloadState::Paused;
+        updated_info.state = DownloadState::Paused;
         self.session_manager.update_download(updated_info).await?;
 
         // Publish event
@@ -318,53 +315,6 @@ impl ZuupEngine {
         }
     }
 
-    /// Get the event bus for subscribing to download events
-    ///
-    /// This allows you to receive real-time notifications about download
-    /// progress, completion, failures, etc.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// let event_bus = zuup.event_bus();
-    /// let subscriber = MyEventSubscriber::new();
-    /// event_bus.subscribe(subscriber).await?;
-    /// ```
-    pub fn event_bus(&self) -> Arc<EventBus> {
-        self.event_bus.clone()
-    }
-
-    /// Subscribe to download events with a callback
-    ///
-    /// This is a convenience method that creates an event subscriber
-    /// from a callback function.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// zuup.on_event(|event| async move {
-    ///     match event {
-    ///         Event::DownloadCompleted { id, .. } => {
-    ///             println!("Download {} completed!", id);
-    ///         }
-    ///         Event::DownloadFailed { id, error } => {
-    ///             println!("Download {} failed: {}", id, error);
-    ///         }
-    ///         _ => {}
-    ///     }
-    ///     Ok(())
-    /// }).await?;
-    /// ```
-    pub async fn on_event<F, Fut>(&self, callback: F) -> Result<()>
-    where
-        F: Fn(Event) -> Fut + Send + Sync + 'static,
-        Fut: std::future::Future<Output = Result<()>> + Send + 'static,
-    {
-        let subscriber = CallbackEventSubscriber::new(callback);
-        self.event_bus().subscribe(Arc::new(subscriber)).await;
-        Ok(())
-    }
-
     /// Get current configuration
     pub async fn config(&self) -> ZuupConfig {
         self.config.read().await.clone()
@@ -379,9 +329,9 @@ impl ZuupEngine {
         Ok(())
     }
 
-    /// Check if the engine is running
-    pub async fn is_running(&self) -> bool {
-        *self.state.read().await == EngineState::Running
+    /// Get the event bus for subscribing to download events
+    pub fn event_bus(&self) -> Arc<EventBus> {
+        self.event_bus.clone()
     }
 
     /// Register a protocol handler
@@ -448,6 +398,11 @@ impl ZuupEngine {
 
         tracing::info!("Zuup engine shutdown complete");
         Ok(())
+    }
+
+    /// Check if the engine is running
+    pub async fn is_running(&self) -> bool {
+        *self.state.read().await == EngineState::Running
     }
 
     /// Get current engine state
