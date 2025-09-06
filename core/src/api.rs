@@ -81,7 +81,7 @@ impl Zuup {
         let id = self.engine.add_download(request).await?;
 
         // Auto-start the download for better UX
-        // [note] maybe will be remove to give control to user
+        // [note] maybe will be removed to give control to user
         if let Err(e) = self.engine.start_download(&id).await {
             tracing::warn!(error = %e, download_id = %id, "Failed to auto-start download");
         }
@@ -295,7 +295,7 @@ impl Zuup {
     pub async fn on_event<F, Fut>(&self, callback: F) -> Result<()>
     where
         F: Fn(Event) -> Fut + Send + Sync + 'static,
-        Fut: std::future::Future<Output = Result<()>> + Send + 'static,
+        Fut: Future<Output=Result<()>> + Send + 'static,
     {
         let subscriber = CallbackEventSubscriber::new(callback);
         self.event_bus().subscribe(Arc::new(subscriber)).await;
@@ -334,7 +334,7 @@ impl Zuup {
         &self,
         handler: Box<dyn crate::protocol::ProtocolHandler>,
     ) -> Result<()> {
-        self.engine.register_protocol_handler(handler).await;
+        self.engine.register_protocol_handler(handler).await?;
         Ok(())
     }
 
@@ -482,7 +482,7 @@ impl Default for ZuupBuilder {
 /// Result of a completed download operation
 #[derive(Debug, Clone)]
 pub struct DownloadResult {
-    /// Download Id
+    /// Download ID
     pub id: String,
 
     /// Whether the download was successful
@@ -511,7 +511,7 @@ pub struct DownloadResult {
 struct CallbackEventSubscriber<F, Fut>
 where
     F: Fn(Event) -> Fut + Send + Sync + 'static,
-    Fut: std::future::Future<Output = Result<()>> + Send + 'static,
+    Fut: Future<Output=Result<()>> + Send + 'static,
 {
     callback: F,
 }
@@ -519,7 +519,7 @@ where
 impl<F, Fut> CallbackEventSubscriber<F, Fut>
 where
     F: Fn(Event) -> Fut + Send + Sync + 'static,
-    Fut: std::future::Future<Output = Result<()>> + Send + 'static,
+    Fut: Future<Output=Result<()>> + Send + 'static,
 {
     fn new(callback: F) -> Self {
         Self { callback }
@@ -530,7 +530,7 @@ where
 impl<F, Fut> EventSubscriber for CallbackEventSubscriber<F, Fut>
 where
     F: Fn(Event) -> Fut + Send + Sync + 'static,
-    Fut: std::future::Future<Output = Result<()>> + Send + 'static,
+    Fut: Future<Output=Result<()>> + Send + 'static,
 {
     async fn handle_event(&self, event: Event) -> Result<()> {
         (self.callback)(event).await
