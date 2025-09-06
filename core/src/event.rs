@@ -1,11 +1,14 @@
-use std::{collections::HashMap, sync::Arc};
+//! Event system for download notifications and monitoring
+
+use std::collections::HashMap;
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{RwLock, broadcast};
 
-use crate::types::{DownloadId, DownloadInfo, DownloadProgress};
 use crate::error::Result;
+use crate::types::{DownloadId, DownloadInfo, DownloadProgress};
 
 /// Events that can be emitted by the download system
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -152,16 +155,22 @@ pub trait EventSubscriber: Send + Sync {
     }
 }
 
+type Subscriber = Arc<dyn EventSubscriber>;
+type SubscriberList = Vec<Subscriber>;
+type SubscriberMap = HashMap<EventType, SubscriberList>;
+type SharedSubscribers = Arc<RwLock<SubscriberMap>>;
+type SharedHistory = Arc<RwLock<Vec<Event>>>;
+
 /// Event bus for managing event subscriptions and publishing
 pub struct EventBus {
     /// Broadcast sender for events
     sender: broadcast::Sender<Event>,
 
     /// Typed subscribers
-    subscribers: Arc<RwLock<HashMap<EventType, Vec<Arc<dyn EventSubscriber>>>>>,
+    subscribers: SharedSubscribers,
 
     /// Event history (for debugging and replay)
-    history: Arc<RwLock<Vec<Event>>>,
+    history: SharedHistory,
 
     /// Maximum history size
     max_history: usize,
