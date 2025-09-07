@@ -740,10 +740,10 @@ mod tests {
     fn test_can_handle_ftp_urls() {
         let handler = FtpProtocolHandler::new();
 
-        let ftp_url = Url::parse("ftp://example.com/file.txt").unwrap();
+        let ftp_url = Url::parse("ftp://demo:password@test.rebex.net/readme.txt").unwrap();
         assert!(handler.can_handle(&ftp_url));
 
-        let ftps_url = Url::parse("ftps://example.com/file.txt").unwrap();
+        let ftps_url = Url::parse("ftps://demo:password@test.rebex.net/readme.txt").unwrap();
         assert!(handler.can_handle(&ftps_url));
 
         let http_url = Url::parse("http://example.com/file.txt").unwrap();
@@ -770,7 +770,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_ftp_download_creation() {
-        let url = Url::parse("ftp://user:pass@example.com/path/file.txt").unwrap();
+        let url = Url::parse("ftp://demo:password@test.rebex.net/readme.txt").unwrap();
         let download = FtpDownload::new(
             url.clone(),
             Some(PathBuf::from("/tmp")),
@@ -796,7 +796,7 @@ mod tests {
 
     #[test]
     fn test_extract_auth() {
-        let url_with_auth = Url::parse("ftp://user:pass@example.com/file.txt").unwrap();
+        let url_with_auth = Url::parse("ftp://demo:password@test.rebex.net/readme.txt").unwrap();
         let download = FtpDownload::new(
             url_with_auth,
             None,
@@ -807,10 +807,10 @@ mod tests {
         );
         let (username, password) = download.extract_auth();
 
-        assert_eq!(username, Some("user".to_string()));
-        assert_eq!(password, Some("pass".to_string()));
+        assert_eq!(username, Some("demo".to_string()));
+        assert_eq!(password, Some("password".to_string()));
 
-        let url_without_auth = Url::parse("ftp://example.com/file.txt").unwrap();
+        let url_without_auth = Url::parse("ftp://test.rebex.net/readme.txt").unwrap();
         let download2 = FtpDownload::new(
             url_without_auth,
             None,
@@ -827,16 +827,16 @@ mod tests {
 
     #[test]
     fn test_remote_path() {
-        let url = Url::parse("ftp://example.com/path/to/file.txt").unwrap();
+        let url = Url::parse("ftp://demo:password@test.rebex.net/readme.txt").unwrap();
         let download = FtpDownload::new(url, None, None, FtpMode::Passive, 30, FtpSecurity::Plain);
 
-        assert_eq!(download.remote_path(), "/path/to/file.txt");
+        assert_eq!(download.remote_path(), "/readme.txt");
     }
 
     #[test]
     fn test_local_path() {
         // Test with custom filename
-        let url = Url::parse("ftp://example.com/path/file.txt").unwrap();
+        let url = Url::parse("ftp://demo:password@test.rebex.net/readme.txt").unwrap();
         let download = FtpDownload::new(
             url,
             Some(PathBuf::from("/tmp")),
@@ -850,7 +850,7 @@ mod tests {
         assert_eq!(local_path, PathBuf::from("/tmp/custom.txt"));
 
         // Test with filename from URL
-        let url2 = Url::parse("ftp://example.com/path/file.txt").unwrap();
+        let url2 = Url::parse("ftp://demo:password@test.rebex.net/readme.txt").unwrap();
         let download2 = FtpDownload::new(
             url2,
             Some(PathBuf::from("/downloads")),
@@ -861,12 +861,12 @@ mod tests {
         );
 
         let local_path2 = download2.local_path().unwrap();
-        assert_eq!(local_path2, PathBuf::from("/downloads/file.txt"));
+        assert_eq!(local_path2, PathBuf::from("/downloads/readme.txt"));
     }
 
     #[test]
     fn test_supports_operation() {
-        let url = Url::parse("ftp://example.com/file.txt").unwrap();
+        let url = Url::parse("ftp://demo:password@test.rebex.net/readme.txt").unwrap();
         let download = FtpDownload::new(url, None, None, FtpMode::Passive, 30, FtpSecurity::Plain);
 
         assert!(download.supports_operation(DownloadOperation::Start));
@@ -879,7 +879,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_download_from_request() {
-        let url = Url::parse("ftp://example.com/file.txt").unwrap();
+        let url = Url::parse("ftp://demo:password@test.rebex.net/readme.txt").unwrap();
         let request = DownloadRequest::new(vec![url])
             .filename("test.txt".to_string())
             .output_path(PathBuf::from("/tmp"));
@@ -894,23 +894,23 @@ mod tests {
 
     #[tokio::test]
     async fn test_metadata_extraction() {
-        let url = Url::parse("ftp://example.com/path/to/file.txt").unwrap();
+        let url = Url::parse("ftp://demo:password@test.rebex.net/readme.txt").unwrap();
         let download = FtpDownload::new(url, None, None, FtpMode::Passive, 30, FtpSecurity::Plain);
 
         let metadata = download.metadata().await.unwrap();
 
         // Should extract filename from URL
-        assert_eq!(metadata.filename, Some("file.txt".to_string()));
+        assert_eq!(metadata.filename, Some("readme.txt".to_string()));
         assert!(!metadata.supports_ranges);
 
         // Size and last_modified will be None since we can't connect to a real server
-        assert_eq!(metadata.size, None);
+        assert_eq!(metadata.size, Some(379));
         assert_eq!(metadata.last_modified, None);
     }
 
     #[tokio::test]
     async fn test_state_transitions() {
-        let url = Url::parse("ftp://example.com/file.txt").unwrap();
+        let url = Url::parse("ftp://demo:password@test.rebex.net/readme.txt").unwrap();
         let mut download =
             FtpDownload::new(url, None, None, FtpMode::Passive, 30, FtpSecurity::Plain);
 
@@ -922,7 +922,7 @@ mod tests {
         assert_eq!(download.state(), DownloadState::Cancelled);
 
         // Create a new download for pause/resume testing
-        let url2 = Url::parse("ftp://example.com/file2.txt").unwrap();
+        let url2 = Url::parse("ftp://demo:password@test.rebex.net/readme.txt").unwrap();
         let mut download2 =
             FtpDownload::new(url2, None, None, FtpMode::Passive, 30, FtpSecurity::Plain);
 
@@ -1025,7 +1025,7 @@ fn test_ftp_file_info_debug() {
 
 #[test]
 fn test_resume_support() {
-    let url = Url::parse("ftp://example.com/large-file.zip").unwrap();
+    let url = Url::parse("ftp://demo:password@test.rebex.net/readme.txt").unwrap();
     let download = FtpDownload::new(url, None, None, FtpMode::Passive, 30, FtpSecurity::Plain);
 
     // Test that resume operation is supported
@@ -1039,7 +1039,7 @@ fn test_resume_support() {
 
 #[test]
 fn test_metadata_support() {
-    let url = Url::parse("ftp://example.com/file.txt").unwrap();
+    let url = Url::parse("ftp://demo:password@test.rebex.net/readme.txt").unwrap();
     let download = FtpDownload::new(url, None, None, FtpMode::Passive, 30, FtpSecurity::Plain);
 
     // Test that metadata operation is supported

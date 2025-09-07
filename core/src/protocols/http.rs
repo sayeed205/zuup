@@ -642,7 +642,7 @@ mod tests {
 
         assert!(handler.can_handle(&Url::from_str("http://example.com").unwrap()));
         assert!(handler.can_handle(&Url::from_str("https://example.com").unwrap()));
-        assert!(!handler.can_handle(&Url::from_str("ftp://example.com").unwrap()));
+        assert!(!handler.can_handle(&Url::from_str("ftp://demo:password@test.rebex.net").unwrap()));
         assert!(!handler.can_handle(&Url::from_str("file:///path").unwrap()));
     }
 

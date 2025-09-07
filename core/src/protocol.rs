@@ -160,10 +160,39 @@ pub struct ProtocolRegistry {
 }
 
 impl ProtocolRegistry {
-    /// Create a new empty registry
+    /// Create a new registry with default handlers based on enabled features
     pub fn new() -> Self {
-        Self {
+        let mut registry = Self {
             handlers: Vec::new(),
+        };
+        registry.register_default_handlers();
+        registry
+    }
+
+    /// Register default protocol handlers based on enabled features
+    fn register_default_handlers(&mut self) {
+        #[cfg(feature = "http")]
+        {
+            let handler = crate::protocols::HttpProtocolHandler::new();
+            self.register(Box::new(handler));
+        }
+
+        #[cfg(feature = "ftp")]
+        {
+            let handler = crate::protocols::FtpProtocolHandler::new();
+            self.register(Box::new(handler));
+        }
+
+        #[cfg(feature = "sftp")]
+        {
+            let handler = crate::protocols::SftpProtocolHandler::new();
+            self.register(Box::new(handler));
+        }
+
+        #[cfg(feature = "torrent")]
+        {
+            let handler = crate::protocols::BitTorrentProtocolHandler::new();
+            self.register(Box::new(handler));
         }
     }
 
@@ -179,6 +208,30 @@ impl ProtocolRegistry {
             .find(|handler| handler.can_handle(url))
             .map(|handler| handler.as_ref())
     }
+    
+    /// Find a handler for the given URL with detailed error information
+    pub fn find_handler_with_error(&self, url: &Url) -> crate::error::Result<&dyn ProtocolHandler> {
+        if let Some(handler) = self.find_handler(url) {
+            return Ok(handler);
+        }
+        
+        // Check if the protocol is supported but not enabled
+        if let Some(required_feature) = get_required_feature_for_scheme(url.scheme()) {
+            return Err(crate::error::ZuupError::Protocol(
+                crate::error::ProtocolError::UnsupportedProtocol(
+                    format!("Protocol '{}' is not supported. Enable the '{}' feature to use this protocol.", 
+                        url.scheme(), required_feature)
+                )
+            ));
+        }
+        
+        // Unknown protocol
+        Err(crate::error::ZuupError::Protocol(
+            crate::error::ProtocolError::UnsupportedProtocol(
+                format!("Unknown protocol: {}", url.scheme())
+            )
+        ))
+    }
 
     /// Get all registered handlers
     pub fn handlers(&self) -> &[Box<dyn ProtocolHandler>] {
@@ -192,10 +245,138 @@ impl ProtocolRegistry {
             .map(|handler| handler.protocol())
             .collect()
     }
+
+    /// Check if the registry is empty (no handlers registered)
+    pub fn is_empty(&self) -> bool {
+        self.handlers.is_empty()
+    }
 }
 
 impl Default for ProtocolRegistry {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Compile-time protocol availability detection
+pub struct AvailableProtocols;
+
+impl AvailableProtocols {
+    /// HTTP/HTTPS protocol availability
+    pub const HTTP: bool = cfg!(feature = "http");
+    
+    /// FTP/FTPS protocol availability
+    pub const FTP: bool = cfg!(feature = "ftp");
+    
+    /// SFTP protocol availability
+    pub const SFTP: bool = cfg!(feature = "sftp");
+    
+    /// BitTorrent protocol availability
+    pub const TORRENT: bool = cfg!(feature = "torrent");
+    
+    /// Get list of enabled protocols
+    pub fn list_enabled() -> Vec<&'static str> {
+        let mut protocols = Vec::new();
+        
+        if Self::HTTP {
+            protocols.push("http");
+        }
+        if Self::FTP {
+            protocols.push("ftp");
+        }
+        if Self::SFTP {
+            protocols.push("sftp");
+        }
+        if Self::TORRENT {
+            protocols.push("torrent");
+        }
+        
+        protocols
+    }
+    
+    /// Get all possible protocols (regardless of enabled features)
+    pub fn list_all() -> Vec<&'static str> {
+        vec!["http", "ftp", "sftp", "torrent"]
+    }
+    
+    /// Check if a specific protocol is enabled
+    pub fn is_enabled(protocol: &str) -> bool {
+        match protocol {
+            "http" | "https" => Self::HTTP,
+            "ftp" | "ftps" => Self::FTP,
+            "sftp" => Self::SFTP,
+            "torrent" | "magnet" => Self::TORRENT,
+            _ => false,
+        }
+    }
+    
+    /// Get the count of enabled protocols
+    pub fn enabled_count() -> usize {
+        Self::list_enabled().len()
+    }
+}
+
+/// Get the required feature name for a given URL scheme
+pub fn get_required_feature_for_scheme(scheme: &str) -> Option<&'static str> {
+    match scheme {
+        "http" | "https" => Some("http"),
+        "ftp" | "ftps" => Some("ftp"),
+        "sftp" => Some("sftp"),
+        "magnet" => Some("torrent"),
+        _ => None,
+    }
+}
+
+/// Get the protocol name for a given URL scheme
+pub fn get_protocol_for_scheme(scheme: &str) -> Option<&'static str> {
+    match scheme {
+        "http" | "https" => Some("http"),
+        "ftp" | "ftps" => Some("ftp"),
+        "sftp" => Some("sftp"),
+        "magnet" => Some("torrent"),
+        _ => None,
+    }
+}
+
+/// Protocol-to-feature mapping information
+#[derive(Debug, Clone)]
+pub struct ProtocolFeatureMapping {
+    /// Protocol name
+    pub protocol: &'static str,
+    /// Required feature flag
+    pub feature: &'static str,
+    /// Supported URL schemes
+    pub schemes: Vec<&'static str>,
+    /// Whether the protocol is currently enabled
+    pub enabled: bool,
+}
+
+/// Get comprehensive protocol-to-feature mapping
+pub fn get_protocol_feature_mappings() -> Vec<ProtocolFeatureMapping> {
+    vec![
+        ProtocolFeatureMapping {
+            protocol: "http",
+            feature: "http",
+            schemes: vec!["http", "https"],
+            enabled: AvailableProtocols::HTTP,
+        },
+        ProtocolFeatureMapping {
+            protocol: "ftp",
+            feature: "ftp",
+            schemes: vec!["ftp", "ftps"],
+            enabled: AvailableProtocols::FTP,
+        },
+        ProtocolFeatureMapping {
+            protocol: "sftp",
+            feature: "sftp",
+            schemes: vec!["sftp"],
+            enabled: AvailableProtocols::SFTP,
+        },
+        ProtocolFeatureMapping {
+            protocol: "torrent",
+            feature: "torrent",
+            schemes: vec!["magnet"],
+            enabled: AvailableProtocols::TORRENT,
+        },
+    ]
 }
