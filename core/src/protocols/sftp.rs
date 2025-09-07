@@ -1,5 +1,7 @@
 //! SFTP protocol handler
 
+#![cfg(feature = "sftp")]
+
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -11,12 +13,11 @@ use tracing::{debug, error, info, warn};
 use url::Url;
 
 use crate::{
-    download::{DownloadRequest, DownloadState},
     error::{NetworkError, Result, ZuupError},
     protocol::{
         Download, DownloadMetadata, DownloadOperation, ProtocolCapabilities, ProtocolHandler,
     },
-    types::DownloadProgress,
+    types::{DownloadProgress, DownloadRequest, DownloadState},
 };
 
 #[cfg(feature = "sftp")]
@@ -431,7 +432,7 @@ impl SftpDownload {
                     };
 
                     let mut progress = self.progress.write().await;
-                    progress.update(downloaded, speed);
+                    progress.update(downloaded, speed, None);
                     progress.connections = 1;
                 }
                 Err(e) => {
@@ -704,7 +705,7 @@ mod tests {
         assert_eq!(download.state(), DownloadState::Pending);
         let progress = download.progress();
         assert_eq!(progress.downloaded_size, 0);
-        assert_eq!(progress.speed, 0);
+        assert_eq!(progress.download_speed, 0);
     }
 
     #[test]
@@ -793,7 +794,7 @@ mod tests {
     #[tokio::test]
     async fn test_create_download_from_request() {
         let url = Url::parse("sftp://example.com/file.txt").unwrap();
-        let request = DownloadRequest::new(url.clone())
+        let request = DownloadRequest::new(vec![url])
             .filename("test.txt".to_string())
             .output_path(PathBuf::from("/tmp"));
 

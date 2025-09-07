@@ -1,5 +1,7 @@
 //! FTP protocol handler
 
+#![cfg(feature = "ftp")]
+
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -11,12 +13,11 @@ use tracing::{debug, error, info, warn};
 use url::Url;
 
 use crate::{
-    download::{DownloadRequest, DownloadState},
     error::{NetworkError, Result, ZuupError},
     protocol::{
         Download, DownloadMetadata, DownloadOperation, ProtocolCapabilities, ProtocolHandler,
     },
-    types::DownloadProgress,
+    types::{DownloadProgress, DownloadRequest, DownloadState},
 };
 
 #[cfg(feature = "ftp")]
@@ -252,18 +253,18 @@ impl FtpDownload {
             std::time::Duration::from_secs(self.timeout),
             FtpStream::connect(&address),
         )
-        .await
-        .map_err(|_| {
-            ZuupError::Network(NetworkError::ConnectionFailed(
-                "FTP connection timeout".to_string(),
-            ))
-        })?
-        .map_err(|e| {
-            ZuupError::Network(NetworkError::ConnectionFailed(format!(
-                "FTP connection failed: {}",
-                e
-            )))
-        })?;
+            .await
+            .map_err(|_| {
+                ZuupError::Network(NetworkError::ConnectionFailed(
+                    "FTP connection timeout".to_string(),
+                ))
+            })?
+            .map_err(|e| {
+                ZuupError::Network(NetworkError::ConnectionFailed(format!(
+                    "FTP connection failed: {}",
+                    e
+                )))
+            })?;
 
         // Authenticate
         let (username, password) = self.extract_auth();
@@ -500,7 +501,7 @@ impl FtpDownload {
 
                 // Update final progress
                 let mut progress = self.progress.write().await;
-                progress.update(total_downloaded, 0);
+                progress.update(total_downloaded, 0, None);
                 progress.connections = 1;
             }
             Err(e) => {
@@ -790,7 +791,7 @@ mod tests {
         assert_eq!(download.state(), DownloadState::Pending);
         let progress = download.progress();
         assert_eq!(progress.downloaded_size, 0);
-        assert_eq!(progress.speed, 0);
+        assert_eq!(progress.download_speed, 0);
     }
 
     #[test]
@@ -879,7 +880,7 @@ mod tests {
     #[tokio::test]
     async fn test_create_download_from_request() {
         let url = Url::parse("ftp://example.com/file.txt").unwrap();
-        let request = DownloadRequest::new(url.clone())
+        let request = DownloadRequest::new(vec![url])
             .filename("test.txt".to_string())
             .output_path(PathBuf::from("/tmp"));
 
@@ -994,7 +995,7 @@ fn test_ftps_url_handling() {
 #[tokio::test]
 async fn test_ftps_download_creation() {
     let url = Url::parse("ftps://secure.example.com/file.txt").unwrap();
-    let request = DownloadRequest::new(url.clone())
+    let request = DownloadRequest::new(vec![url])
         .filename("secure.txt".to_string())
         .output_path(PathBuf::from("/tmp"));
 

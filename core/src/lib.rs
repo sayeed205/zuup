@@ -14,6 +14,7 @@ pub mod metalink;
 pub mod metrics;
 pub mod network;
 pub mod protocol;
+pub mod protocols;
 pub mod session;
 pub mod types;
 
@@ -52,6 +53,19 @@ pub use metrics::{
     DownloadStats, HealthCheck, HealthStatus, MetricsCollector, MetricsConfig, SystemMetrics,
 };
 pub use protocol::{Download, ProtocolHandler};
+
+// Conditional protocol handler re-exports
+#[cfg(feature = "http")]
+pub use protocols::HttpProtocolHandler;
+
+#[cfg(feature = "ftp")]
+pub use protocols::FtpProtocolHandler;
+
+#[cfg(feature = "sftp")]
+pub use protocols::SftpProtocolHandler;
+
+#[cfg(feature = "torrent")]
+pub use protocols::BitTorrentProtocolHandler;
 pub use session::{
     MaintenanceReport, PartialFileInfo, SessionManager, SessionRecoveryInfo, SessionStats,
 };
