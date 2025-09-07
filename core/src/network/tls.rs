@@ -2,12 +2,15 @@
 
 use std::{collections::HashMap, io::BufReader, path::Path, sync::Arc, time::SystemTime};
 
+#[cfg(feature = "http")]
 use rustls::{
     ClientConfig, DigitallySignedStruct, Error as TLSError, RootCertStore, SignatureScheme,
     client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier},
     pki_types::{CertificateDer, PrivateKeyDer, ServerName, UnixTime},
 };
+#[cfg(feature = "http")]
 use rustls_native_certs::load_native_certs;
+#[cfg(feature = "http")]
 use rustls_pemfile::{certs, pkcs8_private_keys, rsa_private_keys};
 use serde::{Deserialize, Serialize};
 use tokio::fs::File;
@@ -330,6 +333,7 @@ impl TlsContextManager {
         cert: &CertificateDer,
         pinning: &CertificatePinning,
     ) -> Result<bool> {
+        #[cfg(feature = "http")]
         use ring::digest::{SHA256, digest};
 
         // Check certificate fingerprint

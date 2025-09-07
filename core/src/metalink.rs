@@ -128,6 +128,7 @@ impl MetalinkParser {
     }
 
     /// Parse a Metalink document from a URL
+    #[cfg(feature = "http")]
     pub async fn parse_url(url: &Url) -> Result<Metalink> {
         let client = reqwest::Client::new();
         let response = client
@@ -665,3 +666,10 @@ mod tests {
         assert_eq!(metalink.files[0].name, "test.txt");
     }
 }
+    /// Parse a Metalink document from a URL (stub when HTTP feature is disabled)
+    #[cfg(not(feature = "http"))]
+    pub async fn parse_url(_url: &Url) -> Result<Metalink> {
+        Err(ZuupError::Config(
+            "HTTP feature is required to parse Metalink from URL. Enable the 'http' feature.".to_string()
+        ))
+    }

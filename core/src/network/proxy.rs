@@ -3,6 +3,7 @@
 use std::{collections::HashMap, net::IpAddr, time::Duration};
 
 use async_trait::async_trait;
+#[cfg(feature = "http")]
 use reqwest::Proxy;
 use serde::{Deserialize, Serialize};
 use tokio::time::timeout;
@@ -492,6 +493,7 @@ impl ProxyManager {
     }
 
     /// Build reqwest client with proxy configuration
+    #[cfg(feature = "http")]
     fn build_proxy_client(&self, proxy_config: &EnhancedProxyConfig) -> Result<reqwest::Client> {
         let mut proxy = Proxy::all(proxy_config.url.to_string())
             .map_err(|e| NetworkError::Proxy(format!("Failed to create proxy: {}", e)))?;
@@ -545,6 +547,7 @@ impl ProxyManager {
 }
 
 /// Trait for proxy-aware network operations
+#[cfg(feature = "http")]
 #[async_trait]
 pub trait ProxyAware {
     /// Execute request through proxy if configured

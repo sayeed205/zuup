@@ -6,6 +6,7 @@
 use std::{collections::HashMap, fmt, path::Path, sync::Arc};
 
 use bytes::Bytes;
+#[cfg(feature = "http")]
 use ring::digest::{Context, SHA1_FOR_LEGACY_USE_ONLY, SHA256, SHA512};
 use serde::{Deserialize, Serialize};
 use tokio::{
@@ -164,8 +165,11 @@ impl fmt::Display for ChecksumResult {
 /// Streaming hasher for incremental checksum calculation
 pub struct StreamingHasher {
     md5_context: Option<md5::Context>,
+    #[cfg(feature = "http")]
     sha1_context: Option<Context>,
+    #[cfg(feature = "http")]
     sha256_context: Option<Context>,
+    #[cfg(feature = "http")]
     sha512_context: Option<Context>,
     algorithms: Vec<ChecksumType>,
 }
@@ -175,8 +179,11 @@ impl StreamingHasher {
     pub fn new(algorithms: &[ChecksumType]) -> Self {
         let mut hasher = Self {
             md5_context: None,
+            #[cfg(feature = "http")]
             sha1_context: None,
+            #[cfg(feature = "http")]
             sha256_context: None,
+            #[cfg(feature = "http")]
             sha512_context: None,
             algorithms: algorithms.to_vec(),
         };
@@ -186,14 +193,22 @@ impl StreamingHasher {
                 ChecksumType::Md5 => {
                     hasher.md5_context = Some(md5::Context::new());
                 }
+                #[cfg(feature = "http")]
                 ChecksumType::Sha1 => {
                     hasher.sha1_context = Some(Context::new(&SHA1_FOR_LEGACY_USE_ONLY));
                 }
+                #[cfg(feature = "http")]
                 ChecksumType::Sha256 => {
                     hasher.sha256_context = Some(Context::new(&SHA256));
                 }
+                #[cfg(feature = "http")]
                 ChecksumType::Sha512 => {
                     hasher.sha512_context = Some(Context::new(&SHA512));
+                }
+                #[cfg(not(feature = "http"))]
+                ChecksumType::Sha1 | ChecksumType::Sha256 | ChecksumType::Sha512 => {
+                    // SHA algorithms require the http feature (which includes ring)
+                    // This is a compile-time error prevention
                 }
             }
         }
@@ -211,14 +226,17 @@ impl StreamingHasher {
         if let Some(ref mut ctx) = self.md5_context {
             ctx.consume(data);
         }
-        if let Some(ref mut ctx) = self.sha1_context {
-            ctx.update(data);
-        }
-        if let Some(ref mut ctx) = self.sha256_context {
-            ctx.update(data);
-        }
-        if let Some(ref mut ctx) = self.sha512_context {
-            ctx.update(data);
+        #[cfg(feature = "http")]
+        {
+            if let Some(ref mut ctx) = self.sha1_context {
+                ctx.update(data);
+            }
+            if let Some(ref mut ctx) = self.sha256_context {
+                ctx.update(data);
+            }
+            if let Some(ref mut ctx) = self.sha512_context {
+                ctx.update(data);
+            }
         }
     }
 
@@ -235,31 +253,34 @@ impl StreamingHasher {
             );
         }
 
-        if let Some(ctx) = self.sha1_context {
-            let digest = ctx.finish();
-            let hex = hex::encode(digest.as_ref());
-            results.insert(
-                ChecksumType::Sha1,
-                ChecksumResult::new(hex, ChecksumType::Sha1),
-            );
-        }
+        #[cfg(feature = "http")]
+        {
+            if let Some(ctx) = self.sha1_context {
+                let digest = ctx.finish();
+                let hex = hex::encode(digest.as_ref());
+                results.insert(
+                    ChecksumType::Sha1,
+                    ChecksumResult::new(hex, ChecksumType::Sha1),
+                );
+            }
 
-        if let Some(ctx) = self.sha256_context {
-            let digest = ctx.finish();
-            let hex = hex::encode(digest.as_ref());
-            results.insert(
-                ChecksumType::Sha256,
-                ChecksumResult::new(hex, ChecksumType::Sha256),
-            );
-        }
+            if let Some(ctx) = self.sha256_context {
+                let digest = ctx.finish();
+                let hex = hex::encode(digest.as_ref());
+                results.insert(
+                    ChecksumType::Sha256,
+                    ChecksumResult::new(hex, ChecksumType::Sha256),
+                );
+            }
 
-        if let Some(ctx) = self.sha512_context {
-            let digest = ctx.finish();
-            let hex = hex::encode(digest.as_ref());
-            results.insert(
-                ChecksumType::Sha512,
-                ChecksumResult::new(hex, ChecksumType::Sha512),
-            );
+            if let Some(ctx) = self.sha512_context {
+                let digest = ctx.finish();
+                let hex = hex::encode(digest.as_ref());
+                results.insert(
+                    ChecksumType::Sha512,
+                    ChecksumResult::new(hex, ChecksumType::Sha512),
+                );
+            }
         }
 
         results
