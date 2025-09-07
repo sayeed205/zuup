@@ -1,9 +1,11 @@
 //! Media download integration with yt-dlp
 
-use std::collections::HashMap;
-use std::path::{Path, PathBuf};
-use std::process::Stdio;
-use std::sync::Arc;
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+    process::Stdio,
+    sync::Arc,
+};
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};

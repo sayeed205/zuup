@@ -3,17 +3,16 @@
 //! This module provides comprehensive checksum support for download integrity verification,
 //! including streaming calculation for large files and multiple hash algorithms.
 
-use std::collections::HashMap;
-use std::fmt;
-use std::path::Path;
-use std::sync::Arc;
+use std::{collections::HashMap, fmt, path::Path, sync::Arc};
 
 use bytes::Bytes;
 use ring::digest::{Context, SHA1_FOR_LEGACY_USE_ONLY, SHA256, SHA512};
 use serde::{Deserialize, Serialize};
-use tokio::fs::File;
-use tokio::io::{AsyncRead, AsyncReadExt};
-use tokio::sync::RwLock;
+use tokio::{
+    fs::File,
+    io::{AsyncRead, AsyncReadExt},
+    sync::RwLock,
+};
 use tracing::{debug, error, info, warn};
 
 use crate::error::{Result, ZuupError};

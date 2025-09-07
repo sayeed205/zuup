@@ -6,11 +6,13 @@
 //! - Directory structure preservation for multi-file downloads
 //! - Atomic file operations and temporary file handling
 
-use std::collections::HashMap;
-use std::fs::{self, File, Permissions};
-use std::io::{self, Read, Write};
-use std::os::unix::fs::PermissionsExt;
-use std::path::{Path, PathBuf};
+use std::{
+    collections::HashMap,
+    fs::{self, File, Permissions},
+    io::{self, Read, Write},
+    os::unix::fs::PermissionsExt,
+    path::{Path, PathBuf},
+};
 
 use chrono::Utc;
 use percent_encoding;

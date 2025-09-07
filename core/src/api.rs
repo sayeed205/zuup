@@ -1,16 +1,16 @@
-use std::path::PathBuf;
-use std::sync::Arc;
-use std::time::Duration;
+use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use url::Url;
 
-use crate::config::ZuupConfig;
-use crate::engine::{EngineStats, ZuupEngine};
-use crate::error::Result;
-use crate::event::{Event, EventBus, EventSubscriber};
-use crate::media::{MediaDownloadOptions, MediaFormat};
-use crate::types::{DownloadId, DownloadInfo, DownloadRequest, DownloadState};
+use crate::{
+    config::ZuupConfig,
+    engine::{EngineStats, ZuupEngine},
+    error::Result,
+    event::{Event, EventBus, EventSubscriber},
+    media::{MediaDownloadOptions, MediaFormat},
+    types::{DownloadId, DownloadInfo, DownloadRequest, DownloadState},
+};
 
 /// Main entry point for the Zuup download Manager library
 ///
@@ -295,7 +295,7 @@ impl Zuup {
     pub async fn on_event<F, Fut>(&self, callback: F) -> Result<()>
     where
         F: Fn(Event) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output=Result<()>> + Send + 'static,
+        Fut: Future<Output = Result<()>> + Send + 'static,
     {
         let subscriber = CallbackEventSubscriber::new(callback);
         self.event_bus().subscribe(Arc::new(subscriber)).await;
@@ -511,7 +511,7 @@ pub struct DownloadResult {
 struct CallbackEventSubscriber<F, Fut>
 where
     F: Fn(Event) -> Fut + Send + Sync + 'static,
-    Fut: Future<Output=Result<()>> + Send + 'static,
+    Fut: Future<Output = Result<()>> + Send + 'static,
 {
     callback: F,
 }
@@ -519,7 +519,7 @@ where
 impl<F, Fut> CallbackEventSubscriber<F, Fut>
 where
     F: Fn(Event) -> Fut + Send + Sync + 'static,
-    Fut: Future<Output=Result<()>> + Send + 'static,
+    Fut: Future<Output = Result<()>> + Send + 'static,
 {
     fn new(callback: F) -> Self {
         Self { callback }
@@ -530,7 +530,7 @@ where
 impl<F, Fut> EventSubscriber for CallbackEventSubscriber<F, Fut>
 where
     F: Fn(Event) -> Fut + Send + Sync + 'static,
-    Fut: Future<Output=Result<()>> + Send + 'static,
+    Fut: Future<Output = Result<()>> + Send + 'static,
 {
     async fn handle_event(&self, event: Event) -> Result<()> {
         (self.callback)(event).await

@@ -1,15 +1,16 @@
-use std::sync::Arc;
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 use tokio::sync::RwLock;
 
-use crate::config::ZuupConfig;
-use crate::download::DownloadManager;
-use crate::error::{Result, ZuupError};
-use crate::event::EventBus;
-use crate::protocol::ProtocolRegistry;
-use crate::session::SessionManager;
-use crate::types::{DownloadId, DownloadInfo, DownloadRequest, DownloadState};
+use crate::{
+    config::ZuupConfig,
+    download::DownloadManager,
+    error::{Result, ZuupError},
+    event::EventBus,
+    protocol::ProtocolRegistry,
+    session::SessionManager,
+    types::{DownloadId, DownloadInfo, DownloadRequest, DownloadState},
+};
 
 pub struct ZuupEngine {
     /// Configuration for the Zuup engine.

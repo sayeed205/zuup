@@ -1,21 +1,29 @@
-use std::collections::VecDeque;
-use std::path::PathBuf;
-use std::sync::Arc;
-use std::{collections::HashMap, time::Duration};
+//! Download management and data structures
+
+use std::{
+    collections::{HashMap, VecDeque},
+    path::PathBuf,
+    sync::Arc,
+    time::Duration,
+};
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use tokio::sync::{Mutex, RwLock, mpsc};
-use tokio::task::JoinHandle;
+use tokio::{
+    sync::{Mutex, RwLock, mpsc},
+    task::JoinHandle,
+};
 use url::Url;
 
-use crate::bandwidth::BandwidthManager;
-use crate::error::{Result, ZuupError};
-use crate::metalink::{MetalinkFile, MetalinkUrl};
-use crate::protocol::{Download as ProtoDownload, ProtocolRegistry};
-use crate::types::{
-    DownloadId, DownloadInfo, DownloadPriority, DownloadProgress, DownloadRequest, DownloadSegment,
-    DownloadState,
+use crate::{
+    bandwidth::BandwidthManager,
+    error::{Result, ZuupError},
+    metalink::{MetalinkFile, MetalinkUrl},
+    protocol::{Download as ProtoDownload, ProtocolRegistry},
+    types::{
+        DownloadId, DownloadInfo, DownloadPriority, DownloadProgress, DownloadRequest,
+        DownloadSegment, DownloadState,
+    },
 };
 
 /// Task control commands
@@ -80,7 +88,7 @@ impl DownloadTask {
                 .urls
                 .first()
                 .and_then(|url| url.path_segments())
-                .and_then(|segments| segments.last())
+                .and_then(|mut segments| segments.next_back())
                 .filter(|name| !name.is_empty())
                 .unwrap_or("download")
                 .to_string()
@@ -174,7 +182,7 @@ impl DownloadTask {
                 .urls
                 .first()
                 .and_then(|url| url.path_segments())
-                .and_then(|segments| segments.last())
+                .and_then(|mut segments| segments.next_back())
                 .filter(|name| !name.is_empty())
                 .unwrap_or("download")
                 .to_string()

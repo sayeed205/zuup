@@ -15,13 +15,14 @@ use tokio::io::AsyncReadExt;
 
 use crate::{
     error::{NetworkError, Result},
-    types::{ClientCertificate, TlsConfig, TlsVersion},
+    types::{ClientCertificate, TlsConfig},
 };
 
 /// Certificate validation mode
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum CertValidationMode {
     /// Full certificate validation (default)
+    #[default]
     Full,
     /// Skip certificate validation (insecure)
     None,
@@ -31,14 +32,8 @@ pub enum CertValidationMode {
     Custom,
 }
 
-impl Default for CertValidationMode {
-    fn default() -> Self {
-        CertValidationMode::Full
-    }
-}
-
 /// Certificate pinning configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct CertificatePinning {
     /// Pinned certificate fingerprints (SHA-256)
     pub fingerprints: Vec<String>,
@@ -48,17 +43,6 @@ pub struct CertificatePinning {
     pub enforce: bool,
     /// Backup pins for certificate rotation
     pub backup_pins: Vec<String>,
-}
-
-impl Default for CertificatePinning {
-    fn default() -> Self {
-        Self {
-            fingerprints: Vec::new(),
-            public_key_hashes: Vec::new(),
-            enforce: false,
-            backup_pins: Vec::new(),
-        }
-    }
 }
 
 /// Enhanced TLS configuration with additional security features
@@ -152,7 +136,7 @@ impl TlsContextManager {
         // Load native system certificates
         let native_certs = load_native_certs();
         for cert in native_certs.certs {
-            if let Err(e) = root_store.add(CertificateDer::from(cert)) {
+            if let Err(e) = root_store.add(cert) {
                 tracing::warn!("Failed to add native certificate: {}", e);
             }
         }
@@ -454,6 +438,8 @@ impl ServerCertVerifier for NoVerification {
 
 #[cfg(test)]
 mod tests {
+    use crate::types::TlsVersion;
+
     use super::*;
     use std::path::PathBuf;
 
@@ -495,7 +481,7 @@ mod tests {
         };
 
         let enhanced: EnhancedTlsConfig = base_config.clone().into();
-        assert_eq!(enhanced.base.verify_certificates, false);
+        assert!(!enhanced.base.verify_certificates);
         assert_eq!(
             enhanced.base.ca_certificates,
             vec![PathBuf::from("/test/ca.pem")]

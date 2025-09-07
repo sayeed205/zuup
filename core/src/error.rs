@@ -1,7 +1,6 @@
 //! Error types and handling for Zuup
 
-use std::fmt;
-use std::time::Duration;
+use std::{fmt, time::Duration};
 
 use thiserror::Error;
 

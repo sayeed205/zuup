@@ -1,7 +1,9 @@
 //! Core types and data structures
 
-use std::time::Duration;
-use std::{collections::HashMap, path::PathBuf};
+use std::{
+    time::Duration,
+    {collections::HashMap, path::PathBuf},
+};
 
 use chrono::{DateTime, Utc};
 use cuid2::cuid;

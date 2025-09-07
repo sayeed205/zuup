@@ -3,16 +3,19 @@
 //! This module provides various callback mechanisms for monitoring download
 //! progress, handling events, and implementing custom recovery strategies.
 
-use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
-use crate::error::{Result, ZuupError};
-use crate::event::{Event, EventSubscriber, EventType};
-use crate::types::{DownloadId, DownloadOptions};
-use crate::types::{DownloadProgress, DownloadState};
+use crate::{
+    error::{Result, ZuupError},
+    event::{Event, EventSubscriber, EventType},
+    types::{DownloadId, DownloadOptions, DownloadProgress, DownloadState},
+};
 
 /// Progress callback function type
 pub type ProgressCallback = Arc<dyn Fn(DownloadId, DownloadProgress) -> Result<()> + Send + Sync>;

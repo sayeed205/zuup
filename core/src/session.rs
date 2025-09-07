@@ -1,15 +1,19 @@
 //! Session management and persistence using sled embedded database
 
-use std::collections::HashMap;
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
-use crate::error::{Result, ZuupError};
-use crate::types::{DownloadId, DownloadInfo, DownloadState};
+use crate::{
+    error::{Result, ZuupError},
+    types::{DownloadId, DownloadInfo, DownloadState},
+};
 
 /// Session format version for backward compatibility
 pub const SESSION_VERSION: u32 = 1;
@@ -486,7 +490,7 @@ impl SessionManager {
         let mut metadata = self.metadata.write().await;
         metadata.touch();
 
-        self.storage.save_metadata(&*metadata)?;
+        self.storage.save_metadata(&metadata)?;
         self.storage.flush()?;
 
         tracing::debug!("Saved session metadata to database");
@@ -658,7 +662,7 @@ impl SessionManager {
             drop(metadata);
             let mut metadata = self.metadata.write().await;
             metadata.version = SESSION_VERSION;
-            self.storage.save_metadata(&*metadata)?;
+            self.storage.save_metadata(&metadata)?;
 
             tracing::info!("Session migration completed");
         }
@@ -777,9 +781,8 @@ impl SessionManager {
                             .modified()
                             .ok()
                             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                            .map(|d| chrono::DateTime::from_timestamp(d.as_secs() as i64, 0))
-                            .flatten()
-                            .unwrap_or_else(|| chrono::Utc::now()),
+                            .and_then(|d| chrono::DateTime::from_timestamp(d.as_secs() as i64, 0))
+                            .unwrap_or_else(Utc::now),
                     };
 
                     partial_files.push(partial_info);
@@ -929,27 +932,26 @@ impl SessionManager {
         // Stop existing auto-save task if running
         self.stop_auto_save().await;
 
-        if let Some(interval) = self.auto_save_interval {
-            if self.auto_save_enabled {
-                let session_manager = self.clone();
+        if let Some(interval) = self.auto_save_interval
+            && self.auto_save_enabled
+        {
+            let session_manager = self.clone();
 
-                let handle = tokio::spawn(async move {
-                    let mut interval =
-                        tokio::time::interval(std::time::Duration::from_secs(interval));
+            let handle = tokio::spawn(async move {
+                let mut interval = tokio::time::interval(std::time::Duration::from_secs(interval));
 
-                    loop {
-                        interval.tick().await;
+                loop {
+                    interval.tick().await;
 
-                        if let Err(e) = session_manager.save().await {
-                            tracing::error!(error = %e, "Auto-save failed");
-                        }
+                    if let Err(e) = session_manager.save().await {
+                        tracing::error!(error = %e, "Auto-save failed");
                     }
-                });
+                }
+            });
 
-                *self.auto_save_handle.write().await = Some(handle);
+            *self.auto_save_handle.write().await = Some(handle);
 
-                tracing::debug!(interval_seconds = interval, "Started auto-save task");
-            }
+            tracing::debug!(interval_seconds = interval, "Started auto-save task");
         }
 
         Ok(())

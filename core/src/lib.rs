@@ -8,6 +8,7 @@ pub mod engine;
 pub mod error;
 pub mod event;
 pub mod file;
+pub mod logging;
 pub mod media;
 pub mod metalink;
 pub mod metrics;
@@ -31,12 +32,11 @@ pub use checksum::{
 };
 pub use config::ZuupConfig;
 pub use download::{
-    DownloadInfo, DownloadManager, DownloadPriority, DownloadProgress, DownloadRequest,
-    DownloadSource, DownloadState, DownloadTask, FailoverConfig, MultiSourceCoordinator,
+    DownloadManager, DownloadSource, DownloadTask, FailoverConfig, MultiSourceCoordinator,
     SourceHealthMonitor, SourceState, SourceStatistics, SourceStatus, TaskCommand, TaskScheduler,
 };
-pub use engine::RusoEngine;
-pub use error::{Result, RusoError};
+pub use engine::ZuupEngine;
+pub use error::{Result, ZuupError};
 pub use event::{Event, EventBus, EventSubscriber, EventType};
 pub use file::{
     ConflictResolution, DiskSpaceInfo, FileManager, FileNameTemplate, FileOrganizationConfig,
@@ -55,4 +55,8 @@ pub use protocol::{Download, ProtocolHandler};
 pub use session::{
     MaintenanceReport, PartialFileInfo, SessionManager, SessionRecoveryInfo, SessionStats,
 };
-pub use types::{DownloadId, DownloadOptions, DownloadRequest as TypesDownloadRequest};
+pub use types::{
+    DownloadId, DownloadOptions, DownloadPriority as DownloadPriorityProps,
+    DownloadProgress as DownloadProgressProps, DownloadRequest as DownloadRequestProps,
+    DownloadState as DownloadStateProps,
+};

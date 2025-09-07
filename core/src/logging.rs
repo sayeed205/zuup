@@ -1,7 +1,6 @@
 //! Logging and tracing infrastructure for Zuup
 
-use std::io;
-use std::path::PathBuf;
+use std::{io, path::PathBuf};
 
 use serde::{Deserialize, Serialize};
 use tracing::Level;

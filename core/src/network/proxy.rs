@@ -147,7 +147,7 @@ impl Default for ProxyChainConfig {
 }
 
 /// Proxy health status
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub enum ProxyHealth {
     /// Proxy is healthy and available
     Healthy,
@@ -156,6 +156,7 @@ pub enum ProxyHealth {
     /// Proxy is temporarily disabled
     Disabled,
     /// Proxy health is unknown (not tested yet)
+    #[default]
     Unknown,
 }
 
@@ -178,12 +179,6 @@ pub struct ProxyStats {
     pub consecutive_failures: u32,
 }
 
-impl Default for ProxyHealth {
-    fn default() -> Self {
-        ProxyHealth::Unknown
-    }
-}
-
 /// Proxy manager for handling multiple proxies with failover
 pub struct ProxyManager {
     /// Proxy chain configuration
@@ -203,7 +198,7 @@ impl ProxyManager {
             config,
             stats: HashMap::new(),
             current_index: std::sync::atomic::AtomicUsize::new(0),
-            rng: tokio::sync::Mutex::new(rand::thread_rng()),
+            rng: tokio::sync::Mutex::new(rand::rng()),
         }
     }
 
@@ -255,8 +250,7 @@ impl ProxyManager {
             return true;
         }
 
-        if pattern.starts_with("*.") {
-            let domain = &pattern[2..];
+        if let Some(domain) = pattern.strip_prefix("*.") {
             return host.ends_with(domain) || host == domain;
         }
 
@@ -353,7 +347,7 @@ impl ProxyManager {
 
         use rand::Rng;
         let mut rng = self.rng.lock().await;
-        let index = rng.r#gen_range(0..proxies.len());
+        let index = rng.random_range(0..proxies.len());
         Some(proxies[index].clone())
     }
 
@@ -396,7 +390,7 @@ impl ProxyManager {
         // Select based on weighted random
         use rand::Rng;
         let mut rng = self.rng.lock().await;
-        let mut random_value = rng.r#gen::<f64>() * total_weight;
+        let mut random_value = rng.random::<f64>() * total_weight;
 
         for (i, weight) in weights.iter().enumerate() {
             random_value -= weight;
@@ -417,10 +411,7 @@ impl ProxyManager {
         response_time: Duration,
     ) {
         let proxy_key = self.get_proxy_key(proxy);
-        let stats = self
-            .stats
-            .entry(proxy_key)
-            .or_insert_with(ProxyStats::default);
+        let stats = self.stats.entry(proxy_key).or_default();
 
         stats.requests += 1;
         if success {
@@ -453,10 +444,7 @@ impl ProxyManager {
         for proxy in &self.config.proxies {
             let health = self.check_proxy_health(proxy).await;
             let proxy_key = self.get_proxy_key(proxy);
-            let stats = self
-                .stats
-                .entry(proxy_key)
-                .or_insert_with(ProxyStats::default);
+            let stats = self.stats.entry(proxy_key).or_default();
 
             let is_healthy = health == ProxyHealth::Healthy;
             stats.health = health;
@@ -505,7 +493,7 @@ impl ProxyManager {
 
     /// Build reqwest client with proxy configuration
     fn build_proxy_client(&self, proxy_config: &EnhancedProxyConfig) -> Result<reqwest::Client> {
-        let mut proxy = Proxy::all(&proxy_config.url.to_string())
+        let mut proxy = Proxy::all(proxy_config.url.to_string())
             .map_err(|e| NetworkError::Proxy(format!("Failed to create proxy: {}", e)))?;
 
         // Add authentication if provided

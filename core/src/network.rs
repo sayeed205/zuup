@@ -267,7 +267,7 @@ impl ConnectionPool {
 
     /// Build proxy configuration
     fn build_proxy(&self, proxy_config: &ProxyConfig) -> Result<Proxy> {
-        let mut proxy = Proxy::all(&proxy_config.url.to_string())
+        let mut proxy = Proxy::all(proxy_config.url.to_string())
             .map_err(|e| NetworkError::Proxy(format!("Failed to create proxy: {}", e)))?;
 
         // Add authentication if provided

@@ -1,13 +1,17 @@
 //! Bandwidth management and throttling
 
-use std::collections::HashMap;
-use std::sync::Arc;
-use std::time::{Duration, Instant};
-use tokio::sync::{Mutex, RwLock};
-use tokio::time::{Interval, interval, sleep_until};
+use std::{
+    collections::HashMap,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
-use crate::error::Result;
-use crate::types::DownloadId;
+use tokio::{
+    sync::{Mutex, RwLock},
+    time::{Interval, interval, sleep_until},
+};
+
+use crate::{error::Result, types::DownloadId};
 
 /// Bandwidth limit configuration
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

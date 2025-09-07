@@ -1,12 +1,13 @@
 //! Configuration management for Zuup
 
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::path::PathBuf;
-use std::time::Duration;
+use std::{collections::HashMap, path::PathBuf, time::Duration};
 
-use crate::metrics::MetricsConfig;
-use crate::types::{ProxyConfig, TlsConfig};
+use serde::{Deserialize, Serialize};
+
+use crate::{
+    metrics::MetricsConfig,
+    types::{ProxyConfig, TlsConfig},
+};
 
 /// Main configuration structure
 #[derive(Default, Debug, Clone, Serialize, Deserialize)]

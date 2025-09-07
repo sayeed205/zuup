@@ -3,17 +3,17 @@
 //! This module provides parsing and handling for Metalink 3.0 and 4.0 formats,
 //! enabling multi-source downloads with checksum verification and source prioritization.
 
-use std::fmt;
-use std::str::FromStr;
+use std::{fmt, str::FromStr};
 
 use chrono::{DateTime, Utc};
-use quick_xml::Reader;
-use quick_xml::events::Event;
+use quick_xml::{Reader, events::Event};
 use serde::{Deserialize, Serialize};
 use url::Url;
 
-use crate::error::{NetworkError, Result, ZuupError};
-use crate::types::{ChecksumAlgorithm, ChecksumConfig, DownloadOptions};
+use crate::{
+    error::{NetworkError, Result, ZuupError},
+    types::{ChecksumAlgorithm, ChecksumConfig, DownloadOptions},
+};
 
 /// Metalink document containing file information and sources
 #[derive(Debug, Clone, Serialize, Deserialize)]

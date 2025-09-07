@@ -1,14 +1,15 @@
 //! Event system for download notifications and monitoring
 
-use std::collections::HashMap;
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{RwLock, broadcast};
 
-use crate::error::Result;
-use crate::types::{DownloadId, DownloadInfo, DownloadProgress};
+use crate::{
+    error::Result,
+    types::{DownloadId, DownloadInfo, DownloadProgress},
+};
 
 /// Events that can be emitted by the download system
 #[derive(Debug, Clone, Serialize, Deserialize)]
