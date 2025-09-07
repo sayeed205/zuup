@@ -1,7 +1,7 @@
 //! Media download integration with yt-dlp
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
 
@@ -10,7 +10,10 @@ use serde::{Deserialize, Serialize};
 use tokio::process::Command;
 use url::Url;
 
-use crate::error::{MediaError, Result, ZuupError};
+use crate::{
+    error::{MediaError, Result, ZuupError},
+    types::DownloadRequest,
+};
 
 /// Media download options for yt-dlp integration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -164,7 +167,7 @@ pub struct QualityTarget {
 }
 
 /// Playlist download options
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct PlaylistOptions {
     /// Start index for playlist downloads (0-based)
     pub start_index: Option<usize>,
@@ -195,23 +198,6 @@ pub struct PlaylistOptions {
 
     /// Subdirectory name template
     pub subdirectory_template: Option<String>,
-}
-
-impl Default for PlaylistOptions {
-    fn default() -> Self {
-        Self {
-            start_index: None,
-            end_index: None,
-            selected_indices: Vec::new(),
-            min_duration: None,
-            max_duration: None,
-            title_filter: Vec::new(),
-            output_path: None,
-            filename_template: None,
-            create_subdirectory: false,
-            subdirectory_template: None,
-        }
-    }
 }
 
 /// Format conversion settings
@@ -260,19 +246,8 @@ pub struct MediaDownloadCoordinator {
 
 impl MediaDownloadCoordinator {
     /// Create a new media download coordinator
-    pub async fn new() -> Result<Self> {
-        let ytdlp_manager = Arc::new(YtDlpManager::new().await?);
-
-        Ok(Self {
-            ytdlp_manager,
-            default_options: MediaDownloadOptions::default(),
-            default_playlist_options: PlaylistOptions::default(),
-        })
-    }
-
-    /// Create coordinator with custom yt-dlp path
-    pub async fn with_ytdlp_path(ytdlp_path: PathBuf) -> Result<Self> {
-        let ytdlp_manager = Arc::new(YtDlpManager::with_path(ytdlp_path).await?);
+    pub async fn new(ytdlp_path: Option<PathBuf>) -> Result<Self> {
+        let ytdlp_manager = Arc::new(YtDlpManager::new(ytdlp_path).await?);
 
         Ok(Self {
             ytdlp_manager,
@@ -287,7 +262,7 @@ impl MediaDownloadCoordinator {
         url: &str,
         options: Option<MediaDownloadOptions>,
         output_path: Option<PathBuf>,
-    ) -> Result<crate::types::DownloadRequest> {
+    ) -> Result<DownloadRequest> {
         let options = options.unwrap_or_else(|| self.default_options.clone());
         let request = self
             .ytdlp_manager
@@ -535,7 +510,7 @@ pub struct PlaylistEntry {
 }
 
 /// Selection criteria for playlist downloads
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct PlaylistSelection {
     /// Start index for playlist downloads (0-based)
     pub start_index: Option<usize>,
@@ -566,23 +541,6 @@ pub struct PlaylistSelection {
 
     /// Subdirectory name template
     pub subdirectory_template: Option<String>,
-}
-
-impl Default for PlaylistSelection {
-    fn default() -> Self {
-        Self {
-            start_index: None,
-            end_index: None,
-            selected_indices: Vec::new(),
-            min_duration: None,
-            max_duration: None,
-            title_filter: Vec::new(),
-            output_path: None,
-            filename_template: None,
-            create_subdirectory: false,
-            subdirectory_template: None,
-        }
-    }
 }
 
 /// Extended metadata for media files
@@ -692,23 +650,16 @@ pub struct YtDlpManager {
 
 impl YtDlpManager {
     /// Create a new yt-dlp manager
-    pub async fn new() -> Result<Self> {
-        let ytdlp_path = Self::find_ytdlp_executable().await?;
-        let temp_dir = std::env::temp_dir().join("zuup-ytdlp");
-        tokio::fs::create_dir_all(&temp_dir).await?;
-
-        Ok(Self {
-            ytdlp_path,
-            temp_dir,
-            default_options: MediaDownloadOptions::default(),
-        })
-    }
-
-    /// Create a new yt-dlp manager with custom path
-    pub async fn with_path(ytdlp_path: PathBuf) -> Result<Self> {
-        if !ytdlp_path.exists() {
-            return Err(ZuupError::MediaDownload(MediaError::YtDlpNotFound));
-        }
+    pub async fn new(ytdlp_path: Option<PathBuf>) -> Result<Self> {
+        let ytdlp_path = match ytdlp_path {
+            Some(path) => {
+                if !path.exists() {
+                    return Err(ZuupError::MediaDownload(MediaError::YtDlpNotFound));
+                }
+                path
+            }
+            None => Self::find_ytdlp_executable().await?,
+        };
 
         let temp_dir = std::env::temp_dir().join("zuup-ytdlp");
         tokio::fs::create_dir_all(&temp_dir).await?;
@@ -854,9 +805,10 @@ impl YtDlpManager {
         if let Some(ref vcodec) = preferences.preferred_video_codec {
             let codec_candidates: Vec<&MediaFormat> = candidates
                 .iter()
-                .filter(|f| f.vcodec.as_ref().map_or(false, |c| c.contains(vcodec)))
+                .filter(|f| f.vcodec.as_ref().is_some_and(|c| c.contains(vcodec)))
                 .copied()
                 .collect();
+
             if !codec_candidates.is_empty() {
                 candidates = codec_candidates;
             }
@@ -865,7 +817,7 @@ impl YtDlpManager {
         if let Some(ref acodec) = preferences.preferred_audio_codec {
             let codec_candidates: Vec<&MediaFormat> = candidates
                 .iter()
-                .filter(|f| f.acodec.as_ref().map_or(false, |c| c.contains(acodec)))
+                .filter(|f| f.acodec.as_ref().is_some_and(|c| c.contains(acodec)))
                 .copied()
                 .collect();
             if !codec_candidates.is_empty() {
@@ -907,11 +859,11 @@ impl YtDlpManager {
 
         // Filter by file size limits
         if let Some(max_size) = preferences.max_file_size {
-            candidates.retain(|f| f.filesize.map_or(true, |size| size <= max_size));
+            candidates.retain(|f| f.filesize.is_none_or(|size| size <= max_size));
         }
 
         if let Some(min_size) = preferences.min_file_size {
-            candidates.retain(|f| f.filesize.map_or(true, |size| size >= min_size));
+            candidates.retain(|f| f.filesize.is_none_or(|size| size >= min_size));
         }
 
         candidates.first().map(|f| (*f).clone()).ok_or_else(|| {
@@ -926,10 +878,10 @@ impl YtDlpManager {
         let mut score = 0.0;
 
         // Resolution score (width * height)
-        if let Some(ref resolution) = format.resolution {
-            if let Some((width, height)) = self.parse_resolution(resolution) {
-                score += (width * height) as f64;
-            }
+        if let Some(ref resolution) = format.resolution
+            && let Some((width, height)) = self.parse_resolution(resolution)
+        {
+            score += (width * height) as f64;
         }
 
         // Bitrate score
@@ -958,29 +910,28 @@ impl YtDlpManager {
     fn calculate_quality_difference(&self, format: &MediaFormat, target: &QualityTarget) -> f64 {
         let mut diff = 0.0;
 
-        if let Some(target_resolution) = &target.resolution {
-            if let Some(ref format_resolution) = format.resolution {
-                if let (Some((target_w, target_h)), Some((format_w, format_h))) = (
-                    self.parse_resolution(target_resolution),
-                    self.parse_resolution(format_resolution),
-                ) {
-                    let target_pixels = (target_w * target_h) as f64;
-                    let format_pixels = (format_w * format_h) as f64;
-                    diff += (target_pixels - format_pixels).abs() / target_pixels;
-                }
-            }
+        if let Some(target_resolution) = &target.resolution
+            && let Some(format_resolution) = &format.resolution
+            && let (Some((target_w, target_h)), Some((format_w, format_h))) = (
+                self.parse_resolution(target_resolution),
+                self.parse_resolution(format_resolution),
+            )
+        {
+            let target_pixels = (target_w * target_h) as f64;
+            let format_pixels = (format_w * format_h) as f64;
+            diff += (target_pixels - format_pixels).abs() / target_pixels;
         }
 
-        if let Some(target_bitrate) = target.bitrate {
-            if let Some(format_bitrate) = format.vbr.or(format.abr) {
-                diff += (target_bitrate - format_bitrate).abs() / target_bitrate;
-            }
+        if let Some(target_bitrate) = target.bitrate
+            && let Some(format_bitrate) = format.vbr.or(format.abr)
+        {
+            diff += (target_bitrate - format_bitrate).abs() / target_bitrate;
         }
 
-        if let Some(target_fps) = target.fps {
-            if let Some(format_fps) = format.fps {
-                diff += (target_fps - format_fps).abs() / target_fps;
-            }
+        if let Some(target_fps) = target.fps
+            && let Some(format_fps) = format.fps
+        {
+            diff += (target_fps - format_fps).abs() / target_fps;
         }
 
         diff
@@ -988,13 +939,14 @@ impl YtDlpManager {
 
     /// Parse resolution string (e.g., "1920x1080") into (width, height)
     fn parse_resolution(&self, resolution: &str) -> Option<(u32, u32)> {
-        let parts: Vec<&str> = resolution.split('x').collect();
-        if parts.len() == 2 {
-            if let (Ok(width), Ok(height)) = (parts[0].parse::<u32>(), parts[1].parse::<u32>()) {
-                return Some((width, height));
+        match resolution.split('x').collect::<Vec<_>>()[..] {
+            [w, h] => {
+                let width = w.parse::<u32>().ok()?;
+                let height = h.parse::<u32>().ok()?;
+                Some((width, height))
             }
+            _ => None,
         }
-        None
     }
 
     /// Extract detailed metadata for file naming and organization
@@ -1129,11 +1081,8 @@ impl YtDlpManager {
                 .map_or("Unknown".to_string(), |u| self.sanitize_filename(u)),
         );
         filename = filename.replace(
-            "%(upload_date)s",
-            &metadata
-                .upload_date
-                .as_ref()
-                .unwrap_or(&"Unknown".to_string()),
+            "%(uploader)s",
+            &self.sanitize_filename(metadata.uploader.as_deref().unwrap_or("Unknown")),
         );
         filename = filename.replace("%(ext)s", &format.ext);
         filename = filename.replace("%(format_id)s", &format.format_id);
@@ -1639,51 +1588,38 @@ impl YtDlpManager {
         entry: &MediaInfo,
         options: &PlaylistOptions,
     ) -> bool {
-        // Check index range
-        if let Some(start) = options.start_index {
-            if index < start {
+        // Index range
+        if options.start_index.is_some_and(|start| index < start) {
+            return false;
+        }
+
+        if options.end_index.is_some_and(|end| index > end) {
+            return false;
+        }
+
+        // Specific indices
+        if !options.selected_indices.is_empty() && !options.selected_indices.contains(&index) {
+            return false;
+        }
+
+        // Duration filter
+        if let Some(duration) = entry.duration {
+            if options.min_duration.is_some_and(|min| duration < min) {
+                return false;
+            }
+            if options.max_duration.is_some_and(|max| duration > max) {
                 return false;
             }
         }
 
-        if let Some(end) = options.end_index {
-            if index > end {
-                return false;
-            }
-        }
-
-        // Check specific indices
-        if !options.selected_indices.is_empty() {
-            if !options.selected_indices.contains(&index) {
-                return false;
-            }
-        }
-
-        // Check duration filter
-        if let Some(min_duration) = options.min_duration {
-            if let Some(duration) = entry.duration {
-                if duration < min_duration {
-                    return false;
-                }
-            }
-        }
-
-        if let Some(max_duration) = options.max_duration {
-            if let Some(duration) = entry.duration {
-                if duration > max_duration {
-                    return false;
-                }
-            }
-        }
-
-        // Check title filter
+        // Title filter
         if !options.title_filter.is_empty() {
             let title_lower = entry.title.to_lowercase();
-            let matches = options
+            if !options
                 .title_filter
                 .iter()
-                .any(|filter| title_lower.contains(&filter.to_lowercase()));
-            if !matches {
+                .any(|filter| title_lower.contains(&filter.to_lowercase()))
+            {
                 return false;
             }
         }
@@ -1708,21 +1644,21 @@ impl YtDlpManager {
     /// Apply format conversion during download
     pub async fn apply_format_conversion(
         &self,
-        input_path: &PathBuf,
+        input_path: &Path,
         settings: &FormatConversionSettings,
     ) -> Result<PathBuf> {
         if !settings.extract_audio && settings.video_format.is_none() {
             // No conversion needed
-            return Ok(input_path.clone());
+            return Ok(input_path.to_path_buf());
         }
 
         let output_path = if settings.extract_audio {
             let audio_ext = settings.audio_format.as_deref().unwrap_or("mp3");
-            input_path.with_extension(audio_ext)
+            input_path.with_extension(audio_ext) // returns PathBuf
         } else if let Some(ref video_format) = settings.video_format {
             input_path.with_extension(video_format)
         } else {
-            input_path.clone()
+            input_path.to_path_buf()
         };
 
         let mut args = vec![
