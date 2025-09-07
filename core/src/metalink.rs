@@ -123,7 +123,7 @@ impl MetalinkParser {
     pub async fn parse_file(file_path: &std::path::Path) -> Result<Metalink> {
         let content = tokio::fs::read_to_string(file_path)
             .await
-            .map_err(|e| ZuupError::Io(e))?;
+            .map_err(ZuupError::Io)?;
         Self::parse(&content)
     }
 
@@ -155,51 +155,42 @@ impl MetalinkParser {
             match reader.read_event_into(&mut buf) {
                 Ok(Event::Start(ref e)) => {
                     let name = e.name();
-                    match name.as_ref() {
-                        b"metalink" => {
-                            // Check for version attribute or xmlns
-                            for attr in e.attributes() {
-                                let attr = attr.map_err(|e| {
-                                    ZuupError::Config(format!("Invalid XML attribute: {}", e))
-                                })?;
-                                match attr.key.as_ref() {
-                                    b"version" => {
-                                        let version_str = std::str::from_utf8(&attr.value)
-                                            .map_err(|e| {
-                                                ZuupError::Config(format!(
-                                                    "Invalid UTF-8 in version: {}",
-                                                    e
-                                                ))
-                                            })?;
-                                        if version_str.starts_with("4.") {
-                                            return Ok(MetalinkVersion::V4);
-                                        } else if version_str.starts_with("3.") {
-                                            return Ok(MetalinkVersion::V3);
-                                        }
+                    if name.as_ref() == b"metalink" {
+                        // Check for version attribute or xmlns
+                        for attr in e.attributes() {
+                            let attr = attr.map_err(|e| {
+                                ZuupError::Config(format!("Invalid XML attribute: {}", e))
+                            })?;
+                            match attr.key.as_ref() {
+                                b"version" => {
+                                    let version_str =
+                                        std::str::from_utf8(&attr.value).map_err(|e| {
+                                            ZuupError::Config(format!(
+                                                "Invalid UTF-8 in version: {}",
+                                                e
+                                            ))
+                                        })?;
+                                    if version_str.starts_with("4.") {
+                                        return Ok(MetalinkVersion::V4);
+                                    } else if version_str.starts_with("3.") {
+                                        return Ok(MetalinkVersion::V3);
                                     }
-                                    b"xmlns" => {
-                                        let xmlns =
-                                            std::str::from_utf8(&attr.value).map_err(|e| {
-                                                ZuupError::Config(format!(
-                                                    "Invalid UTF-8 in xmlns: {}",
-                                                    e
-                                                ))
-                                            })?;
-                                        if xmlns.contains("metalink/4.0")
-                                            || xmlns.contains("rfc5854")
-                                        {
-                                            return Ok(MetalinkVersion::V4);
-                                        } else if xmlns.contains("metalink/3.0") {
-                                            return Ok(MetalinkVersion::V3);
-                                        }
-                                    }
-                                    _ => {}
                                 }
+                                b"xmlns" => {
+                                    let xmlns = std::str::from_utf8(&attr.value).map_err(|e| {
+                                        ZuupError::Config(format!("Invalid UTF-8 in xmlns: {}", e))
+                                    })?;
+                                    if xmlns.contains("metalink/4.0") || xmlns.contains("rfc5854") {
+                                        return Ok(MetalinkVersion::V4);
+                                    } else if xmlns.contains("metalink/3.0") {
+                                        return Ok(MetalinkVersion::V3);
+                                    }
+                                }
+                                _ => {}
                             }
-                            // Default to v4 if no version specified
-                            return Ok(MetalinkVersion::V4);
                         }
-                        _ => {}
+                        // Default to v4 if no version specified
+                        return Ok(MetalinkVersion::V4);
                     }
                 }
                 Ok(Event::Eof) => break,
@@ -247,18 +238,16 @@ impl MetalinkParser {
                                 let attr = attr.map_err(|e| {
                                     ZuupError::Config(format!("Invalid XML attribute: {}", e))
                                 })?;
-                                match attr.key.as_ref() {
-                                    b"name" => {
-                                        name = std::str::from_utf8(&attr.value)
-                                            .map_err(|e| {
-                                                ZuupError::Config(format!(
-                                                    "Invalid UTF-8 in name: {}",
-                                                    e
-                                                ))
-                                            })?
-                                            .to_string();
-                                    }
-                                    _ => {}
+
+                                if attr.key.as_ref() == b"name" {
+                                    let name_str =
+                                        std::str::from_utf8(&attr.value).map_err(|e| {
+                                            ZuupError::Config(format!(
+                                                "Invalid UTF-8 in name: {}",
+                                                e
+                                            ))
+                                        })?;
+                                    name = name_str.to_string();
                                 }
                             }
 
@@ -332,9 +321,13 @@ impl MetalinkParser {
                             loop {
                                 match reader.read_event_into(&mut buf) {
                                     Ok(Event::Text(e)) => {
-                                        let text = std::str::from_utf8(e.as_ref()).map_err(|e| {
-                                            ZuupError::Config(format!("Invalid UTF-8 in XML: {}", e))
-                                        })?;
+                                        let text =
+                                            std::str::from_utf8(e.as_ref()).map_err(|e| {
+                                                ZuupError::Config(format!(
+                                                    "Invalid UTF-8 in XML: {}",
+                                                    e
+                                                ))
+                                            })?;
                                         url_content.push_str(text);
                                     }
                                     Ok(Event::End(ref e)) if e.name().as_ref() == b"url" => break,
@@ -353,7 +346,7 @@ impl MetalinkParser {
                                 }
                             }
 
-                            if let Ok(url) = Url::parse(&url_content.trim()) {
+                            if let Ok(url) = Url::parse(url_content.trim()) {
                                 current_urls.push(MetalinkUrl {
                                     url,
                                     priority,
@@ -389,9 +382,13 @@ impl MetalinkParser {
                                 loop {
                                     match reader.read_event_into(&mut buf) {
                                         Ok(Event::Text(e)) => {
-                                            let text = std::str::from_utf8(e.as_ref()).map_err(|e| {
-                                                ZuupError::Config(format!("Invalid UTF-8 in XML: {}", e))
-                                            })?;
+                                            let text =
+                                                std::str::from_utf8(e.as_ref()).map_err(|e| {
+                                                    ZuupError::Config(format!(
+                                                        "Invalid UTF-8 in XML: {}",
+                                                        e
+                                                    ))
+                                                })?;
                                             hash_content.push_str(text);
                                         }
                                         Ok(Event::End(ref e)) if e.name().as_ref() == b"hash" => {
@@ -542,11 +539,7 @@ impl MetalinkFile {
         }
 
         // Set max connections from the first URL that specifies it
-        if let Some(url) = self.urls.first() {
-            if let Some(max_conn) = url.max_connections {
-                options.max_connections = Some(max_conn);
-            }
-        }
+        options.max_connections = self.urls.first().and_then(|url| url.max_connections);
 
         options
     }

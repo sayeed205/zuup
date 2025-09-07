@@ -8,7 +8,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
-use crate::error::{ZuupError, Result};
+use crate::error::{Result, ZuupError};
 use crate::types::{DownloadId, DownloadInfo, DownloadState};
 
 /// Session format version for backward compatibility
@@ -1143,8 +1143,7 @@ impl SessionStats {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::download::DownloadProgress;
-    use crate::types::DownloadOptions;
+    use crate::types::{DownloadOptions, DownloadPriority, DownloadProgress, DownloadType};
     use std::path::PathBuf;
     use std::time::Duration;
     use tempfile::TempDir;
@@ -1158,11 +1157,20 @@ mod tests {
             output_path: PathBuf::from("/tmp"),
             state,
             progress: DownloadProgress::new(),
-            priority: crate::download::DownloadPriority::Normal,
+            priority: DownloadPriority::Normal,
             created_at: Utc::now(),
             started_at: None,
             completed_at: None,
             options: DownloadOptions::default(),
+
+            category: None,
+            content_type: None,
+            cookies: None,
+            download_type: DownloadType::Standard,
+            error_message: None,
+            file_size: None,
+            last_modified: None,
+            referrer: None,
         }
     }
 
