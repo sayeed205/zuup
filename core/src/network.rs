@@ -418,7 +418,7 @@ pub struct NetworkClientConfig {
 impl Default for NetworkClientConfig {
     fn default() -> Self {
         Self {
-            user_agent: format!("Ruso/{}", env!("CARGO_PKG_VERSION")),
+            user_agent: format!("Zuup/{}", env!("CARGO_PKG_VERSION")),
             timeout: Duration::from_secs(30),
             max_redirects: 10,
             proxy: None,
