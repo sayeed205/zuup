@@ -14,7 +14,7 @@ use crate::{
     protocol::{ProtocolHandler, Download, ProtocolCapabilities, DownloadMetadata, DownloadOperation},
     download::{DownloadRequest, DownloadState},
     types::DownloadProgress,
-    error::{RusoError, Result},
+    error::{ZuupError, Result, ProtocolError},
 };
 
 /// BitTorrent protocol handler with DHT and PEX support
@@ -269,11 +269,11 @@ impl BitTorrentProtocolHandler {
 
             // Create the session with configured options
             let session = librqbit::Session::new_with_opts(
-                "/tmp/ruso-torrents".into(), // Default download directory
+                "/tmp/zuup-torrents".into(), // Default download directory
                 session_opts
             ).await
-                .map_err(|e| RusoError::Protocol(
-                    ruso_core::error::ProtocolError::InitializationFailed(
+                .map_err(|e| ZuupError::Protocol(
+                    ProtocolError::InitializationFailed(
                         format!("Failed to create BitTorrent session: {}", e)
                     )
                 ))?;
@@ -579,7 +579,7 @@ impl ProtocolHandler for BitTorrentProtocolHandler {
 
         // Use the first URL for now
         let url = request.urls.first()
-            .ok_or_else(|| RusoError::Config("No URLs provided".to_string()))?;
+            .ok_or_else(|| ZuupError::Config("No URLs provided".to_string()))?;
 
         let download = BitTorrentDownload::new(
             url.clone(),
@@ -1131,7 +1131,7 @@ impl BitTorrentDownload {
         {
             let session_guard = self.session.read().await;
             if session_guard.is_none() {
-                return Err(RusoError::Protocol(
+                return Err(ZuupError::Protocol(
                     ruso_core::error::ProtocolError::NotInitialized("BitTorrent session not initialized".to_string())
                 ));
             }
@@ -1144,7 +1144,7 @@ impl BitTorrentDownload {
             // Parse torrent file
             self.parse_torrent_file().await?;
         } else {
-            return Err(RusoError::Protocol(
+            return Err(ZuupError::Protocol(
                 ruso_core::error::ProtocolError::UnsupportedUrl(
                     format!("Unsupported BitTorrent URL: {}", self.url)
                 )
@@ -1161,7 +1161,7 @@ impl BitTorrentDownload {
         // For now, we'll do basic magnet link validation and extract display name
         // The actual parsing will be handled by rqbit when we add the torrent
         if !magnet_str.starts_with("magnet:") {
-            return Err(RusoError::Protocol(
+            return Err(ZuupError::Protocol(
                 ruso_core::error::ProtocolError::ParseError(
                     "Invalid magnet link format".to_string()
                 )
@@ -1536,7 +1536,7 @@ impl BitTorrentDownload {
 impl Download for BitTorrentDownload {
     async fn start(&mut self) -> Result<()> {
         if self.state != DownloadState::Pending {
-            return Err(RusoError::InvalidStateTransition {
+            return Err(ZuupError::InvalidStateTransition {
                 from: self.state.clone(),
                 to: DownloadState::Active,
             });
@@ -1544,7 +1544,7 @@ impl Download for BitTorrentDownload {
 
         let session_guard = self.session.read().await;
         let _session = session_guard.as_ref()
-            .ok_or_else(|| RusoError::Protocol(
+            .ok_or_else(|| ZuupError::Protocol(
                 ruso_core::error::ProtocolError::NotInitialized("BitTorrent session not initialized".to_string())
             ))?.clone();
         drop(session_guard);
@@ -1577,7 +1577,7 @@ impl Download for BitTorrentDownload {
 
             let session_guard = self.session.read().await;
             let session = session_guard.as_ref()
-                .ok_or_else(|| RusoError::Protocol(
+                .ok_or_else(|| ZuupError::Protocol(
                     ruso_core::error::ProtocolError::NotInitialized("BitTorrent session not initialized".to_string())
                 ))?;
 
@@ -1599,7 +1599,7 @@ impl Download for BitTorrentDownload {
                                 let mut st = self.shared_state.lock().await;
                                 *st = self.state.clone();
                             }
-                            return Err(RusoError::Protocol(
+                            return Err(ZuupError::Protocol(
                                 ruso_core::error::ProtocolError::InitializationFailed(error_msg)
                             ));
                         }
@@ -1607,7 +1607,7 @@ impl Download for BitTorrentDownload {
 
                     // Get the managed torrent from the session
                     let handle = session.get(librqbit::api::TorrentIdOrHash::Id(torrent_id))
-                        .ok_or_else(|| RusoError::Protocol(
+                        .ok_or_else(|| ZuupError::Protocol(
                             ruso_core::error::ProtocolError::InitializationFailed(
                                 "Failed to get torrent handle from session".to_string()
                             )
@@ -1634,7 +1634,7 @@ impl Download for BitTorrentDownload {
                         let mut st = self.shared_state.lock().await;
                         *st = self.state.clone();
                     }
-                    Err(RusoError::Protocol(
+                    Err(ZuupError::Protocol(
                         ruso_core::error::ProtocolError::InitializationFailed(error_msg)
                     ))
                 }
@@ -1645,7 +1645,7 @@ impl Download for BitTorrentDownload {
 
             let session_guard = self.session.read().await;
             let session = session_guard.as_ref()
-                .ok_or_else(|| RusoError::Protocol(
+                .ok_or_else(|| ZuupError::Protocol(
                     ruso_core::error::ProtocolError::NotInitialized("BitTorrent session not initialized".to_string())
                 ))?;
 
@@ -1667,7 +1667,7 @@ impl Download for BitTorrentDownload {
                                 let mut st = self.shared_state.lock().await;
                                 *st = self.state.clone();
                             }
-                            return Err(RusoError::Protocol(
+                            return Err(ZuupError::Protocol(
                                 ruso_core::error::ProtocolError::InitializationFailed(error_msg)
                             ));
                         }
@@ -1675,7 +1675,7 @@ impl Download for BitTorrentDownload {
 
                     // Get the managed torrent from the session
                     let handle = session.get(librqbit::api::TorrentIdOrHash::Id(torrent_id))
-                        .ok_or_else(|| RusoError::Protocol(
+                        .ok_or_else(|| ZuupError::Protocol(
                             ruso_core::error::ProtocolError::InitializationFailed(
                                 "Failed to get torrent handle from session".to_string()
                             )

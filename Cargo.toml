@@ -3,42 +3,37 @@ members = ['core']
 resolver = "3"
 
 [workspace.dependencies]
-# Async runtime and networking
+# Core dependencies (always included)
 tokio = { version = "1", features = ["full"] }
-
-# Serialization and deserialization
 serde = { version = "1", features = ["derive"] }
-
-# Unique ID
 cuid2 = "0.1"
-
-# Database
 sled = "0.34"
-
-# Error handling
 thiserror = "2"
-
-# Time handling
 chrono = { version = "0.4", features = ["serde"] }
-
-# Url handling
 url = { version = "2", features = ['serde'] }
-
-# Async traits
 async-trait = "0.1"
-
-# Logging and tracing
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "chrono"] }
-
-
-# Configuration
 config = "0.15"
-
-# File system operations
 tempfile = "3"
+dirs = "6"
+toml = "0.9"
+serde_yaml = "0.9"
+serde_json = "1"
+metrics = "0.24"
+metrics-exporter-prometheus = "0.17"
+trust-dns-resolver = "0.23"
 
-# HTTP client
+# Common utility dependencies
+bytes = "1"
+md5 = "0.8"
+hex = "0.4"
+which = "7"
+percent-encoding = "2"
+rand = "0.9"
+quick-xml = { version = "0.38", features = ['serialize'] }
+
+# HTTP/HTTPS protocol dependencies
 reqwest = { version = "0.12", features = [
     "json",
     "stream",
@@ -47,26 +42,17 @@ reqwest = { version = "0.12", features = [
     "brotli",
     "deflate",
 ], default-features = false }
-
-# Directory utilities
-dirs = "6"
-
-# Additional dependencies for config parsing
-toml = "0.9"
-serde_yaml = "0.9"
-serde_json = "1"
-
-# Metrics
-metrics = "0.24"
-metrics-exporter-prometheus = "0.17"
-
-# DNS resolution
-trust-dns-resolver = "0.23"
-
-# Cryptography
 ring = "0.17"
 rustls = "0.23"
 rustls-native-certs = "0.8"
 rustls-pemfile = "2"
-
 webpki-roots = "1"
+
+# FTP protocol dependencies
+async_ftp = "6"
+
+# SFTP protocol dependencies
+ssh2 = "0.9"
+
+# BitTorrent protocol dependencies
+librqbit = "8" 
