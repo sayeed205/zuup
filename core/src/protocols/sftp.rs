@@ -114,7 +114,6 @@ pub struct SftpDownload {
     url: Url,
     output_path: Option<PathBuf>,
     filename: Option<String>,
-    timeout: u64,
     state: Arc<RwLock<DownloadState>>,
     progress: Arc<RwLock<DownloadProgress>>,
 }
@@ -125,13 +124,12 @@ impl SftpDownload {
         url: Url,
         output_path: Option<PathBuf>,
         filename: Option<String>,
-        timeout: u64,
+        _timeout: u64,
     ) -> Self {
         Self {
             url,
             output_path,
             filename,
-            timeout,
             state: Arc::new(RwLock::new(DownloadState::Pending)),
             progress: Arc::new(RwLock::new(DownloadProgress::new())),
         }

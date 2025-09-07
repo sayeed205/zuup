@@ -359,17 +359,7 @@ pub fn init_logging(
     Ok(())
 }
 
-/// Parse log level string into tracing Level
-fn parse_log_level(level: &str) -> Result<Level, Box<dyn std::error::Error + Send + Sync>> {
-    match level.to_lowercase().as_str() {
-        "trace" => Ok(Level::TRACE),
-        "debug" => Ok(Level::DEBUG),
-        "info" => Ok(Level::INFO),
-        "warn" => Ok(Level::WARN),
-        "error" => Ok(Level::ERROR),
-        _ => Err(format!("Invalid log level: {}", level).into()),
-    }
-}
+
 
 /// Performance tracing utilities
 pub mod performance {

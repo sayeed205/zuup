@@ -163,7 +163,6 @@ pub struct FtpDownload {
     filename: Option<String>,
     mode: FtpMode,
     timeout: u64,
-    security: FtpSecurity,
     state: Arc<RwLock<DownloadState>>,
     progress: Arc<RwLock<DownloadProgress>>,
     #[cfg(feature = "ftp")]
@@ -178,7 +177,7 @@ impl FtpDownload {
         filename: Option<String>,
         mode: FtpMode,
         timeout: u64,
-        security: FtpSecurity,
+        _security: FtpSecurity,
     ) -> Self {
         Self {
             url,
@@ -186,7 +185,6 @@ impl FtpDownload {
             filename,
             mode,
             timeout,
-            security,
             state: Arc::new(RwLock::new(DownloadState::Pending)),
             progress: Arc::new(RwLock::new(DownloadProgress::new())),
             #[cfg(feature = "ftp")]

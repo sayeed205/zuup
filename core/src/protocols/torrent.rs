@@ -961,68 +961,11 @@ impl BitTorrentDownload {
         }
     }
 
-    /// Update DHT statistics
-    async fn update_dht_stats(&self) {
-        if !self.config.enable_dht {
-            return;
-        }
 
-        // This would be updated from the actual DHT implementation
-        // For now, we'll simulate some basic stats
-        let mut stats = self.dht_stats.lock().await;
-        stats.last_updated = Some(Utc::now());
 
-        // In a real implementation, these would come from the DHT subsystem
-        // stats.nodes_count = dht.node_count();
-        // stats.good_nodes = dht.good_node_count();
-        // etc.
 
-        tracing::debug!(
-            nodes = %stats.nodes_count,
-            good_nodes = %stats.good_nodes,
-            "Updated DHT statistics"
-        );
-    }
 
-    /// Update PEX statistics
-    async fn update_pex_stats(&self) {
-        if !self.config.enable_pex {
-            return;
-        }
 
-        // This would be updated from the actual PEX implementation
-        let mut stats = self.pex_stats.lock().await;
-        stats.last_updated = Some(Utc::now());
-
-        tracing::debug!(
-            peers_received = %stats.peers_received,
-            peers_sent = %stats.peers_sent,
-            "Updated PEX statistics"
-        );
-    }
-
-    /// Update tracker statistics
-    async fn update_tracker_stats(&self) {
-        if !self.config.tracker_config.enabled {
-            return;
-        }
-
-        // This would be updated from the actual tracker communication
-        // For now, we'll maintain placeholder stats
-        let mut stats = self.tracker_stats.lock().await;
-
-        // In a real implementation, this would come from the torrent handle
-        // and track actual tracker communication
-        for _tracker_stat in stats.iter_mut() {
-            // Update last announce time, etc.
-            // This is placeholder logic
-        }
-
-        tracing::debug!(
-            tracker_count = stats.len(),
-            "Updated tracker statistics"
-        );
-    }
 
     /// Initialize tracker statistics from torrent metadata
     async fn initialize_tracker_stats(&self, tracker_urls: Vec<String>) {
@@ -1079,48 +1022,7 @@ impl BitTorrentDownload {
         }
     }
 
-    /// Check if download is complete and should start seeding
-    async fn check_seeding_transition(&mut self) -> Result<()> {
-        if !self.config.enable_seeding {
-            return Ok(());
-        }
 
-        if let Some(handle) = &self.torrent_handle {
-            let stats = handle.stats();
-
-            // Check if download is complete
-            if stats.progress_bytes >= stats.total_bytes && stats.total_bytes > 0 {
-                if let Some(info) = &self.torrent_info {
-                    // Start seeding management
-                    let mut manager = self.seeding_manager.lock().await;
-                    if !manager.active_seeds.contains_key(&info.info_hash) {
-                        manager.add_torrent(
-                            info.info_hash.clone(),
-                            stats.total_bytes,
-                            self.config.seeding_ratio,
-                            if self.config.max_seeding_time > 0 {
-                                Some(Duration::from_secs(self.config.max_seeding_time))
-                            } else {
-                                None
-                            },
-                        );
-
-                        tracing::info!(
-                            info_hash = %info.info_hash,
-                            downloaded_bytes = %stats.total_bytes,
-                            target_ratio = %self.config.seeding_ratio,
-                            "Started seeding for completed torrent"
-                        );
-                    }
-
-                    // Update upload statistics
-                    manager.update_upload_stats(&info.info_hash, stats.uploaded_bytes);
-                }
-            }
-        }
-
-        Ok(())
-    }
 
     /// Parse torrent file or magnet link to extract information
     async fn parse_torrent(&mut self) -> Result<()> {
@@ -1470,60 +1372,7 @@ impl BitTorrentDownload {
         });
     }
 
-    /// Update progress from torrent handle with peer and seeding information
-    async fn update_progress(&mut self) {
-        if let Some(handle) = &self.torrent_handle {
-            let stats = handle.stats();
-            self.progress.total_size = Some(stats.total_bytes);
-            self.progress.downloaded_size = stats.progress_bytes;
-            self.progress.upload_size = Some(stats.uploaded_bytes);
 
-            // Calculate speeds based on time elapsed since last update
-            {
-                let mut last_update = self.last_stats_update.lock().await;
-                let now = Instant::now();
-                let time_elapsed = now.duration_since(*last_update);
-
-                if time_elapsed >= Duration::from_secs(1) {
-                    // Calculate download/upload speeds (simplified calculation)
-                    // In a real implementation, we'd track previous values and calculate deltas
-                    self.progress.download_speed = 0; // Would calculate: (current_downloaded - previous_downloaded) / time_elapsed
-                    self.progress.upload_speed = Some(0); // Would calculate: (current_uploaded - previous_uploaded) / time_elapsed
-                    *last_update = now;
-                }
-            }
-
-            // Get peer connection count (placeholder - would need actual peer count from librqbit)
-            self.progress.connections = 0; // Would get from handle.peer_count() or similar
-
-            // Calculate completion percentage
-            if stats.total_bytes > 0 {
-                self.progress.percentage = ((stats.progress_bytes as f64 / stats.total_bytes as f64) * 100.0) as u8;
-            }
-
-            // Update peer statistics
-            if let Some(info) = &self.torrent_info {
-                let peer_stats = PeerStats {
-                    connected_peers: 0, // Would get from actual peer manager
-                    downloading_peers: 0,
-                    seeding_peers: 0,
-                    total_downloaded: stats.progress_bytes,
-                    total_uploaded: stats.uploaded_bytes,
-                    last_updated: Utc::now(),
-                };
-
-                let mut stats_map = self.peer_stats.lock().await;
-                stats_map.insert(info.info_hash.clone(), peer_stats);
-            }
-
-            // Update DHT and PEX statistics
-            self.update_dht_stats().await;
-            self.update_pex_stats().await;
-
-            // Check for seeding transition
-            let _ = self.check_seeding_transition().await;
-        }
-    }
 }
 
 #[allow(dead_code)]
