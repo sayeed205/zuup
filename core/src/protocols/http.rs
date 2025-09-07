@@ -5,14 +5,6 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
-use crete::{
-    download::{DownloadRequest, DownloadState},
-    error::{NetworkError, ProtocolError, Result, ZuupError},
-    protocol::{
-        Download, DownloadMetadata, DownloadOperation, ProtocolCapabilities, ProtocolHandler,
-    },
-    types::DownloadProgress,
-};
 use futures::StreamExt;
 use reqwest::{Client, ClientBuilder, Response};
 use tokio::fs::File;
@@ -20,6 +12,15 @@ use tokio::io::AsyncWriteExt;
 use tokio::sync::{Mutex, RwLock};
 use tracing::{debug, error, info};
 use url::Url;
+
+use crate::{
+    download::{DownloadRequest, DownloadState},
+    error::{NetworkError, ProtocolError, Result, ZuupError},
+    protocol::{
+        Download, DownloadMetadata, DownloadOperation, ProtocolCapabilities, ProtocolHandler,
+    },
+    types::DownloadProgress,
+};
 
 /// HTTP/HTTPS protocol handler
 pub struct HttpProtocolHandler {
