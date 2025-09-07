@@ -11,6 +11,7 @@ pub mod file;
 pub mod media;
 pub mod metalink;
 pub mod metrics;
+pub mod network;
 pub mod protocol;
 pub mod session;
 pub mod types;

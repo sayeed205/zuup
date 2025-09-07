@@ -26,6 +26,10 @@ toml = { workspace = true }
 serde_yaml = { workspace = true }
 metrics = { workspace = true }
 metrics-exporter-prometheus = { workspace = true }
+trust-dns-resolver = { workspace = true }
+rustls = { workspace = true }
+rustls-native-certs = { workspace = true }
+ring = { workspace = true }
 
 bytes = "1"
 md5 = "0.8"
