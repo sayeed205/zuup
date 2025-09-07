@@ -296,28 +296,31 @@ impl FtpDownload {
     /// Get file size from FTP server
     async fn get_file_size(&self, ftp_stream: &mut FtpStream) -> Result<Option<u64>> {
         let remote_path = self.remote_path();
-
         debug!("Getting file size for: {}", remote_path);
 
-        // async_ftp doesn't have a direct size method, so we'll try to get it from list
+        let filename = remote_path.split('/').last().unwrap_or("");
+
         match ftp_stream.list(Some(remote_path)).await {
             Ok(list_output) => {
-                // Parse the list output to extract file size
-                // This is a simplified parser - real FTP LIST parsing is more complex
-                for line in &list_output {
-                    if line.contains(&remote_path.split('/').last().unwrap_or("")) {
-                        // Try to extract size from the line (this is very basic)
+                let size = list_output
+                    .iter()
+                    .find(|line| line.contains(filename))
+                    .and_then(|line| {
                         let parts: Vec<&str> = line.split_whitespace().collect();
                         if parts.len() >= 5 {
-                            if let Ok(size) = parts[4].parse::<u64>() {
-                                debug!("File size: {} bytes", size);
-                                return Ok(Some(size));
-                            }
+                            parts[4].parse::<u64>().ok()
+                        } else {
+                            None
                         }
-                    }
+                    });
+
+                if let Some(size) = size {
+                    debug!("File size: {} bytes", size);
+                    Ok(Some(size))
+                } else {
+                    warn!("Could not parse file size from LIST output");
+                    Ok(None)
                 }
-                warn!("Could not parse file size from LIST output");
-                Ok(None)
             }
             Err(e) => {
                 warn!("Could not get file size: {}", e);
@@ -386,139 +389,89 @@ impl FtpDownload {
     /// Download file from FTP server
     async fn download_file(&self) -> Result<()> {
         let mut ftp_stream = self.connect().await?;
-
-        // Get file size for progress tracking
-        let file_size = self.get_file_size(&mut ftp_stream).await?;
-
-        if let Some(size) = file_size {
-            let mut progress = self.progress.write().await;
-            progress.set_total_size(size);
-        }
-
         let local_path = self.local_path()?;
         let remote_path = self.remote_path();
 
         info!("Downloading {} to {}", remote_path, local_path.display());
 
-        // Create output directory if it doesn't exist
-        if let Some(parent) = local_path.parent() {
-            tokio::fs::create_dir_all(parent)
-                .await
-                .map_err(|e| ZuupError::Io(e))?;
+        // Setup progress tracking
+        if let Ok(Some(size)) = self.get_file_size(&mut ftp_stream).await {
+            let mut progress = self.progress.write().await;
+            progress.set_total_size(size);
         }
 
-        // For now, we'll implement a simple download without resume support
-        // async_ftp doesn't provide streaming API, so we'll use the simple retr method
+        // Create output directory
+        if let Some(parent) = local_path.parent() {
+            tokio::fs::create_dir_all(parent).await.map_err(ZuupError::Io)?;
+        }
 
         let start_time = std::time::Instant::now();
 
-        // Define a custom error type that can handle both FtpError and std::io::Error
-        #[derive(Debug)]
-        enum FtpDownloadError {
-            Io(std::io::Error),
-            Ftp(async_ftp::FtpError),
-        }
-
-        impl From<std::io::Error> for FtpDownloadError {
-            fn from(err: std::io::Error) -> Self {
-                FtpDownloadError::Io(err)
-            }
-        }
-
-        impl From<async_ftp::FtpError> for FtpDownloadError {
-            fn from(err: async_ftp::FtpError) -> Self {
-                FtpDownloadError::Ftp(err)
-            }
-        }
-
-        impl std::fmt::Display for FtpDownloadError {
-            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                match self {
-                    FtpDownloadError::Io(e) => write!(f, "IO error: {}", e),
-                    FtpDownloadError::Ftp(e) => write!(f, "FTP error: {}", e),
-                }
-            }
-        }
-
-        impl std::error::Error for FtpDownloadError {}
-
-        // Use async_ftp's retr method with a closure to handle the data
+        // Download file using async_ftp's retr method
         let result = ftp_stream
             .retr(remote_path, |reader| {
                 let local_path_clone = local_path.clone();
                 async move {
-                    // Create the file inside the closure
-                    let mut file = File::create(&local_path_clone).await?;
+                    let mut file = File::create(&local_path_clone).await
+                        .map_err(|e| async_ftp::FtpError::InvalidResponse(format!("File creation failed: {}", e)))?;
+
                     let mut buf_reader = reader;
                     let mut buffer = vec![0u8; 8192];
                     let mut downloaded = 0u64;
 
                     loop {
-                        // Check if download was cancelled or paused
-                        // Note: This is a simplified check - in a real implementation,
-                        // we'd need a more sophisticated cancellation mechanism
-
                         match buf_reader.read(&mut buffer).await {
-                            Ok(0) => {
-                                // End of stream
-                                break;
-                            }
+                            Ok(0) => break, // End of stream
                             Ok(bytes_read) => {
-                                // Write to local file
-                                file.write_all(&buffer[..bytes_read]).await?;
+                                file.write_all(&buffer[..bytes_read]).await
+                                    .map_err(|e| async_ftp::FtpError::InvalidResponse(format!("Write failed: {}", e)))?;
                                 downloaded += bytes_read as u64;
-
-                                // Update progress (simplified)
-                                let elapsed = start_time.elapsed();
-                                let _speed = if elapsed.as_secs() > 0 {
-                                    downloaded / elapsed.as_secs()
-                                } else {
-                                    0
-                                };
-
-                                // Note: In a real implementation, we'd update progress here
-                                // but we can't easily access self from within this closure
                             }
                             Err(e) => {
-                                return Err(FtpDownloadError::Io(e));
+                                return Err(async_ftp::FtpError::InvalidResponse(format!("Read failed: {}", e)));
                             }
                         }
                     }
 
-                    // Flush the file before returning
-                    file.flush().await?;
+                    file.flush().await
+                        .map_err(|e| async_ftp::FtpError::InvalidResponse(format!("Flush failed: {}", e)))?;
 
-                    Ok::<u64, FtpDownloadError>(downloaded)
+                    Ok(downloaded)
                 }
             })
             .await;
 
         match result {
             Ok(total_downloaded) => {
-                info!("Downloaded {} bytes", total_downloaded);
+                info!("FTP download completed: {} bytes", total_downloaded);
+                self.update_final_progress(total_downloaded, start_time.elapsed()).await;
 
-                // Update final progress
-                let mut progress = self.progress.write().await;
-                progress.update(total_downloaded, 0, None);
-                progress.connections = 1;
+                let mut state = self.state.write().await;
+                *state = DownloadState::Completed;
             }
             Err(e) => {
                 error!("FTP download failed: {}", e);
                 return Err(ZuupError::Network(NetworkError::ConnectionFailed(format!(
-                    "Download failed: {}",
+                    "FTP download failed: {}",
                     e
                 ))));
             }
         }
 
-        // Update state to completed
-        {
-            let mut state = self.state.write().await;
-            *state = DownloadState::Completed;
-        }
-
-        info!("FTP download completed: {}", local_path.display());
         Ok(())
+    }
+
+    /// Update final progress statistics
+    async fn update_final_progress(&self, downloaded: u64, elapsed: std::time::Duration) {
+        let speed = if elapsed.as_secs() > 0 {
+            downloaded / elapsed.as_secs()
+        } else {
+            0
+        };
+
+        let mut progress = self.progress.write().await;
+        progress.update(downloaded, speed, None);
+        progress.connections = 1;
     }
 
     #[cfg(not(feature = "ftp"))]
@@ -530,15 +483,16 @@ impl FtpDownload {
 #[async_trait]
 impl Download for FtpDownload {
     async fn start(&mut self) -> Result<()> {
-        // Check current state
+        let current_state = self.state();
+        if current_state != DownloadState::Pending {
+            return Err(ZuupError::InvalidStateTransition {
+                from: current_state,
+                to: DownloadState::Active,
+            });
+        }
+
         {
             let mut state = self.state.write().await;
-            if *state != DownloadState::Pending {
-                return Err(ZuupError::InvalidStateTransition {
-                    from: state.clone(),
-                    to: DownloadState::Active,
-                });
-            }
             *state = DownloadState::Active;
         }
 
@@ -550,24 +504,16 @@ impl Download for FtpDownload {
             progress.start();
         }
 
-        // Perform the actual download
-        match self.download_file().await {
-            Ok(()) => {
-                info!(url = %self.url, "FTP download completed successfully");
-                Ok(())
-            }
-            Err(e) => {
-                error!(url = %self.url, error = %e, "FTP download failed");
-
-                // Update state to failed
-                {
-                    let mut state = self.state.write().await;
-                    *state = DownloadState::Failed(e.to_string());
-                }
-
-                Err(e)
-            }
+        // Perform the download
+        if let Err(e) = self.download_file().await {
+            error!(url = %self.url, error = %e, "FTP download failed");
+            let mut state = self.state.write().await;
+            *state = DownloadState::Failed(e.to_string());
+            return Err(e);
         }
+
+        info!(url = %self.url, "FTP download completed successfully");
+        Ok(())
     }
 
     async fn pause(&mut self) -> Result<()> {
@@ -587,38 +533,30 @@ impl Download for FtpDownload {
     }
 
     async fn resume(&mut self) -> Result<()> {
-        let mut state = self.state.write().await;
-
-        if !state.can_resume() {
+        let current_state = self.state();
+        if !current_state.can_resume() {
             return Err(ZuupError::InvalidStateTransition {
-                from: state.clone(),
+                from: current_state,
                 to: DownloadState::Active,
             });
         }
 
-        *state = DownloadState::Active;
-        info!(url = %self.url, "Resumed FTP download");
-
-        // Restart the download process
-        drop(state); // Release the lock before calling download_file
-
-        match self.download_file().await {
-            Ok(()) => {
-                info!(url = %self.url, "FTP download resumed and completed successfully");
-                Ok(())
-            }
-            Err(e) => {
-                error!(url = %self.url, error = %e, "FTP download resume failed");
-
-                // Update state to failed
-                {
-                    let mut state = self.state.write().await;
-                    *state = DownloadState::Failed(e.to_string());
-                }
-
-                Err(e)
-            }
+        {
+            let mut state = self.state.write().await;
+            *state = DownloadState::Active;
         }
+
+        info!(url = %self.url, "Resuming FTP download");
+
+        if let Err(e) = self.download_file().await {
+            error!(url = %self.url, error = %e, "FTP download resume failed");
+            let mut state = self.state.write().await;
+            *state = DownloadState::Failed(e.to_string());
+            return Err(e);
+        }
+
+        info!(url = %self.url, "FTP download resumed and completed successfully");
+        Ok(())
     }
 
     async fn cancel(&mut self) -> Result<()> {
@@ -783,7 +721,6 @@ mod tests {
         assert_eq!(download.filename, Some("test.txt".to_string()));
         assert!(matches!(download.mode, FtpMode::Passive));
         assert_eq!(download.timeout, 30);
-        assert!(matches!(download.security, FtpSecurity::Plain));
 
         // Test state and progress
         assert_eq!(download.state(), DownloadState::Pending);

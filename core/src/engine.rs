@@ -57,7 +57,6 @@ impl ZuupEngine {
             config.general.max_concurrent_downloads,
             protocol_registry.clone(),
         ));
-        let protocol_registry = protocol_registry;
         let event_bus = Arc::new(EventBus::new(1000));
 
         let engine = Self {
@@ -77,7 +76,8 @@ impl ZuupEngine {
 
     /// Initialize the engine
     async fn initialize(&self) -> Result<()> {
-        // Register protocol handlers
+        // Check protocol availability and register handlers
+        self.check_protocol_availability().await?;
         self.register_protocol_handlers().await?;
 
         // Load session if configured
@@ -97,14 +97,63 @@ impl ZuupEngine {
         Ok(())
     }
 
-    /// Register all protocol handlers
+    /// Check protocol availability and log information
+    async fn check_protocol_availability(&self) -> Result<()> {
+        use crate::protocol::AvailableProtocols;
+        
+        let enabled_protocols = AvailableProtocols::list_enabled();
+        let enabled_count = enabled_protocols.len();
+        
+        if enabled_count == 0 {
+            tracing::warn!("No protocol handlers are enabled. The engine will start but downloads will fail unless protocols are registered manually.");
+            tracing::info!("To enable protocols, add features like 'http', 'ftp', 'sftp', or 'torrent' to your Cargo.toml");
+        } else {
+            tracing::info!("Enabled protocols: {}", enabled_protocols.join(", "));
+            tracing::debug!("Total enabled protocols: {}", enabled_count);
+        }
+        
+        // Log available but disabled protocols for debugging
+        let all_protocols = AvailableProtocols::list_all();
+        let disabled_protocols: Vec<&str> = all_protocols
+            .into_iter()
+            .filter(|p| !enabled_protocols.contains(p))
+            .collect();
+            
+        if !disabled_protocols.is_empty() {
+            tracing::debug!("Disabled protocols: {}", disabled_protocols.join(", "));
+        }
+        
+        Ok(())
+    }
+
+    /// Register all protocol handlers based on enabled features
     async fn register_protocol_handlers(&self) -> Result<()> {
-        let _registry = self.protocol_registry.write().await;
-
-        // todo)) Protocol handlers should be registered externally via register_protocol_handler()
-        // This allows for modular protocol support through separate crates like zuup-protocols
-
-        tracing::debug!("Protocol registry initialized, handlers can be registered externally");
+        let registry = self.protocol_registry.read().await;
+        
+        // The ProtocolRegistry::new() already registers default handlers based on features,
+        // but we can add additional logging and validation here
+        
+        let handler_count = registry.handlers().len();
+        let supported_protocols = registry.supported_protocols();
+        
+        if handler_count == 0 {
+            tracing::warn!("No protocol handlers registered. Downloads will fail unless handlers are registered manually via register_protocol_handler()");
+        } else {
+            tracing::info!("Registered {} protocol handler(s): {}", handler_count, supported_protocols.join(", "));
+        }
+        
+        // Validate that enabled features match registered handlers
+        use crate::protocol::AvailableProtocols;
+        let enabled_protocols = AvailableProtocols::list_enabled();
+        
+        for protocol in &enabled_protocols {
+            let has_handler = supported_protocols.contains(protocol);
+            if !has_handler {
+                tracing::warn!("Protocol '{}' is enabled but no handler is registered", protocol);
+            }
+        }
+        
+        tracing::debug!("Protocol registry initialization complete");
         Ok(())
     }
 
@@ -146,9 +195,20 @@ impl ZuupEngine {
         // Check if we have a handler for at least one URL
         let protocol_registry = self.protocol_registry.read().await;
         
+        // Provide graceful degradation when no protocols are available
+        if protocol_registry.is_empty() {
+            use crate::protocol::AvailableProtocols;
+            let available_features = AvailableProtocols::list_all();
+            
+            tracing::error!("No protocol handlers available. Enable features: {}", available_features.join(", "));
+            return Err(ZuupError::Protocol(crate::error::ProtocolError::NoProtocolHandlers));
+        }
+        
         // Try to find a handler for each URL and provide detailed error messages
         for url in &request.urls {
             if let Err(e) = protocol_registry.find_handler_with_error(url) {
+                // Log the specific protocol issue for debugging
+                tracing::debug!("Protocol handler lookup failed for URL '{}': {}", url, e);
                 return Err(e);
             }
         }
@@ -359,6 +419,26 @@ impl ZuupEngine {
         registry.supported_protocols()
     }
 
+    /// Get detailed protocol availability information
+    ///
+    /// Returns information about which protocols are enabled at compile-time
+    /// and which handlers are actually registered.
+    pub async fn protocol_availability(&self) -> ProtocolAvailabilityInfo {
+        use crate::protocol::{AvailableProtocols, get_protocol_feature_mappings};
+        
+        let registry = self.protocol_registry.read().await;
+        let registered_protocols = registry.supported_protocols();
+        let enabled_protocols = AvailableProtocols::list_enabled();
+        let feature_mappings = get_protocol_feature_mappings();
+        
+        ProtocolAvailabilityInfo {
+            enabled_protocols,
+            registered_protocols,
+            feature_mappings,
+            has_any_handlers: !registry.is_empty(),
+        }
+    }
+
     /// Shutdown the download manager
     ///
     /// If `force` is true, all downloads will be cancelled immediately.
@@ -405,6 +485,42 @@ impl ZuupEngine {
     pub async fn state(&self) -> EngineState {
         self.state.read().await.clone()
     }
+
+    /// Check if the engine can handle a specific URL
+    ///
+    /// This method provides graceful degradation by checking protocol availability
+    /// before attempting to create a download.
+    pub async fn can_handle_url(&self, url: &str) -> Result<bool> {
+        let parsed_url = url::Url::parse(url)
+            .map_err(|e| ZuupError::Config(format!("Invalid URL: {}", e)))?;
+            
+        let protocol_registry = self.protocol_registry.read().await;
+        
+        // Check if registry is empty
+        if protocol_registry.is_empty() {
+            return Ok(false);
+        }
+        
+        // Check if we have a handler for this URL
+        Ok(protocol_registry.find_handler(&parsed_url).is_some())
+    }
+
+    /// Get suggestions for enabling support for a URL
+    ///
+    /// Returns the feature flag that needs to be enabled to support the given URL.
+    pub fn get_url_support_suggestion(&self, url: &str) -> Option<String> {
+        if let Ok(parsed_url) = url::Url::parse(url) {
+            if let Some(feature) = crate::protocol::get_required_feature_for_scheme(parsed_url.scheme()) {
+                return Some(format!(
+                    "To support '{}' URLs, enable the '{}' feature in your Cargo.toml: zuup-core = {{ features = [\"{}\"] }}",
+                    parsed_url.scheme(),
+                    feature,
+                    feature
+                ));
+            }
+        }
+        None
+    }
 }
 
 /// Engine statistics
@@ -433,4 +549,57 @@ pub struct EngineStats {
 
     /// Engine uptime
     pub uptime: Duration,
+}
+
+/// Protocol availability information
+#[derive(Debug, Clone)]
+pub struct ProtocolAvailabilityInfo {
+    /// Protocols enabled at compile-time via features
+    pub enabled_protocols: Vec<&'static str>,
+    
+    /// Protocols with registered handlers
+    pub registered_protocols: Vec<&'static str>,
+    
+    /// Complete feature mapping information
+    pub feature_mappings: Vec<crate::protocol::ProtocolFeatureMapping>,
+    
+    /// Whether any handlers are registered
+    pub has_any_handlers: bool,
+}
+
+impl ProtocolAvailabilityInfo {
+    /// Check if a specific protocol is available
+    pub fn is_protocol_available(&self, protocol: &str) -> bool {
+        self.registered_protocols.contains(&protocol)
+    }
+    
+    /// Get protocols that are enabled but not registered
+    pub fn missing_handlers(&self) -> Vec<&'static str> {
+        self.enabled_protocols
+            .iter()
+            .filter(|p| !self.registered_protocols.contains(p))
+            .copied()
+            .collect()
+    }
+    
+    /// Get protocols that are registered but not enabled (shouldn't happen normally)
+    pub fn unexpected_handlers(&self) -> Vec<&'static str> {
+        self.registered_protocols
+            .iter()
+            .filter(|p| !self.enabled_protocols.contains(p))
+            .copied()
+            .collect()
+    }
+    
+    /// Get the required feature for a URL scheme
+    pub fn get_required_feature_for_url(&self, url: &str) -> Option<&'static str> {
+        if let Ok(parsed_url) = url::Url::parse(url) {
+            self.feature_mappings
+                .iter()
+                .find(|mapping| mapping.schemes.contains(&parsed_url.scheme()))
+                .map(|mapping| mapping.feature)
+        } else {
+            None
+        }
+    }
 }

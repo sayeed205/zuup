@@ -7,7 +7,6 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
-// Note: Using reqwest's built-in streaming without external StreamExt
 use reqwest::{Client, ClientBuilder, Response};
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
@@ -51,71 +50,64 @@ impl HttpProtocolHandler {
 
     /// Parse filename from Content-Disposition header
     fn extract_filename_from_disposition(disposition: &str) -> Option<String> {
-        // Simple implementation - would need more robust parsing for production
-        for part in disposition.split(';') {
-            let part = part.trim();
-            if part.starts_with("filename=") {
-                let filename = part.strip_prefix("filename=")?;
-                let filename = filename.trim_matches('"').trim();
-                if !filename.is_empty() {
-                    return Some(filename.to_string());
+        disposition
+            .split(';')
+            .find_map(|part| {
+                let part = part.trim();
+                if let Some(filename) = part.strip_prefix("filename=") {
+                    let filename = filename.trim_matches('"').trim();
+                    if !filename.is_empty() {
+                        Some(filename.to_string())
+                    } else {
+                        None
+                    }
+                } else {
+                    None
                 }
-            }
-        }
-        None
+            })
     }
 
     /// Parse metadata from HTTP response headers
     fn parse_metadata_from_response(response: &Response) -> DownloadMetadata {
         let mut metadata = DownloadMetadata::default();
+        let headers = response.headers();
 
         // Extract content length
-        if let Some(content_length) = response.headers().get("content-length") {
-            if let Ok(length_str) = content_length.to_str() {
-                if let Ok(size) = length_str.parse::<u64>() {
-                    metadata.size = Some(size);
-                }
-            }
-        }
+        metadata.size = headers
+            .get("content-length")
+            .and_then(|h| h.to_str().ok())
+            .and_then(|s| s.parse().ok());
 
         // Extract content type
-        if let Some(content_type) = response.headers().get("content-type") {
-            if let Ok(type_str) = content_type.to_str() {
-                metadata.content_type = Some(type_str.to_string());
-            }
-        }
+        metadata.content_type = headers
+            .get("content-type")
+            .and_then(|h| h.to_str().ok())
+            .map(String::from);
 
         // Check if server supports range requests
-        if let Some(accept_ranges) = response.headers().get("accept-ranges") {
-            if let Ok(ranges_str) = accept_ranges.to_str() {
-                metadata.supports_ranges = ranges_str.contains("bytes");
-            }
-        }
+        metadata.supports_ranges = headers
+            .get("accept-ranges")
+            .and_then(|h| h.to_str().ok())
+            .map_or(false, |s| s.contains("bytes"));
 
         // Extract last modified
-        if let Some(last_modified) = response.headers().get("last-modified") {
-            if let Ok(modified_str) = last_modified.to_str() {
-                if let Ok(datetime) = chrono::DateTime::parse_from_rfc2822(modified_str) {
-                    metadata.last_modified = Some(datetime.with_timezone(&chrono::Utc));
-                }
-            }
-        }
+        metadata.last_modified = headers
+            .get("last-modified")
+            .and_then(|h| h.to_str().ok())
+            .and_then(|s| chrono::DateTime::parse_from_rfc2822(s).ok())
+            .map(|dt| dt.with_timezone(&chrono::Utc));
 
         // Extract ETag
-        if let Some(etag) = response.headers().get("etag") {
-            if let Ok(etag_str) = etag.to_str() {
-                metadata.etag = Some(etag_str.to_string());
-            }
-        }
+        metadata.etag = headers
+            .get("etag")
+            .and_then(|h| h.to_str().ok())
+            .map(String::from);
 
-        // Try to extract filename from Content-Disposition header
-        if let Some(disposition) = response.headers().get("content-disposition") {
-            if let Ok(disposition_str) = disposition.to_str() {
-                if let Some(filename) = Self::extract_filename_from_disposition(disposition_str) {
-                    metadata.filename = Some(filename);
-                }
-            }
-        }
+        // Extract filename from Content-Disposition header
+        metadata.filename = headers
+            .get("content-disposition")
+            .and_then(|h| h.to_str().ok())
+            .and_then(Self::extract_filename_from_disposition);
 
         metadata
     }
@@ -237,6 +229,7 @@ impl HttpDownload {
             .send()
             .await
             .map_err(|e| {
+                error!("Failed to fetch metadata: {}", e);
                 ZuupError::Network(NetworkError::ConnectionFailed(format!(
                     "Failed to get metadata: {}",
                     e
@@ -244,9 +237,11 @@ impl HttpDownload {
             })?;
 
         if !response.status().is_success() {
+            let status = response.status();
+            error!("HTTP metadata request failed: {}", status);
             return Err(ZuupError::Protocol(ProtocolError::Http {
-                status: response.status().as_u16(),
-                message: format!("HTTP error: {}", response.status()),
+                status: status.as_u16(),
+                message: format!("HTTP error: {}", status),
             }));
         }
 
@@ -269,198 +264,37 @@ impl HttpDownload {
             *state = DownloadState::Active;
         }
 
-        // Fetch metadata first
-        info!("Fetching metadata for {}", self.url);
+        // Fetch metadata and setup
         let metadata = self.fetch_metadata().await?;
-        info!(
-            "Metadata fetch completed: size={:?}, supports_ranges={}",
-            metadata.size, metadata.supports_ranges
-        );
         {
             let mut meta_guard = self.metadata.write().await;
             *meta_guard = Some(metadata.clone());
         }
 
-        // Update progress with total size
         if let Some(size) = metadata.size {
             let mut progress = self.progress.write().await;
             progress.set_total_size(size);
         }
 
-        // Create output directory if needed
         let output_path = self.get_output_path()?;
         if let Some(parent) = output_path.parent() {
-            tokio::fs::create_dir_all(parent)
-                .await
-                .map_err(|e| ZuupError::Io(e))?;
+            tokio::fs::create_dir_all(parent).await.map_err(ZuupError::Io)?;
         }
 
         // Check for resume capability
-        let resume_offset = if output_path.exists() {
-            let file_metadata = tokio::fs::metadata(&output_path)
-                .await
-                .map_err(|e| ZuupError::Io(e))?;
-            let offset = file_metadata.len();
+        let resume_offset = self.calculate_resume_offset(&output_path, &metadata).await?;
 
-            if offset > 0 && metadata.supports_ranges {
-                info!("Resuming download from offset: {} bytes", offset);
-                offset
-            } else {
-                0
-            }
-        } else {
-            0
-        };
+        // Make HTTP request
+        let response = self.make_download_request(resume_offset).await?;
+        self.validate_response_status(&response, resume_offset > 0)?;
 
-        // Make HTTP request with range header for resume
-        let mut request = self.client.get(self.url.clone());
+        // Download and write file
+        let downloaded = self.download_and_write_file(response, &output_path, resume_offset).await?;
 
-        if resume_offset > 0 {
-            request = request.header("Range", format!("bytes={}-", resume_offset));
-        }
-
-        info!("Making HTTP request to {}", self.url);
-        let response = request.send().await.map_err(|e| {
-            error!("HTTP request failed: {}", e);
-            ZuupError::Network(NetworkError::ConnectionFailed(format!(
-                "Request failed: {}",
-                e
-            )))
-        })?;
-        info!("HTTP response received: status={}", response.status());
-
-        // Check response status
-        let expected_status = if resume_offset > 0 {
-            reqwest::StatusCode::PARTIAL_CONTENT
-        } else {
-            reqwest::StatusCode::OK
-        };
-
-        if response.status() != expected_status && response.status() != reqwest::StatusCode::OK {
-            return Err(ZuupError::Protocol(ProtocolError::Http {
-                status: response.status().as_u16(),
-                message: format!("HTTP error: {}", response.status()),
-            }));
-        }
-
-        // Open file for writing
-        let file = if resume_offset > 0 {
-            tokio::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&output_path)
-                .await
-                .map_err(|e| ZuupError::Io(e))?
-        } else {
-            File::create(&output_path)
-                .await
-                .map_err(|e| ZuupError::Io(e))?
-        };
-
-        {
-            let mut file_guard = self.output_file.lock().await;
-            *file_guard = Some(file);
-        }
-
-        // Read the response body
-        let mut downloaded = resume_offset;
-        let start_time = Instant::now();
-
-        info!(
-            "Starting download for {} (resume_offset={})",
-            output_path.display(),
-            resume_offset
-        );
-
-        let mut chunk_count = 0;
-
-        // Simplified approach: read entire response body
-        // TODO: Implement proper streaming once dependencies are sorted out
-        let body_bytes = response.bytes().await.map_err(|e| {
-            error!("Failed to read response body: {}", e);
-            ZuupError::Network(NetworkError::ConnectionFailed(format!(
-                "Failed to read response body: {}",
-                e
-            )))
-        })?;
-        
-        // Process the body as a single chunk
-        chunk_count += 1;
-        info!("Processing response body");
-
-        // Check if download was cancelled
-        {
-            let cancel_token = self.cancel_token.lock().await;
-            if *cancel_token {
-                info!("Download cancelled by user");
-                return Ok(());
-            }
-        }
-
-        let chunk = body_bytes;
-
-        // Write chunk to file
-        {
-            let mut file_guard = self.output_file.lock().await;
-            if let Some(ref mut file) = *file_guard {
-                file.write_all(&chunk).await.map_err(|e| ZuupError::Io(e))?;
-            } else {
-                return Err(ZuupError::Internal(
-                    "Output file handle lost during download".to_string(),
-                ));
-            }
-        }
-
-        downloaded += chunk.len() as u64;
-
-        // Update progress
-        let now = Instant::now();
-        let elapsed = now.duration_since(start_time);
-        let speed = if elapsed.as_secs() > 0 {
-            downloaded / elapsed.as_secs()
-        } else {
-            0
-        };
-
-        {
-            let mut progress = self.progress.write().await;
-            progress.update(downloaded, speed, None);
-            progress.connections = 1;
-        }
-
-        info!("Download completed: {} bytes, {} bytes/s", downloaded, speed);
-
-        info!(
-            "Download stream completed, received {} chunks, total {} bytes",
-            chunk_count, downloaded
-        );
-
-        // Flush and close file
-        {
-            let mut file_guard = self.output_file.lock().await;
-            if let Some(ref mut file) = *file_guard {
-                file.flush().await.map_err(|e| ZuupError::Io(e))?;
-            }
-            *file_guard = None;
-        }
-
-        // Update state to completed
+        // Update final state
         {
             let mut state = self.state.write().await;
             *state = DownloadState::Completed;
-        }
-
-        // Final progress update
-        {
-            let elapsed = start_time.elapsed();
-            let avg_speed = if elapsed.as_secs() > 0 {
-                downloaded / elapsed.as_secs()
-            } else {
-                0
-            };
-
-            let mut progress = self.progress.write().await;
-            progress.update(downloaded, avg_speed, None);
         }
 
         info!(
@@ -470,61 +304,174 @@ impl HttpDownload {
         );
         Ok(())
     }
+
+    /// Calculate resume offset for partial downloads
+    async fn calculate_resume_offset(&self, output_path: &PathBuf, metadata: &DownloadMetadata) -> Result<u64> {
+        if !output_path.exists() {
+            return Ok(0);
+        }
+
+        let file_metadata = tokio::fs::metadata(output_path).await.map_err(ZuupError::Io)?;
+        let offset = file_metadata.len();
+
+        if offset > 0 && metadata.supports_ranges {
+            info!("Resuming download from offset: {} bytes", offset);
+            Ok(offset)
+        } else {
+            Ok(0)
+        }
+    }
+
+    /// Make the HTTP download request
+    async fn make_download_request(&self, resume_offset: u64) -> Result<Response> {
+        let mut request = self.client.get(self.url.clone());
+
+        if resume_offset > 0 {
+            request = request.header("Range", format!("bytes={}-", resume_offset));
+        }
+
+        request.send().await.map_err(|e| {
+            error!("HTTP request failed: {}", e);
+            ZuupError::Network(NetworkError::ConnectionFailed(format!("Request failed: {}", e)))
+        })
+    }
+
+    /// Validate HTTP response status
+    fn validate_response_status(&self, response: &Response, is_resume: bool) -> Result<()> {
+        let status = response.status();
+        let expected_status = if is_resume {
+            reqwest::StatusCode::PARTIAL_CONTENT
+        } else {
+            reqwest::StatusCode::OK
+        };
+
+        if status != expected_status && status != reqwest::StatusCode::OK {
+            error!("HTTP request failed with status: {}", status);
+            return Err(ZuupError::Protocol(ProtocolError::Http {
+                status: status.as_u16(),
+                message: format!("HTTP error: {}", status),
+            }));
+        }
+
+        Ok(())
+    }
+
+    /// Download response body and write to file
+    async fn download_and_write_file(&self, response: Response, output_path: &PathBuf, resume_offset: u64) -> Result<u64> {
+        let file = self.open_output_file(output_path, resume_offset > 0).await?;
+        {
+            let mut file_guard = self.output_file.lock().await;
+            *file_guard = Some(file);
+        }
+
+        let start_time = Instant::now();
+        let body_bytes = response.bytes().await.map_err(|e| {
+            error!("Failed to read response body: {}", e);
+            ZuupError::Network(NetworkError::ConnectionFailed(format!(
+                "Failed to read response body: {}",
+                e
+            )))
+        })?;
+
+        // Check for cancellation
+        if self.is_cancelled().await {
+            info!("Download cancelled by user");
+            return Ok(resume_offset);
+        }
+
+        // Write to file
+        {
+            let mut file_guard = self.output_file.lock().await;
+            if let Some(ref mut file) = *file_guard {
+                file.write_all(&body_bytes).await.map_err(ZuupError::Io)?;
+                file.flush().await.map_err(ZuupError::Io)?;
+            } else {
+                return Err(ZuupError::Internal("Output file handle lost".to_string()));
+            }
+            *file_guard = None;
+        }
+
+        let downloaded = resume_offset + body_bytes.len() as u64;
+        self.update_final_progress(downloaded, start_time.elapsed()).await;
+
+        Ok(downloaded)
+    }
+
+    /// Open output file for writing
+    async fn open_output_file(&self, output_path: &PathBuf, is_resume: bool) -> Result<File> {
+        if is_resume {
+            tokio::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(output_path)
+                .await
+                .map_err(ZuupError::Io)
+        } else {
+            File::create(output_path).await.map_err(ZuupError::Io)
+        }
+    }
+
+    /// Check if download was cancelled
+    async fn is_cancelled(&self) -> bool {
+        let cancel_token = self.cancel_token.lock().await;
+        *cancel_token
+    }
+
+    /// Update final progress statistics
+    async fn update_final_progress(&self, downloaded: u64, elapsed: Duration) {
+        let speed = if elapsed.as_secs() > 0 {
+            downloaded / elapsed.as_secs()
+        } else {
+            0
+        };
+
+        let mut progress = self.progress.write().await;
+        progress.update(downloaded, speed, None);
+        progress.connections = 1;
+    }
 }
 
 #[async_trait]
 impl Download for HttpDownload {
     async fn start(&mut self) -> Result<()> {
-        let current_state = {
-            let state = self.state.read().await;
-            state.clone()
-        };
+        let current_state = self.state().clone();
 
-        match current_state {
-            DownloadState::Pending | DownloadState::Paused => {
-                // Reset cancel token
-                {
-                    let mut cancel_token = self.cancel_token.lock().await;
-                    *cancel_token = false;
-                }
-
-                // Start download in background task
-                let download_clone = HttpDownload {
-                    url: self.url.clone(),
-                    client: self.client.clone(),
-                    output_path: self.output_path.clone(),
-                    filename: self.filename.clone(),
-                    state: Arc::clone(&self.state),
-                    progress: Arc::clone(&self.progress),
-                    metadata: Arc::clone(&self.metadata),
-                    output_file: Arc::clone(&self.output_file),
-                    cancel_token: Arc::clone(&self.cancel_token),
-                };
-
-                tokio::spawn(async move {
-                    info!(
-                        "Background download task started for {}",
-                        download_clone.url
-                    );
-                    if let Err(e) = download_clone.download_file().await {
-                        error!("Download failed: {}", e);
-                        let mut state = download_clone.state.write().await;
-                        *state = DownloadState::Failed(e.to_string());
-                    } else {
-                        info!(
-                            "Background download task completed successfully for {}",
-                            download_clone.url
-                        );
-                    }
-                });
-
-                Ok(())
-            }
-            _ => Err(ZuupError::InvalidStateTransition {
+        if !matches!(current_state, DownloadState::Pending | DownloadState::Paused) {
+            return Err(ZuupError::InvalidStateTransition {
                 from: current_state,
                 to: DownloadState::Active,
-            }),
+            });
         }
+
+        // Reset cancel token
+        {
+            let mut cancel_token = self.cancel_token.lock().await;
+            *cancel_token = false;
+        }
+
+        // Start download in background task
+        let download_clone = HttpDownload {
+            url: self.url.clone(),
+            client: self.client.clone(),
+            output_path: self.output_path.clone(),
+            filename: self.filename.clone(),
+            state: Arc::clone(&self.state),
+            progress: Arc::clone(&self.progress),
+            metadata: Arc::clone(&self.metadata),
+            output_file: Arc::clone(&self.output_file),
+            cancel_token: Arc::clone(&self.cancel_token),
+        };
+
+        tokio::spawn(async move {
+            info!("Starting HTTP download for {}", download_clone.url);
+            if let Err(e) = download_clone.download_file().await {
+                error!("HTTP download failed: {}", e);
+                let mut state = download_clone.state.write().await;
+                *state = DownloadState::Failed(e.to_string());
+            }
+        });
+
+        Ok(())
     }
 
     async fn pause(&mut self) -> Result<()> {
@@ -543,21 +490,17 @@ impl Download for HttpDownload {
     }
 
     async fn resume(&mut self) -> Result<()> {
-        let current_state = {
-            let state = self.state.read().await;
-            state.clone()
-        };
+        let current_state = self.state();
 
-        match current_state {
-            DownloadState::Paused => {
-                // Resume by restarting the download (with resume support)
-                self.start().await
-            }
-            _ => Err(ZuupError::InvalidStateTransition {
+        if current_state != DownloadState::Paused {
+            return Err(ZuupError::InvalidStateTransition {
                 from: current_state,
                 to: DownloadState::Active,
-            }),
+            });
         }
+
+        // Resume by restarting the download (with resume support)
+        self.start().await
     }
 
     async fn cancel(&mut self) -> Result<()> {

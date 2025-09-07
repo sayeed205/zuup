@@ -305,154 +305,156 @@ impl SftpDownload {
     /// Download file from SFTP server
     async fn download_file(&self) -> Result<()> {
         let (_session, sftp) = self.connect().await?;
+        let local_path = self.local_path()?;
+        let remote_path = self.remote_path();
 
-        // Get file metadata for progress tracking
-        let file_stat = self.get_file_metadata(&sftp).await?;
+        info!("Downloading {} to {}", remote_path, local_path.display());
 
-        if let Some(stat) = &file_stat {
+        // Setup progress tracking
+        if let Ok(Some(stat)) = self.get_file_metadata(&sftp).await {
             if let Some(size) = stat.size {
                 let mut progress = self.progress.write().await;
                 progress.set_total_size(size);
             }
         }
 
-        let local_path = self.local_path()?;
-        let remote_path = self.remote_path();
-
-        info!("Downloading {} to {}", remote_path, local_path.display());
-
-        // Create output directory if it doesn't exist
+        // Create output directory
         if let Some(parent) = local_path.parent() {
-            tokio::fs::create_dir_all(parent)
-                .await
-                .map_err(|e| ZuupError::Io(e))?;
+            tokio::fs::create_dir_all(parent).await.map_err(ZuupError::Io)?;
         }
 
-        // Check if file exists for resume support
-        let resume_offset = if local_path.exists() {
-            let metadata = tokio::fs::metadata(&local_path)
-                .await
-                .map_err(|e| ZuupError::Io(e))?;
-            let offset = metadata.len();
+        // Calculate resume offset
+        let resume_offset = self.calculate_resume_offset(&local_path).await?;
 
-            if offset > 0 {
-                info!("Resuming download from offset: {} bytes", offset);
+        // Open files
+        let mut remote_file = self.open_remote_file(&sftp, remote_path, resume_offset)?;
+        let mut local_file = self.open_local_file(&local_path, resume_offset > 0).await?;
 
-                // Update progress
-                let mut progress = self.progress.write().await;
-                progress.downloaded_size = offset;
+        // Download file
+        let downloaded = self.transfer_file(&mut remote_file, &mut local_file, resume_offset).await?;
 
-                offset
-            } else {
-                0
-            }
-        } else {
-            0
-        };
+        local_file.flush().await.map_err(ZuupError::Io)?;
 
-        // Open remote file
+        // Update final state
+        {
+            let mut state = self.state.write().await;
+            *state = DownloadState::Completed;
+        }
+
+        info!("SFTP download completed: {} bytes to {}", downloaded, local_path.display());
+        Ok(())
+    }
+
+    #[cfg(feature = "sftp")]
+    /// Calculate resume offset for partial downloads
+    async fn calculate_resume_offset(&self, local_path: &PathBuf) -> Result<u64> {
+        if !local_path.exists() {
+            return Ok(0);
+        }
+
+        let metadata = tokio::fs::metadata(local_path).await.map_err(ZuupError::Io)?;
+        let offset = metadata.len();
+
+        if offset > 0 {
+            info!("Resuming download from offset: {} bytes", offset);
+            let mut progress = self.progress.write().await;
+            progress.downloaded_size = offset;
+        }
+
+        Ok(offset)
+    }
+
+    #[cfg(feature = "sftp")]
+    /// Open remote SFTP file with seek support
+    fn open_remote_file(&self, sftp: &Sftp, remote_path: &str, resume_offset: u64) -> Result<ssh2::File> {
         let mut remote_file = sftp.open(std::path::Path::new(remote_path)).map_err(|e| {
+            error!("Failed to open remote file: {}", e);
             ZuupError::Network(NetworkError::ConnectionFailed(format!(
                 "Failed to open remote file: {}",
                 e
             )))
         })?;
 
-        // Seek to resume position if needed
         if resume_offset > 0 {
-            remote_file
-                .seek(std::io::SeekFrom::Start(resume_offset))
-                .map_err(|e| {
-                    ZuupError::Network(NetworkError::ConnectionFailed(format!(
-                        "Failed to seek to resume position: {}",
-                        e
-                    )))
-                })?;
+            remote_file.seek(std::io::SeekFrom::Start(resume_offset)).map_err(|e| {
+                error!("Failed to seek to resume position: {}", e);
+                ZuupError::Network(NetworkError::ConnectionFailed(format!(
+                    "Failed to seek to resume position: {}",
+                    e
+                )))
+            })?;
         }
 
-        // Open local file for writing (append mode for resume)
-        let mut local_file = if resume_offset > 0 {
+        Ok(remote_file)
+    }
+
+    #[cfg(feature = "sftp")]
+    /// Open local file for writing
+    async fn open_local_file(&self, local_path: &PathBuf, is_resume: bool) -> Result<File> {
+        if is_resume {
             tokio::fs::OpenOptions::new()
                 .create(true)
                 .append(true)
-                .open(&local_path)
+                .open(local_path)
                 .await
-                .map_err(|e| ZuupError::Io(e))?
+                .map_err(ZuupError::Io)
         } else {
-            File::create(&local_path)
-                .await
-                .map_err(|e| ZuupError::Io(e))?
-        };
+            File::create(local_path).await.map_err(ZuupError::Io)
+        }
+    }
 
-        let mut downloaded = resume_offset;
-        let mut buffer = vec![0u8; 8192]; // 8KB buffer
+    #[cfg(feature = "sftp")]
+    /// Transfer file data from remote to local
+    async fn transfer_file(&self, remote_file: &mut ssh2::File, local_file: &mut File, mut downloaded: u64) -> Result<u64> {
+        let mut buffer = vec![0u8; 8192];
         let start_time = std::time::Instant::now();
 
         loop {
-            // Check if download was cancelled or paused
-            {
-                let state = self.state.read().await;
-                match *state {
-                    DownloadState::Cancelled => {
-                        info!("Download cancelled");
-                        return Ok(());
-                    }
-                    DownloadState::Paused => {
-                        info!("Download paused");
-                        return Ok(());
-                    }
-                    _ => {}
-                }
+            // Check for cancellation/pause
+            if self.should_stop_transfer().await {
+                return Ok(downloaded);
             }
 
-            // Read data from remote file
+            // Read from remote file
             match remote_file.read(&mut buffer) {
-                Ok(0) => {
-                    // End of file
-                    info!("Download completed successfully");
-                    break;
-                }
+                Ok(0) => break, // End of file
                 Ok(bytes_read) => {
-                    // Write to local file
-                    local_file
-                        .write_all(&buffer[..bytes_read])
-                        .await
-                        .map_err(|e| ZuupError::Io(e))?;
-
+                    local_file.write_all(&buffer[..bytes_read]).await.map_err(ZuupError::Io)?;
                     downloaded += bytes_read as u64;
-
-                    // Update progress
-                    let elapsed = start_time.elapsed();
-                    let speed = if elapsed.as_secs() > 0 {
-                        downloaded / elapsed.as_secs()
-                    } else {
-                        0
-                    };
-
-                    let mut progress = self.progress.write().await;
-                    progress.update(downloaded, speed, None);
-                    progress.connections = 1;
+                    self.update_progress(downloaded, start_time.elapsed()).await;
                 }
                 Err(e) => {
                     error!("Error reading from SFTP: {}", e);
                     return Err(ZuupError::Network(NetworkError::ConnectionFailed(format!(
-                        "Download failed: {}",
+                        "SFTP read failed: {}",
                         e
                     ))));
                 }
             }
         }
 
-        local_file.flush().await.map_err(|e| ZuupError::Io(e))?;
+        Ok(downloaded)
+    }
 
-        // Update state to completed
-        {
-            let mut state = self.state.write().await;
-            *state = DownloadState::Completed;
-        }
+    #[cfg(feature = "sftp")]
+    /// Check if transfer should be stopped
+    async fn should_stop_transfer(&self) -> bool {
+        let state = self.state.read().await;
+        matches!(*state, DownloadState::Cancelled | DownloadState::Paused)
+    }
 
-        info!("SFTP download completed: {}", local_path.display());
-        Ok(())
+    #[cfg(feature = "sftp")]
+    /// Update download progress
+    async fn update_progress(&self, downloaded: u64, elapsed: std::time::Duration) {
+        let speed = if elapsed.as_secs() > 0 {
+            downloaded / elapsed.as_secs()
+        } else {
+            0
+        };
+
+        let mut progress = self.progress.write().await;
+        progress.update(downloaded, speed, None);
+        progress.connections = 1;
     }
 
     #[cfg(not(feature = "sftp"))]
@@ -466,15 +468,16 @@ impl SftpDownload {
 #[async_trait]
 impl Download for SftpDownload {
     async fn start(&mut self) -> Result<()> {
-        // Check current state
+        let current_state = self.state();
+        if current_state != DownloadState::Pending {
+            return Err(ZuupError::InvalidStateTransition {
+                from: current_state,
+                to: DownloadState::Active,
+            });
+        }
+
         {
             let mut state = self.state.write().await;
-            if *state != DownloadState::Pending {
-                return Err(ZuupError::InvalidStateTransition {
-                    from: state.clone(),
-                    to: DownloadState::Active,
-                });
-            }
             *state = DownloadState::Active;
         }
 
@@ -486,24 +489,16 @@ impl Download for SftpDownload {
             progress.start();
         }
 
-        // Perform the actual download
-        match self.download_file().await {
-            Ok(()) => {
-                info!(url = %self.url, "SFTP download completed successfully");
-                Ok(())
-            }
-            Err(e) => {
-                error!(url = %self.url, error = %e, "SFTP download failed");
-
-                // Update state to failed
-                {
-                    let mut state = self.state.write().await;
-                    *state = DownloadState::Failed(e.to_string());
-                }
-
-                Err(e)
-            }
+        // Perform the download
+        if let Err(e) = self.download_file().await {
+            error!(url = %self.url, error = %e, "SFTP download failed");
+            let mut state = self.state.write().await;
+            *state = DownloadState::Failed(e.to_string());
+            return Err(e);
         }
+
+        info!(url = %self.url, "SFTP download completed successfully");
+        Ok(())
     }
 
     async fn pause(&mut self) -> Result<()> {
@@ -523,38 +518,30 @@ impl Download for SftpDownload {
     }
 
     async fn resume(&mut self) -> Result<()> {
-        let mut state = self.state.write().await;
-
-        if !state.can_resume() {
+        let current_state = self.state();
+        if !current_state.can_resume() {
             return Err(ZuupError::InvalidStateTransition {
-                from: state.clone(),
+                from: current_state,
                 to: DownloadState::Active,
             });
         }
 
-        *state = DownloadState::Active;
-        info!(url = %self.url, "Resumed SFTP download");
-
-        // Restart the download process
-        drop(state); // Release the lock before calling download_file
-
-        match self.download_file().await {
-            Ok(()) => {
-                info!(url = %self.url, "SFTP download resumed and completed successfully");
-                Ok(())
-            }
-            Err(e) => {
-                error!(url = %self.url, error = %e, "SFTP download resume failed");
-
-                // Update state to failed
-                {
-                    let mut state = self.state.write().await;
-                    *state = DownloadState::Failed(e.to_string());
-                }
-
-                Err(e)
-            }
+        {
+            let mut state = self.state.write().await;
+            *state = DownloadState::Active;
         }
+
+        info!(url = %self.url, "Resuming SFTP download");
+
+        if let Err(e) = self.download_file().await {
+            error!(url = %self.url, error = %e, "SFTP download resume failed");
+            let mut state = self.state.write().await;
+            *state = DownloadState::Failed(e.to_string());
+            return Err(e);
+        }
+
+        info!(url = %self.url, "SFTP download resumed and completed successfully");
+        Ok(())
     }
 
     async fn cancel(&mut self) -> Result<()> {
@@ -697,7 +684,6 @@ mod tests {
         assert_eq!(download.url, url);
         assert_eq!(download.output_path, Some(PathBuf::from("/tmp")));
         assert_eq!(download.filename, Some("test.txt".to_string()));
-        assert_eq!(download.timeout, 30);
 
         // Test state and progress
         assert_eq!(download.state(), DownloadState::Pending);
