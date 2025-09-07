@@ -156,6 +156,12 @@ pub enum ProtocolError {
     #[error("Unsupported protocol: {0}")]
     UnsupportedProtocol(String),
 
+    #[error("Protocol '{protocol}' is not supported. Enable the '{feature}' feature to use this protocol.")]
+    UnsupportedProtocolWithFeature { protocol: String, feature: String },
+
+    #[error("No protocol handlers are available. Enable protocol features like 'http', 'ftp', 'sftp', or 'torrent'.")]
+    NoProtocolHandlers,
+
     #[error("HTTP error: {status} - {message}")]
     Http { status: u16, message: String },
 
@@ -491,6 +497,8 @@ impl ZuupError {
                 }
             }
             ZuupError::Protocol(ProtocolError::UnsupportedProtocol(_)) => ErrorSeverity::High,
+            ZuupError::Protocol(ProtocolError::UnsupportedProtocolWithFeature { .. }) => ErrorSeverity::High,
+            ZuupError::Protocol(ProtocolError::NoProtocolHandlers) => ErrorSeverity::Critical,
             ZuupError::Protocol(ProtocolError::AuthenticationRequired) => ErrorSeverity::High,
             ZuupError::Protocol(_) => ErrorSeverity::Medium,
 
@@ -732,5 +740,16 @@ impl Clone for ZuupError {
 impl From<config::ConfigError> for ZuupError {
     fn from(err: config::ConfigError) -> Self {
         ZuupError::Config(err.to_string())
+    }
+}
+
+/// Get the required feature name for a given URL scheme
+pub fn get_required_feature_for_scheme(scheme: &str) -> Option<&'static str> {
+    match scheme {
+        "http" | "https" => Some("http"),
+        "ftp" | "ftps" => Some("ftp"),
+        "sftp" => Some("sftp"),
+        "magnet" => Some("torrent"),
+        _ => None,
     }
 }

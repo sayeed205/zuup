@@ -145,17 +145,12 @@ impl ZuupEngine {
 
         // Check if we have a handler for at least one URL
         let protocol_registry = self.protocol_registry.read().await;
-        let has_handler = request
-            .urls
-            .iter()
-            .any(|url| protocol_registry.find_handler(url).is_some());
-
-        if !has_handler {
-            return Err(ZuupError::Protocol(
-                crate::error::ProtocolError::UnsupportedProtocol(
-                    request.urls[0].scheme().to_string(),
-                ),
-            ));
+        
+        // Try to find a handler for each URL and provide detailed error messages
+        for url in &request.urls {
+            if let Err(e) = protocol_registry.find_handler_with_error(url) {
+                return Err(e);
+            }
         }
 
         // Add to download manager

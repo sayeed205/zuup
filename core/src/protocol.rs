@@ -211,17 +211,24 @@ impl ProtocolRegistry {
     
     /// Find a handler for the given URL with detailed error information
     pub fn find_handler_with_error(&self, url: &Url) -> crate::error::Result<&dyn ProtocolHandler> {
+        // Check if registry is empty first
+        if self.is_empty() {
+            return Err(crate::error::ZuupError::Protocol(
+                crate::error::ProtocolError::NoProtocolHandlers
+            ));
+        }
+        
         if let Some(handler) = self.find_handler(url) {
             return Ok(handler);
         }
         
         // Check if the protocol is supported but not enabled
-        if let Some(required_feature) = get_required_feature_for_scheme(url.scheme()) {
+        if let Some(required_feature) = crate::error::get_required_feature_for_scheme(url.scheme()) {
             return Err(crate::error::ZuupError::Protocol(
-                crate::error::ProtocolError::UnsupportedProtocol(
-                    format!("Protocol '{}' is not supported. Enable the '{}' feature to use this protocol.", 
-                        url.scheme(), required_feature)
-                )
+                crate::error::ProtocolError::UnsupportedProtocolWithFeature {
+                    protocol: url.scheme().to_string(),
+                    feature: required_feature.to_string(),
+                }
             ));
         }
         
