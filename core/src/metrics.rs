@@ -3,18 +3,22 @@
 //! This module provides comprehensive metrics collection, performance monitoring,
 //! and health check capabilities for the download manager.
 
-use std::collections::HashMap;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::{
+    collections::HashMap,
+    sync::Arc,
+    sync::atomic::{AtomicU64, AtomicUsize, Ordering},
+    time::{Duration, Instant, SystemTime},
+};
 
 use metrics::{counter, gauge, histogram};
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 use tracing::{debug, error, info};
 
-use crate::error::{Result, ZuupError};
-use crate::types::DownloadId;
+use crate::{
+    error::{Result, ZuupError},
+    types::DownloadId,
+};
 
 /// Configuration for metrics collection and export
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -258,7 +262,7 @@ impl MetricsCollector {
             .map_err(|e| ZuupError::Config(format!("Invalid bind address: {}", e)))?;
 
         let builder = PrometheusBuilder::new();
-        let _handle = builder
+        builder
             .with_http_listener(socket_addr)
             .install()
             .map_err(|e| {
