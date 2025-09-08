@@ -9,6 +9,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use percent_encoding;
 use tokio::sync::{Mutex, RwLock};
 use url::Url;
 
@@ -226,13 +227,19 @@ impl BitTorrentProtocolHandler {
             } else {
                 tracing::info!("DHT enabled");
             }
+            
+            // Disable DHT persistence to avoid conflicts and make it more ephemeral
+            session_opts.disable_dht_persistence = true;
 
-            // Configure port range
-            session_opts.listen_port_range = Some(self.config.port_range.0..self.config.port_range.1);
+            // Configure port range - use a wider range or let it auto-select
+            if self.config.port_range.0 != 0 && self.config.port_range.1 != 0 {
+                session_opts.listen_port_range = Some(self.config.port_range.0..self.config.port_range.1);
+            }
 
-            // Create the session
+            // Create the session with current directory as default - each download will handle its own output path
+            let default_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
             let session = librqbit::Session::new_with_opts(
-                "/tmp/zuup-torrents".into(),
+                default_dir,
                 session_opts,
             ).await
                 .map_err(|e| ZuupError::Protocol(
@@ -704,7 +711,12 @@ impl BitTorrentDownload {
         let name = if let Some(dn_start) = magnet_str.find("dn=") {
             let dn_part = &magnet_str[dn_start + 3..];
             let dn_end = dn_part.find('&').unwrap_or(dn_part.len());
-            dn_part[..dn_end].to_string()
+            let encoded_name = &dn_part[..dn_end];
+            // URL decode the display name
+            percent_encoding::percent_decode_str(encoded_name)
+                .decode_utf8()
+                .map(|decoded| decoded.to_string())
+                .unwrap_or_else(|_| encoded_name.to_string())
         } else {
             "unknown_torrent".to_string()
         };
@@ -862,7 +874,7 @@ impl BitTorrentDownload {
         let config = self.config.clone();
 
         tokio::spawn(async move {
-            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(1));
+            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(5));
 
             loop {
                 interval.tick().await;
@@ -877,6 +889,12 @@ impl BitTorrentDownload {
 
                 // Update progress from torrent handle
                 let stats = handle.stats();
+
+                // Add some debugging - only log when there are changes or periodically
+                tracing::debug!(
+                    "Torrent stats: state={:?}, total_bytes={}, progress_bytes={}, uploaded_bytes={}",
+                    stats.state, stats.total_bytes, stats.progress_bytes, stats.uploaded_bytes
+                );
 
                 {
                     let mut progress_guard = progress.write().await;
@@ -930,13 +948,84 @@ impl Download for BitTorrentDownload {
             });
         }
 
-        // Simplified implementation
+        // Ensure we have a session
+        let session = {
+            let guard = self.session.read().await;
+            guard.as_ref().cloned().ok_or_else(|| ZuupError::Protocol(
+                ProtocolError::NotInitialized("BitTorrent session not initialized".to_string())
+            ))?
+        };
+
+
+
+        // Add torrent from magnet or .torrent URL
+        let url_str = self.url.to_string();
+        let add_torrent = librqbit::AddTorrent::from_cli_argument(&url_str)
+            .map_err(|e| ZuupError::Protocol(ProtocolError::InitializationFailed(format!(
+                "Failed to parse torrent URL: {}", e
+            ))))?;
+        
+        // Prepare torrent options with the correct output directory
+        let output_folder = if let Some(path) = &self.output_path {
+            Some(path.to_string_lossy().to_string())
+        } else {
+            // Use current directory if no output path specified
+            Some(std::env::current_dir()
+                .unwrap_or_else(|_| PathBuf::from("."))
+                .to_string_lossy()
+                .to_string())
+        };
+        
+        let add_res = session
+            .add_torrent(add_torrent, Some(librqbit::AddTorrentOptions {
+                overwrite: true, // Allow overwriting existing files
+                output_folder,
+                ..Default::default()
+            }))
+            .await;
+
+        let add_response = add_res.map_err(|e| ZuupError::Protocol(ProtocolError::InitializationFailed(format!(
+            "Failed to add torrent: {}", e
+        ))))?;
+
+        // Extract the ManagedTorrent from AddTorrentResponse
+        let handle = match add_response {
+            librqbit::AddTorrentResponse::Added(_, handle) => {
+                tracing::info!("Torrent added successfully");
+                handle
+            },
+            librqbit::AddTorrentResponse::AlreadyManaged(_, handle) => {
+                tracing::info!("Torrent already managed, using existing handle");
+                handle
+            },
+            librqbit::AddTorrentResponse::ListOnly(_) => {
+                return Err(ZuupError::Protocol(ProtocolError::InitializationFailed(
+                    "Torrent was added in list-only mode".to_string()
+                )));
+            }
+        };
+        
+        // Log initial torrent state
+        let initial_stats = handle.stats();
+        tracing::info!(
+            "Initial torrent stats: state={:?}, total_bytes={}, progress_bytes={}", 
+            initial_stats.state, initial_stats.total_bytes, initial_stats.progress_bytes
+        );
+        
+        self.torrent_handle = Some(handle.clone());
+
+        // Start progress monitoring
+        self.start_progress_monitoring(handle).await;
+
         {
             let mut state = self.state.write().await;
             *state = DownloadState::Active;
         }
 
-        tracing::info!("BitTorrent download started (simplified implementation)");
+        let output_dir = self.output_path.as_ref()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| "current directory".to_string());
+        tracing::info!(target_dir = %output_dir, "BitTorrent download started");
         Ok(())
     }
 

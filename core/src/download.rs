@@ -81,18 +81,27 @@ pub struct DownloadTask {
 
 impl DownloadTask {
     /// Compute output directory and final filename
-    fn compute_output_and_filename(&self) -> (PathBuf, String) {
+    async fn compute_output_and_filename(&self) -> (PathBuf, String) {
         // Determine filename
-        let filename = self.request.filename.clone().unwrap_or_else(|| {
-            self.request
-                .urls
-                .first()
-                .and_then(|url| url.path_segments())
-                .and_then(|mut segments| segments.next_back())
-                .filter(|name| !name.is_empty())
-                .unwrap_or("download")
-                .to_string()
-        });
+        let filename = if let Some(custom_filename) = &self.request.filename {
+            custom_filename.clone()
+        } else {
+            // Try to get filename from download metadata first
+            if let Some(download) = &*self.protocol_download.lock().await {
+                if let Ok(metadata) = download.metadata().await {
+                    if let Some(metadata_filename) = metadata.filename {
+                        metadata_filename
+                    } else {
+                        self.fallback_filename()
+                    }
+                } else {
+                    self.fallback_filename()
+                }
+            } else {
+                self.fallback_filename()
+            }
+        };
+        
         // Determine output path
         let output_path = self
             .request
@@ -102,16 +111,28 @@ impl DownloadTask {
         (output_path, filename)
     }
 
+    /// Fallback filename extraction from URL
+    fn fallback_filename(&self) -> String {
+        self.request
+            .urls
+            .first()
+            .and_then(|url| url.path_segments())
+            .and_then(|mut segments| segments.next_back())
+            .filter(|name| !name.is_empty())
+            .unwrap_or("download")
+            .to_string()
+    }
+
     /// Path to the sidecar .zuup file for this download
-    fn zuup_path(&self) -> PathBuf {
-        let (output, filename) = self.compute_output_and_filename();
+    async fn zuup_path(&self) -> PathBuf {
+        let (output, filename) = self.compute_output_and_filename().await;
         output.join(format!("{}.zuup", filename))
     }
 
     /// Persist current download info into the .zuup sidecar file
     async fn save_zuup(&self) -> Result<()> {
         let info = self.info().await;
-        let path = self.zuup_path();
+        let path = self.zuup_path().await;
         // Ensure directory exists
         if let Some(parent) = path.parent() {
             let _ = tokio::fs::create_dir_all(parent).await;
@@ -138,7 +159,7 @@ impl DownloadTask {
 
     /// Remove the .zuup sidecar file if it exists
     async fn remove_zuup(&self) {
-        let path = self.zuup_path();
+        let path = self.zuup_path().await;
         if tokio::fs::try_exists(&path).await.unwrap_or(false) {
             let _ = tokio::fs::remove_file(path).await;
         }
@@ -176,24 +197,8 @@ impl DownloadTask {
         let started_at = *self.started_at.read().await;
         let completed_at = *self.completed_at.read().await;
 
-        // Determine filename
-        let filename = self.request.filename.clone().unwrap_or_else(|| {
-            self.request
-                .urls
-                .first()
-                .and_then(|url| url.path_segments())
-                .and_then(|mut segments| segments.next_back())
-                .filter(|name| !name.is_empty())
-                .unwrap_or("download")
-                .to_string()
-        });
-
-        // Determine output path
-        let output_path = self
-            .request
-            .output_path
-            .clone()
-            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+        // Get filename and output path
+        let (output_path, filename) = self.compute_output_and_filename().await;
 
         DownloadInfo {
             id: self.id.clone(),

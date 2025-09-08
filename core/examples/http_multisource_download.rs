@@ -19,7 +19,11 @@ use zuup_core::{ZuupConfig, ZuupEngine, types::DownloadRequest};
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize logging with more detailed output for multi-source downloads
-    tracing_subscriber::fmt()
+    tracing_subscriber::fmt()warning: `zuup-core` (example "magnet") generated 1 warning
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 10.65s
+     Running `target/debug/examples/magnet`
+Starting download: magnet:?xt=urn:btih:7920acc28f0ec4d75ac0e0edd82789092cf8ded1&dn=archlinux-2025.09.01-x86_64.iso
+[█████████████████████████] ???% 0 B / Unknown | 0 B/s (0.0 Mbps) | ETA: Unknown | Time: 6m 15s
         .with_env_filter("zuup_core=info,zuup_core::protocols::http=debug,zuup_core::engine=debug")
         .init();
 
