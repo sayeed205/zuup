@@ -32,6 +32,7 @@ which = "7"
 percent-encoding = "2"
 rand = "0.9"
 quick-xml = { version = "0.38", features = ['serialize'] }
+futures-util = "0.3"
 
 # HTTP/HTTPS protocol dependencies
 reqwest = { version = "0.12", features = [

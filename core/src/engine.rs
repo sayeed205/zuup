@@ -12,6 +12,7 @@ use crate::{
     types::{DownloadId, DownloadInfo, DownloadRequest, DownloadState},
 };
 
+#[derive(Clone)]
 pub struct ZuupEngine {
     /// Configuration for the Zuup engine.
     config: Arc<RwLock<ZuupConfig>>,
@@ -30,6 +31,13 @@ pub struct ZuupEngine {
 
     /// Engine state
     state: Arc<RwLock<EngineState>>,
+
+    /// Signal handler task handle
+    #[cfg(unix)]
+    signal_handler: Arc<RwLock<Option<tokio::task::JoinHandle<()>>>>,
+    
+    /// Shutdown channel sender (for all platforms)
+    shutdown_tx: Arc<RwLock<Option<tokio::sync::mpsc::UnboundedSender<()>>>>,
 }
 
 /// Engine state
@@ -80,6 +88,9 @@ impl ZuupEngine {
             protocol_registry,
             event_bus,
             state: Arc::new(RwLock::new(EngineState::Starting)),
+            #[cfg(unix)]
+            signal_handler: Arc::new(RwLock::new(None)),
+            shutdown_tx: Arc::new(RwLock::new(None)),
         };
 
         // Initialize the engine with enhanced protocol checking
@@ -108,6 +119,9 @@ impl ZuupEngine {
 
         // Start auto-save if enabled
         self.session_manager.start_auto_save().await?;
+
+        // Setup signal handlers for graceful shutdown
+        self.setup_signal_handlers().await?;
 
         // Set state to running
         *self.state.write().await = EngineState::Running;
@@ -485,9 +499,11 @@ impl ZuupEngine {
 
     /// Pause a download
     pub async fn pause_download(&self, id: DownloadId) -> Result<()> {
-        // Check if engine is running
-        if *self.state.read().await != EngineState::Running {
-            return Err(ZuupError::Internal("Engine is not running".to_string()));
+        let current_state = self.state.read().await.clone();
+        
+        // Allow pausing during shutdown (Stopping state)
+        if !matches!(current_state, EngineState::Running | EngineState::Stopping) {
+            return Err(ZuupError::Internal(format!("Engine is not in a state that allows pausing (current: {:?})", current_state)));
         }
 
         // Get current download info
@@ -501,12 +517,11 @@ impl ZuupEngine {
             });
         }
 
-        // TODO)) Implement actual pause logic
-        // This would involve stopping the download task and updating state
+        // Pause the download using the download manager
+        self.download_manager.pause_download(&id).await?;
 
-        // Update session
-        let mut updated_info = info;
-        updated_info.state = DownloadState::Paused;
+        // Update session with the new state
+        let updated_info = self.download_manager.get_download(&id).await?;
         self.session_manager.update_download(updated_info).await?;
 
         // Publish event
@@ -673,6 +688,8 @@ impl ZuupEngine {
     /// If `force` is false, active downloads will be paused and can be
     /// resumed when the engine is restarted.
     pub async fn shutdown(&self, force: bool) -> Result<()> {
+        tracing::info!("🔄 Engine shutdown initiated (force: {})", force);
+        
         *self.state.write().await = EngineState::Stopping;
 
         // Publish shutdown event
@@ -683,24 +700,228 @@ impl ZuupEngine {
         // Stop all active downloads if not forced
         if !force {
             let downloads = self.list_downloads().await?;
-            for download in downloads {
-                if download.state.is_active() {
-                    let _ = self.pause_download(download.id).await;
+            let active_downloads: Vec<_> = downloads.into_iter()
+                .filter(|d| d.state.is_active())
+                .collect();
+            
+            if !active_downloads.is_empty() {
+                tracing::info!("Pausing {} active download(s)", active_downloads.len());
+                
+                for download in active_downloads {
+                    match self.pause_download(download.id.clone()).await {
+                        Ok(()) => {
+                            tracing::debug!("Paused download: {}", download.id);
+                        }
+                        Err(e) => {
+                            tracing::warn!("Failed to pause download {}: {}", download.id, e);
+                        }
+                    }
                 }
             }
         }
 
-        // Save session if configured
-        if self.config.read().await.general.save_session_on_exit
-            && let Err(e) = self.session_manager.save().await
-        {
-            tracing::error!(error = %e, "Failed to save session on shutdown");
+        // Save session with enhanced error handling and retry logic
+        if self.config.read().await.general.save_session_on_exit {
+            // Try to save session with retries
+            let mut save_attempts = 0;
+            const MAX_SAVE_ATTEMPTS: u32 = 3;
+            
+            while save_attempts < MAX_SAVE_ATTEMPTS {
+                match self.session_manager.save().await {
+                    Ok(()) => {
+                        tracing::info!("✅ Session saved successfully");
+                        break;
+                    }
+                    Err(e) => {
+                        save_attempts += 1;
+                        tracing::error!(
+                            error = %e, 
+                            attempt = save_attempts, 
+                            max_attempts = MAX_SAVE_ATTEMPTS,
+                            "Failed to save session on shutdown"
+                        );
+                        
+                        if save_attempts < MAX_SAVE_ATTEMPTS {
+                            tokio::time::sleep(Duration::from_millis(100)).await;
+                        } else {
+                            tracing::error!("❌ Failed to save session after {} attempts. Download progress may be lost!", MAX_SAVE_ATTEMPTS);
+                        }
+                    }
+                }
+            }
+        } else {
+            tracing::warn!("⚠️  Session saving is disabled. Download progress will not be saved.");
+        }
+
+        // Shutdown session manager to stop auto-save and flush any pending writes
+        if let Err(e) = self.session_manager.shutdown().await {
+            tracing::error!(error = %e, "Failed to shutdown session manager");
+        }
+
+        // Cancel signal handler
+        #[cfg(unix)]
+        if let Some(handle) = self.signal_handler.write().await.take() {
+            handle.abort();
         }
 
         // Set state to stopped
         *self.state.write().await = EngineState::Stopped;
 
-        tracing::info!("Zuup engine shutdown complete");
+        tracing::info!("✅ Zuup engine shutdown complete");
+        Ok(())
+    }
+
+    /// Trigger graceful shutdown programmatically
+    ///
+    /// This method allows applications to trigger the same graceful shutdown
+    /// process that would occur when receiving SIGINT/SIGTERM signals.
+    pub async fn trigger_graceful_shutdown(&self) -> Result<()> {
+        tracing::info!("🔄 Graceful shutdown triggered programmatically");
+        
+        if let Some(shutdown_tx) = self.shutdown_tx.read().await.as_ref() {
+            shutdown_tx.send(()).map_err(|_| {
+                ZuupError::Internal("Failed to send shutdown signal".to_string())
+            })?;
+            tracing::info!("✅ Shutdown signal sent");
+        } else {
+            tracing::warn!("⚠️  No shutdown channel available, calling shutdown directly");
+            self.shutdown(false).await?;
+        }
+        
+        Ok(())
+    }
+
+    /// Setup signal handlers for graceful shutdown
+    #[cfg(unix)]
+    async fn setup_signal_handlers(&self) -> Result<()> {
+        use tokio::signal::unix::{signal, SignalKind};
+        
+        // Create a shutdown channel
+        let (shutdown_tx, mut shutdown_rx) = tokio::sync::mpsc::unbounded_channel();
+        
+        // Store the sender in the engine
+        *self.shutdown_tx.write().await = Some(shutdown_tx.clone());
+        
+        // Spawn signal handler task
+        let handle = tokio::spawn(async move {
+            let mut sigint = signal(SignalKind::interrupt()).expect("Failed to setup SIGINT handler");
+            let mut sigterm = signal(SignalKind::terminate()).expect("Failed to setup SIGTERM handler");
+            
+            tokio::select! {
+                _ = sigint.recv() => {
+                    tracing::info!("🛑 Received SIGINT (Ctrl+C), initiating graceful shutdown...");
+                }
+                _ = sigterm.recv() => {
+                    tracing::info!("🛑 Received SIGTERM, initiating graceful shutdown...");
+                }
+            }
+            
+            // Send shutdown signal
+            let _ = shutdown_tx.send(());
+        });
+        
+        // Spawn shutdown handler task
+        let engine_clone = self.clone();
+        tokio::spawn(async move {
+            if shutdown_rx.recv().await.is_some() {
+                tracing::info!("🔄 Processing shutdown request...");
+                
+                // Use a timeout for the entire shutdown process to prevent hanging
+                let shutdown_future = async {
+                    // Prepare for shutdown first to save progress
+                    match engine_clone.prepare_for_shutdown().await {
+                        Ok(preparation) => {
+                            tracing::info!("{}", preparation.summary());
+                        }
+                        Err(e) => {
+                            tracing::error!("❌ Failed to prepare for shutdown: {}", e);
+                        }
+                    }
+                    
+                    // Perform the actual shutdown
+                    match engine_clone.shutdown(false).await {
+                        Ok(()) => {
+                            tracing::info!("✅ Graceful shutdown complete. Downloads can be resumed on next start.");
+                        }
+                        Err(e) => {
+                            tracing::error!("❌ Failed to shutdown gracefully: {}", e);
+                        }
+                    }
+                };
+                
+                // Apply a 10-second timeout to the entire shutdown process
+                match tokio::time::timeout(Duration::from_secs(10), shutdown_future).await {
+                    Ok(()) => {
+                        tracing::debug!("Shutdown completed within timeout");
+                    }
+                    Err(_) => {
+                        tracing::error!("❌ Shutdown timed out after 10 seconds, forcing exit");
+                    }
+                }
+                
+                tracing::info!("⏳ Waiting for pending I/O operations to complete...");
+                tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+                tracing::info!("🏁 Shutdown process complete, exiting...");
+                std::process::exit(0);
+            }
+        });
+        
+        *self.signal_handler.write().await = Some(handle);
+        Ok(())
+    }
+
+    /// Setup signal handlers for graceful shutdown (Windows/other platforms)
+    #[cfg(not(unix))]
+    async fn setup_signal_handlers(&self) -> Result<()> {
+        // Create a shutdown channel
+        let (shutdown_tx, mut shutdown_rx) = tokio::sync::mpsc::unbounded_channel();
+        
+        // Store the sender in the engine
+        *self.shutdown_tx.write().await = Some(shutdown_tx.clone());
+        
+        // Spawn signal handler task
+        tokio::spawn(async move {
+            if let Ok(()) = tokio::signal::ctrl_c().await {
+                tracing::info!("🛑 Received Ctrl+C, initiating graceful shutdown...");
+                
+                // Send shutdown signal
+                let _ = shutdown_tx.send(());
+            }
+        });
+        
+        // Spawn shutdown handler task
+        let engine_clone = self.clone();
+        tokio::spawn(async move {
+            if shutdown_rx.recv().await.is_some() {
+                tracing::info!("🔄 Processing shutdown request...");
+                
+                // Prepare for shutdown first to save progress
+                match engine_clone.prepare_for_shutdown().await {
+                    Ok(preparation) => {
+                        tracing::info!("{}", preparation.summary());
+                    }
+                    Err(e) => {
+                        tracing::error!("❌ Failed to prepare for shutdown: {}", e);
+                    }
+                }
+                
+                // Perform the actual shutdown
+                match engine_clone.shutdown(false).await {
+                    Ok(()) => {
+                        tracing::info!("✅ Graceful shutdown complete. Downloads can be resumed on next start.");
+                    }
+                    Err(e) => {
+                        tracing::error!("❌ Failed to shutdown gracefully: {}", e);
+                    }
+                }
+                
+                tracing::info!("⏳ Waiting for pending I/O operations to complete...");
+                tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+                tracing::info!("🏁 Shutdown process complete, exiting...");
+                std::process::exit(0);
+            }
+        });
+        
         Ok(())
     }
 
@@ -813,6 +1034,103 @@ impl ZuupEngine {
         
         Some("Invalid URL format - cannot provide protocol support suggestions".to_string())
     }
+
+    /// Check if there are downloads that need to be saved before shutdown
+    ///
+    /// Returns information about downloads that would benefit from graceful shutdown
+    pub async fn get_shutdown_impact(&self) -> Result<ShutdownImpact> {
+        let downloads = self.list_downloads().await?;
+        let mut impact = ShutdownImpact::default();
+        
+        for download in downloads {
+            match &download.state {
+                DownloadState::Active => {
+                    impact.active_downloads.push(download.clone());
+                    impact.total_active_size += download.progress.total_size.unwrap_or(0);
+                    impact.total_downloaded_size += download.progress.downloaded_size;
+                }
+                DownloadState::Preparing | DownloadState::Retrying => {
+                    impact.preparing_downloads.push(download.clone());
+                }
+                DownloadState::Pending | DownloadState::Waiting => {
+                    impact.pending_downloads.push(download.clone());
+                }
+                DownloadState::Paused => {
+                    impact.paused_downloads.push(download.clone());
+                    impact.total_paused_size += download.progress.downloaded_size;
+                }
+                _ => {}
+            }
+        }
+        
+        impact.will_lose_progress = !impact.active_downloads.is_empty() || !impact.preparing_downloads.is_empty();
+        impact.can_resume_after_restart = !impact.active_downloads.is_empty() 
+            || !impact.preparing_downloads.is_empty() 
+            || !impact.paused_downloads.is_empty();
+        
+        Ok(impact)
+    }
+
+    /// Prepare for shutdown by saving current state
+    ///
+    /// This method ensures all download progress is saved and provides
+    /// information about what will happen during shutdown.
+    pub async fn prepare_for_shutdown(&self) -> Result<ShutdownPreparation> {
+        let impact = self.get_shutdown_impact().await?;
+        let start_time = std::time::Instant::now();
+        let mut preparation = ShutdownPreparation {
+            impact,
+            session_saved: false,
+            downloads_paused: 0,
+            preparation_time: Duration::from_secs(0), // Will be updated at the end
+        };
+        
+        // Save current session state
+        match self.session_manager.save().await {
+            Ok(()) => {
+                preparation.session_saved = true;
+                tracing::debug!("Session state saved successfully");
+            }
+            Err(e) => {
+                tracing::error!(error = %e, "Failed to save session state");
+            }
+        }
+        
+        // Pre-pause active downloads to save their current progress
+        for download in &preparation.impact.active_downloads {
+            if download.state.can_pause() {
+                // Use a timeout to prevent hanging on individual pause operations
+                let pause_result = tokio::time::timeout(
+                    Duration::from_secs(3), 
+                    self.pause_download(download.id.clone())
+                ).await;
+                
+                match pause_result {
+                    Ok(Ok(())) => {
+                        preparation.downloads_paused += 1;
+                        tracing::debug!("Pre-paused download: {}", download.id);
+                    }
+                    Ok(Err(e)) => {
+                        tracing::warn!(
+                            download_id = %download.id,
+                            error = %e,
+                            "Failed to pre-pause download"
+                        );
+                    }
+                    Err(_) => {
+                        tracing::warn!(
+                            download_id = %download.id,
+                            "Timeout while pausing download (3s), continuing with shutdown"
+                        );
+                    }
+                }
+            }
+        }
+        
+        preparation.preparation_time = start_time.elapsed();
+        
+        Ok(preparation)
+    }
 }
 
 /// Engine statistics
@@ -911,6 +1229,103 @@ impl ProtocolAvailabilityInfo {
                 .map(|mapping| mapping.feature)
         } else {
             None
+        }
+    }
+}
+
+/// Information about the impact of shutting down the engine
+#[derive(Debug, Clone, Default)]
+pub struct ShutdownImpact {
+    /// Downloads that are currently active and will be paused
+    pub active_downloads: Vec<DownloadInfo>,
+    
+    /// Downloads that are preparing or retrying
+    pub preparing_downloads: Vec<DownloadInfo>,
+    
+    /// Downloads that are pending and haven't started yet
+    pub pending_downloads: Vec<DownloadInfo>,
+    
+    /// Downloads that are already paused
+    pub paused_downloads: Vec<DownloadInfo>,
+    
+    /// Total size of active downloads
+    pub total_active_size: u64,
+    
+    /// Total already downloaded size from active downloads
+    pub total_downloaded_size: u64,
+    
+    /// Total size of paused downloads (already downloaded portion)
+    pub total_paused_size: u64,
+    
+    /// Whether progress will be lost if shutdown is forced
+    pub will_lose_progress: bool,
+    
+    /// Whether downloads can be resumed after restart
+    pub can_resume_after_restart: bool,
+}
+
+impl ShutdownImpact {
+    /// Get the total number of downloads that will be affected
+    pub fn total_affected_downloads(&self) -> usize {
+        self.active_downloads.len() 
+            + self.preparing_downloads.len() 
+            + self.pending_downloads.len()
+    }
+    
+    /// Get the percentage of progress that would be preserved
+    pub fn progress_preservation_percentage(&self) -> f64 {
+        if self.total_active_size == 0 {
+            return 100.0;
+        }
+        
+        (self.total_downloaded_size as f64 / self.total_active_size as f64) * 100.0
+    }
+    
+    /// Check if shutdown is safe (no active downloads)
+    pub fn is_safe_to_shutdown(&self) -> bool {
+        self.active_downloads.is_empty() && self.preparing_downloads.is_empty()
+    }
+}
+
+/// Information about shutdown preparation results
+#[derive(Debug, Clone)]
+pub struct ShutdownPreparation {
+    /// Impact analysis of the shutdown
+    pub impact: ShutdownImpact,
+    
+    /// Whether the session was successfully saved
+    pub session_saved: bool,
+    
+    /// Number of downloads that were successfully paused
+    pub downloads_paused: usize,
+    
+    /// Time taken to prepare for shutdown
+    pub preparation_time: std::time::Duration,
+}
+
+impl ShutdownPreparation {
+    /// Check if the preparation was successful
+    pub fn is_successful(&self) -> bool {
+        self.session_saved && 
+        self.downloads_paused == self.impact.active_downloads.len()
+    }
+    
+    /// Get a summary message about the preparation
+    pub fn summary(&self) -> String {
+        if self.is_successful() {
+            format!(
+                "✅ Shutdown preparation successful: {} downloads paused, session saved (took {}ms)",
+                self.downloads_paused,
+                self.preparation_time.as_millis()
+            )
+        } else {
+            format!(
+                "⚠️  Shutdown preparation partial: {}/{} downloads paused, session saved: {} (took {}ms)",
+                self.downloads_paused,
+                self.impact.active_downloads.len(),
+                self.session_saved,
+                self.preparation_time.as_millis()
+            )
         }
     }
 }

@@ -460,8 +460,11 @@ impl ProxyManager {
 
     /// Check health of a specific proxy
     async fn check_proxy_health(&self, proxy: &EnhancedProxyConfig) -> ProxyHealth {
-        let default_url = Url::parse("http://httpbin.org/ip").unwrap();
-        let health_check_url = proxy.health_check_url.as_ref().unwrap_or(&default_url);
+        // If no custom health check URL is provided, skip health check
+        // and assume proxy is healthy until proven otherwise during actual usage
+        let Some(health_check_url) = &proxy.health_check_url else {
+            return ProxyHealth::Healthy;
+        };
 
         match self.test_proxy_connection(proxy, health_check_url).await {
             Ok(_) => ProxyHealth::Healthy,

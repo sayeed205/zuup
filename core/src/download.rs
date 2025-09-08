@@ -300,6 +300,18 @@ impl DownloadTask {
             let mut guard = self.protocol_download.lock().await;
             if let Some(download) = guard.as_mut() {
                 download.start().await?;
+                
+                // Check if the download was paused immediately (e.g., during graceful shutdown)
+                let current_state = download.state();
+                if matches!(current_state, DownloadState::Paused) {
+                    tracing::debug!("Download {} was paused during start, saving .zuup file", self.id);
+                    if let Err(e) = self.save_zuup().await {
+                        tracing::warn!(error = %format!("{}", e), "Failed to save .zuup after pause");
+                    } else {
+                        tracing::debug!("Successfully saved .zuup file for paused download {}", self.id);
+                    }
+                    return Ok(());
+                }
             } else {
                 return Err(ZuupError::Internal(
                     "Protocol download instance missing".to_string(),
@@ -307,25 +319,35 @@ impl DownloadTask {
             }
         }
 
-        // Poll the protocol download for progress/state and mirror to task
+        // Optimized polling loop with reduced overhead
+        let mut last_zuup_save = std::time::Instant::now();
+        let mut poll_count = 0;
+        
         loop {
-            // Snapshot state/progress
+            poll_count += 1;
+            
+            // Snapshot state/progress with minimal locking
             let (state_snapshot, progress_snapshot) = {
-                let guard = self.protocol_download.lock().await;
-                if let Some(ref download) = *guard {
-                    (download.state(), download.progress())
+                // Use try_lock to avoid blocking if protocol is busy
+                if let Ok(guard) = self.protocol_download.try_lock() {
+                    if let Some(ref download) = *guard {
+                        (download.state(), download.progress())
+                    } else {
+                        return Err(ZuupError::Internal(
+                            "Protocol download instance missing during polling".to_string(),
+                        ));
+                    }
                 } else {
-                    return Err(ZuupError::Internal(
-                        "Protocol download instance missing during polling".to_string(),
-                    ));
+                    // Skip this poll cycle if protocol is busy
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                    continue;
                 }
             };
 
-            // Mirror into task
-            {
-                let mut state_guard = self.state.write().await;
+            // Mirror into task (use try_write to avoid blocking)
+            if let (Ok(mut state_guard), Ok(mut prog_guard)) = 
+                (self.state.try_write(), self.progress.try_write()) {
                 *state_guard = state_snapshot.clone();
-                let mut prog_guard = self.progress.write().await;
                 let p = progress_snapshot;
                 let mut mapped = DownloadProgress::new();
                 mapped.total_size = p.total_size;
@@ -338,9 +360,13 @@ impl DownloadTask {
                 *prog_guard = mapped;
             }
 
-            // Persist snapshot to .zuup sidecar for resume support
-            if let Err(e) = self.save_zuup().await {
-                tracing::warn!(error = %format!("{}", e), "Failed to save .zuup state");
+            // Save .zuup less frequently to reduce I/O overhead
+            let should_save_zuup = last_zuup_save.elapsed() >= std::time::Duration::from_secs(10);
+            if should_save_zuup {
+                if let Err(e) = self.save_zuup().await {
+                    tracing::warn!(error = %format!("{}", e), "Failed to save .zuup state");
+                }
+                last_zuup_save = std::time::Instant::now();
             }
 
             if state_snapshot.is_terminal() {
@@ -355,8 +381,16 @@ impl DownloadTask {
                 break;
             }
 
-            // Sleep a bit before next poll
-            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            // More aggressive adaptive polling to reduce overhead
+            let sleep_duration = if poll_count < 5 {
+                std::time::Duration::from_millis(100)  // Fast polling for first 5 iterations
+            } else if poll_count < 20 {
+                std::time::Duration::from_millis(250)  // Medium polling for next 15 iterations
+            } else {
+                std::time::Duration::from_millis(1000) // Slow polling after that (1 second)
+            };
+            
+            tokio::time::sleep(sleep_duration).await;
         }
 
         Ok(())
@@ -386,9 +420,13 @@ impl DownloadTask {
         }
 
         *state = DownloadState::Paused;
+        tracing::debug!("Download {} paused, saving .zuup file...", self.id);
+        
         // Persist paused state for resume
         if let Err(e) = self.save_zuup().await {
             tracing::warn!(error = %format!("{}", e), "Failed to save .zuup on pause");
+        } else {
+            tracing::debug!("Successfully saved .zuup file for download {}", self.id);
         }
         Ok(())
     }

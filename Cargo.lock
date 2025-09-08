@@ -4496,6 +4496,7 @@ dependencies = [
  "config",
  "cuid2",
  "dirs",
+ "futures-util",
  "hex 0.4.3",
  "libc",
  "librqbit",

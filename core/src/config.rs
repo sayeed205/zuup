@@ -65,6 +65,12 @@ pub struct GeneralConfig {
     /// Whether to save session on exit
     pub save_session_on_exit: bool,
 
+    /// Whether to enable automatic resume for interrupted downloads
+    pub enable_auto_resume: bool,
+
+    /// Whether to create .zuup files for resume functionality
+    pub create_zuup_files: bool,
+
     /// Maximum number of download history entries to keep
     pub max_download_history: usize,
 
@@ -83,6 +89,8 @@ impl Default for GeneralConfig {
             auto_save_interval: Duration::from_secs(30),
             continue_on_startup: true,
             save_session_on_exit: true,
+            enable_auto_resume: true,
+            create_zuup_files: true,
             max_download_history: 1000,
             categories: HashMap::new(),
         }
