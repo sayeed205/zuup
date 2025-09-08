@@ -11,6 +11,18 @@ use tracing_subscriber::{
     util::SubscriberInitExt,
 };
 
+/// Parse a log level string into a tracing::Level
+pub fn parse_log_level(level: &str) -> Result<Level, String> {
+    match level.to_lowercase().as_str() {
+        "trace" => Ok(Level::TRACE),
+        "debug" => Ok(Level::DEBUG),
+        "info" => Ok(Level::INFO),
+        "warn" => Ok(Level::WARN),
+        "error" => Ok(Level::ERROR),
+        _ => Err(format!("Invalid log level: {}", level)),
+    }
+}
+
 /// Logging configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LoggingConfig {

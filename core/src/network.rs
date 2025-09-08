@@ -312,8 +312,8 @@ mod http_impl {
             let pool = Arc::new(ConnectionPool::new(config.pool_config.clone()).await?);
 
             let proxy_manager = if config.proxy.is_some() {
-                let proxy_config = config.proxy.as_ref().unwrap();
-                let chain_config = ProxyChainConfig {
+                let _proxy_config = config.proxy.as_ref().unwrap();
+                let _chain_config = ProxyChainConfig {
                     proxies: vec![],
                     ..Default::default()
                 };
@@ -338,7 +338,7 @@ mod http_impl {
         }
 
         pub async fn with_proxy_chain(
-            mut config: NetworkClientConfig,
+            config: NetworkClientConfig,
             proxy_chain: ProxyChainConfig,
             enhanced_tls: Option<EnhancedTlsConfig>,
         ) -> Result<Self> {
@@ -372,7 +372,7 @@ mod http_impl {
             &self,
             method: HttpMethod,
             url: &Url,
-            headers: Option<HashMap<String, String>>,
+            _headers: Option<HashMap<String, String>>,
             body: Option<Vec<u8>>,
             additional_headers: Option<HashMap<String, String>>,
         ) -> Result<HttpResponse> {
