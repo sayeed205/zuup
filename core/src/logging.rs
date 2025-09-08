@@ -371,8 +371,6 @@ pub fn init_logging(
     Ok(())
 }
 
-
-
 /// Performance tracing utilities
 pub mod performance {
     use std::time::Instant;
