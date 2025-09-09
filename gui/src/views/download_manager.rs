@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 use gpui::*;
+use gpui::prelude::FluentBuilder;
 use gpui_component::{
     button::Button,
     Disableable,
@@ -10,7 +11,7 @@ use gpui_component::{
 
 use crate::{
     app::{ZuupApp, FilterState, SortState},
-    views::DownloadItemView,
+    views::{DownloadItemView, AddDownloadModal},
 };
 use zuup_core::types::{DownloadInfo, DownloadState};
 
@@ -25,8 +26,8 @@ pub struct DownloadManagerView {
     /// Currently selected download IDs
     selected_downloads: std::collections::HashSet<zuup_core::types::DownloadId>,
     
-    /// Whether the add download modal is open
-    add_download_modal_open: bool,
+    /// Add download modal instance (when open)
+    add_download_modal: Option<Entity<AddDownloadModal>>,
     
     /// Current filter state
     current_filter: FilterState,
@@ -38,10 +39,9 @@ pub struct DownloadManagerView {
 impl DownloadManagerView {
     /// Create a new download manager view
     pub fn new(app: Arc<ZuupApp>) -> Self {
-        let (add_download_modal_open, current_filter, current_sort) = {
+        let (current_filter, current_sort) = {
             let app_state = app.app_state().read().unwrap();
             (
-                app_state.add_download_modal_open,
                 app_state.filter_state.clone(),
                 app_state.sort_state.clone(),
             )
@@ -51,7 +51,7 @@ impl DownloadManagerView {
             app,
             filtered_downloads: Vec::new(),
             selected_downloads: std::collections::HashSet::new(),
-            add_download_modal_open,
+            add_download_modal: None,
             current_filter,
             current_sort,
         }
@@ -183,8 +183,46 @@ impl DownloadManagerView {
         // TODO: Implement clear completed via engine adapter
     }
     
+    /// Handle opening the add download modal
+    fn handle_open_add_download_modal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // Update app state
+        {
+            let mut app_state = self.app.app_state().write().unwrap();
+            app_state.add_download_modal_open = true;
+        }
+        
+        // Create the modal
+        self.add_download_modal = Some(cx.new(|cx| {
+            AddDownloadModal::new(self.app.clone(), window, cx)
+        }));
+        
+        tracing::info!("Add download modal opened");
+        cx.notify();
+    }
+    
+    /// Handle closing the add download modal
+    fn handle_close_add_download_modal(&mut self, cx: &mut Context<Self>) {
+        // Update app state
+        {
+            let mut app_state = self.app.app_state().write().unwrap();
+            app_state.add_download_modal_open = false;
+        }
+        
+        // Remove the modal
+        self.add_download_modal = None;
+        
+        tracing::info!("Add download modal closed");
+        cx.notify();
+    }
+    
+    /// Check if the add download modal should be open
+    fn should_show_add_download_modal(&self) -> bool {
+        let app_state = self.app.app_state().read().unwrap();
+        app_state.add_download_modal_open
+    }
+    
     /// Render the toolbar with action buttons
-    fn render_toolbar(&self, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .h_flex()
             .gap_2()
@@ -195,10 +233,9 @@ impl DownloadManagerView {
             .child(
                 Button::new("add_download")
                     .label("Add Download")
-                    .on_click(move |_, _, _cx| {
-                        tracing::info!("Add download button clicked");
-                        // TODO: Open add download modal
-                    })
+                    .on_click(cx.listener(|this, _event, window, cx| {
+                        this.handle_open_add_download_modal(window, cx);
+                    }))
             )
             .child(
                 Button::new("pause_all")
@@ -396,6 +433,16 @@ impl DownloadManagerView {
 
 impl Render for DownloadManagerView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Check if modal state has changed and update accordingly
+        let should_show_modal = self.should_show_add_download_modal();
+        let has_modal = self.add_download_modal.is_some();
+        
+        if should_show_modal && !has_modal {
+            self.handle_open_add_download_modal(_window, cx);
+        } else if !should_show_modal && has_modal {
+            self.handle_close_add_download_modal(cx);
+        }
+        
         div()
             .v_flex()
             .size_full()
@@ -403,6 +450,9 @@ impl Render for DownloadManagerView {
             .child(self.render_filter_tabs(cx))
             .child(self.render_download_list(cx))
             .child(self.render_status_bar(cx))
+            .when_some(self.add_download_modal.clone(), |this, modal| {
+                this.child(modal)
+            })
     }
 }
 

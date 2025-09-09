@@ -2,10 +2,13 @@
 
 use std::sync::{Arc, Mutex};
 use gpui::*;
+use tokio::sync::mpsc;
+use zuup_core::types::{DownloadRequest, DownloadInfo};
 
 use crate::{
     config::ConfigManager,
     theme::ThemeManager,
+    engine::{DownloadEngineAdapter, UIUpdateEvent},
 };
 
 /// Main application state that integrates all components
@@ -18,6 +21,12 @@ pub struct ZuupApp {
     
     /// Application state
     app_state: Arc<std::sync::RwLock<AppState>>,
+    
+    /// Download engine adapter (optional for simple mode)
+    engine_adapter: Option<Arc<DownloadEngineAdapter>>,
+    
+    /// UI update event receiver
+    ui_update_receiver: Arc<Mutex<Option<mpsc::UnboundedReceiver<UIUpdateEvent>>>>,
 }
 
 /// Application state for UI components
@@ -96,6 +105,8 @@ impl ZuupApp {
             config_manager,
             theme_manager,
             app_state: Arc::new(std::sync::RwLock::new(AppState::default())),
+            engine_adapter: None,
+            ui_update_receiver: Arc::new(Mutex::new(None)),
         };
         
         tracing::info!("Zuup application created in simple mode");
@@ -129,9 +140,69 @@ impl ZuupApp {
         &self.app_state
     }
     
+    /// Get the engine adapter (if available)
+    pub fn engine_adapter(&self) -> Option<&Arc<DownloadEngineAdapter>> {
+        self.engine_adapter.as_ref()
+    }
+    
+    /// Initialize the engine adapter with full functionality
+    pub async fn initialize_with_engine(&mut self) -> anyhow::Result<()> {
+        let core_config = {
+            let config = self.config_manager.lock().unwrap();
+            config.core_config().clone()
+        };
+        
+        // Create the engine adapter
+        let adapter = Arc::new(DownloadEngineAdapter::new(core_config).await?);
+        
+        // Initialize the adapter
+        adapter.initialize().await?;
+        
+        // Get the UI update receiver
+        let receiver = adapter.take_ui_receiver().await;
+        *self.ui_update_receiver.lock().unwrap() = receiver;
+        
+        self.engine_adapter = Some(adapter);
+        
+        tracing::info!("Engine adapter initialized successfully");
+        Ok(())
+    }
+    
+    /// Add a download using the engine adapter
+    pub async fn add_download(&self, request: DownloadRequest) -> anyhow::Result<zuup_core::types::DownloadId> {
+        if let Some(adapter) = &self.engine_adapter {
+            let download_id = adapter.engine().add_download(request).await?;
+            tracing::info!("Download added successfully: {:?}", download_id);
+            Ok(download_id)
+        } else {
+            Err(anyhow::anyhow!("Engine adapter not initialized"))
+        }
+    }
+    
+    /// Get all downloads from the engine
+    pub async fn get_downloads(&self) -> anyhow::Result<Vec<DownloadInfo>> {
+        if let Some(adapter) = &self.engine_adapter {
+            let downloads = adapter.engine().list_downloads().await?;
+            Ok(downloads)
+        } else {
+            // Return empty list in simple mode
+            Ok(Vec::new())
+        }
+    }
+    
+    /// Take the UI update receiver for event processing
+    pub fn take_ui_receiver(&self) -> Option<mpsc::UnboundedReceiver<UIUpdateEvent>> {
+        self.ui_update_receiver.lock().unwrap().take()
+    }
+    
     /// Shutdown the application
-    pub fn shutdown(&self) -> anyhow::Result<()> {
+    pub async fn shutdown(&self) -> anyhow::Result<()> {
         tracing::info!("Shutting down Zuup application");
+        
+        // Shutdown engine adapter if present
+        if let Some(adapter) = &self.engine_adapter {
+            adapter.shutdown().await?;
+        }
         
         // Save configuration
         {
