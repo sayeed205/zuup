@@ -2,13 +2,17 @@
 
 use std::sync::Arc;
 use gpui::*;
+use gpui::prelude::FluentBuilder;
 use gpui_component::{
     button::Button,
     Disableable,
     StyledExt,
 };
 
-use crate::app::ZuupApp;
+use crate::{
+    app::ZuupApp,
+    views::{ConfirmationDialog, create_remove_confirmation_dialog, create_cancel_confirmation_dialog},
+};
 use zuup_core::types::{DownloadInfo, DownloadState};
 
 /// Individual download item component with progress and controls
@@ -27,6 +31,9 @@ pub struct DownloadItemView {
     
     /// Last update timestamp for progress animation
     last_update: std::time::Instant,
+    
+    /// Active confirmation dialog (if any)
+    confirmation_dialog: Option<Entity<ConfirmationDialog>>,
 }
 
 impl DownloadItemView {
@@ -43,6 +50,7 @@ impl DownloadItemView {
             app,
             context_menu_open: false,
             last_update: std::time::Instant::now(),
+            confirmation_dialog: None,
         }
     }
     
@@ -58,31 +66,89 @@ impl DownloadItemView {
     }
     
     /// Handle pause action
-    fn handle_pause(&mut self, _cx: &mut Context<Self>) {
-        tracing::info!("Pause requested for download: {}", self.download_info.filename);
-        // TODO: Implement pause via engine adapter
-        // self.app.engine_adapter().pause_download(&self.download_info.id).await;
+    fn handle_pause(&mut self, cx: &mut Context<Self>) {
+        let download_id = self.download_info.id.clone();
+        let filename = self.download_info.filename.clone();
+        let app = self.app.clone();
+        
+        tracing::info!("Pause requested for download: {}", filename);
+        
+        tokio::spawn(async move {
+            if let Some(adapter) = app.engine_adapter() {
+                match adapter.engine().pause_download(&download_id).await {
+                    Ok(()) => {
+                        tracing::info!("Successfully paused download: {}", filename);
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to pause download {}: {}", filename, e);
+                        // Update app state with error
+                        {
+                            let mut app_state = app.app_state().write().unwrap();
+                            app_state.last_error = Some(format!("Failed to pause download: {}", e));
+                        }
+                    }
+                }
+            } else {
+                tracing::warn!("Engine adapter not available for pause operation");
+                {
+                    let mut app_state = app.app_state().write().unwrap();
+                    app_state.last_error = Some("Engine not available".to_string());
+                }
+            }
+        });
     }
     
     /// Handle resume action
-    fn handle_resume(&mut self, _cx: &mut Context<Self>) {
-        tracing::info!("Resume requested for download: {}", self.download_info.filename);
-        // TODO: Implement resume via engine adapter
-        // self.app.engine_adapter().resume_download(&self.download_info.id).await;
+    fn handle_resume(&mut self, cx: &mut Context<Self>) {
+        let download_id = self.download_info.id.clone();
+        let filename = self.download_info.filename.clone();
+        let app = self.app.clone();
+        
+        tracing::info!("Resume requested for download: {}", filename);
+        
+        tokio::spawn(async move {
+            if let Some(adapter) = app.engine_adapter() {
+                match adapter.engine().resume_download(&download_id).await {
+                    Ok(()) => {
+                        tracing::info!("Successfully resumed download: {}", filename);
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to resume download {}: {}", filename, e);
+                        // Update app state with error
+                        {
+                            let mut app_state = app.app_state().write().unwrap();
+                            app_state.last_error = Some(format!("Failed to resume download: {}", e));
+                        }
+                    }
+                }
+            } else {
+                tracing::warn!("Engine adapter not available for resume operation");
+                {
+                    let mut app_state = app.app_state().write().unwrap();
+                    app_state.last_error = Some("Engine not available".to_string());
+                }
+            }
+        });
     }
     
     /// Handle cancel action
-    fn handle_cancel(&mut self, _cx: &mut Context<Self>) {
-        tracing::info!("Cancel requested for download: {}", self.download_info.filename);
-        // TODO: Implement cancel via engine adapter
-        // self.app.engine_adapter().cancel_download(&self.download_info.id).await;
+    fn handle_cancel(&mut self, cx: &mut Context<Self>) {
+        let filename = self.download_info.filename.clone();
+        
+        tracing::info!("Cancel requested for download: {}", filename);
+        
+        // Show confirmation dialog for cancel action
+        self.show_cancel_confirmation_dialog(cx);
     }
     
     /// Handle remove action
-    fn handle_remove(&mut self, _cx: &mut Context<Self>) {
-        tracing::info!("Remove requested for download: {}", self.download_info.filename);
-        // TODO: Show confirmation dialog and implement remove via engine adapter
-        // self.app.engine_adapter().remove_download(&self.download_info.id).await;
+    fn handle_remove(&mut self, cx: &mut Context<Self>) {
+        let filename = self.download_info.filename.clone();
+        
+        tracing::info!("Remove requested for download: {}", filename);
+        
+        // Show confirmation dialog for remove action
+        self.show_remove_confirmation_dialog(cx);
     }
     
     /// Handle open file action
@@ -153,10 +219,185 @@ impl DownloadItemView {
     }
     
     /// Handle retry action (for failed downloads)
-    fn handle_retry(&mut self, _cx: &mut Context<Self>) {
-        tracing::info!("Retry requested for download: {}", self.download_info.filename);
-        // TODO: Implement retry via engine adapter
-        // self.app.engine_adapter().retry_download(&self.download_info.id).await;
+    fn handle_retry(&mut self, cx: &mut Context<Self>) {
+        let download_id = self.download_info.id.clone();
+        let filename = self.download_info.filename.clone();
+        let app = self.app.clone();
+        
+        tracing::info!("Retry requested for download: {}", filename);
+        
+        tokio::spawn(async move {
+            if let Some(adapter) = app.engine_adapter() {
+                // For retry, we need to resume the download (assuming it's in failed state)
+                match adapter.engine().resume_download(&download_id).await {
+                    Ok(()) => {
+                        tracing::info!("Successfully retried download: {}", filename);
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to retry download {}: {}", filename, e);
+                        // Update app state with error
+                        {
+                            let mut app_state = app.app_state().write().unwrap();
+                            app_state.last_error = Some(format!("Failed to retry download: {}", e));
+                        }
+                    }
+                }
+            } else {
+                tracing::warn!("Engine adapter not available for retry operation");
+                {
+                    let mut app_state = app.app_state().write().unwrap();
+                    app_state.last_error = Some("Engine not available".to_string());
+                }
+            }
+        });
+    }
+    
+    /// Show confirmation dialog for cancel action
+    fn show_cancel_confirmation_dialog(&mut self, cx: &mut Context<Self>) {
+        let download_id = self.download_info.id.clone();
+        let filename = self.download_info.filename.clone();
+        let app = self.app.clone();
+        
+        // Create confirmation dialog
+        let dialog = create_cancel_confirmation_dialog(
+            &filename,
+            {
+                let download_id = download_id.clone();
+                let filename = filename.clone();
+                let app = app.clone();
+                move |_delete_file| {
+                    let download_id = download_id.clone();
+                    let filename = filename.clone();
+                    let app = app.clone();
+                    
+                    // Proceed with cancel operation
+                    tokio::spawn(async move {
+                        if let Some(adapter) = app.engine_adapter() {
+                            // Cancel by removing the download with force=true
+                            match adapter.engine().remove_download(&download_id, true).await {
+                                Ok(()) => {
+                                    tracing::info!("Successfully cancelled download: {}", filename);
+                                }
+                                Err(e) => {
+                                    tracing::error!("Failed to cancel download {}: {}", filename, e);
+                                    // Update app state with error
+                                    {
+                                        let mut app_state = app.app_state().write().unwrap();
+                                        app_state.last_error = Some(format!("Failed to cancel download: {}", e));
+                                    }
+                                }
+                            }
+                        } else {
+                            tracing::warn!("Engine adapter not available for cancel operation");
+                            {
+                                let mut app_state = app.app_state().write().unwrap();
+                                app_state.last_error = Some("Engine not available".to_string());
+                            }
+                        }
+                    });
+                }
+            },
+            || {
+                tracing::debug!("Cancel operation cancelled by user");
+            },
+        );
+        
+        // Store the dialog entity
+        self.confirmation_dialog = Some(cx.new(|_| dialog));
+        cx.notify();
+    }
+    
+    /// Show confirmation dialog for remove action
+    fn show_remove_confirmation_dialog(&mut self, cx: &mut Context<Self>) {
+        let download_id = self.download_info.id.clone();
+        let filename = self.download_info.filename.clone();
+        let file_path = self.download_info.file_path();
+        let is_completed = matches!(self.download_info.state, DownloadState::Completed);
+        let app = self.app.clone();
+        
+        // Create confirmation dialog
+        let dialog = create_remove_confirmation_dialog(
+            &filename,
+            is_completed,
+            {
+                let download_id = download_id.clone();
+                let filename = filename.clone();
+                let file_path = file_path.clone();
+                let app = app.clone();
+                move |delete_file| {
+                    let download_id = download_id.clone();
+                    let filename = filename.clone();
+                    let file_path = file_path.clone();
+                    let app = app.clone();
+                    
+                    // Proceed with remove operation
+                    tokio::spawn(async move {
+                        if let Some(adapter) = app.engine_adapter() {
+                            // Remove the download from the list
+                            match adapter.engine().remove_download(&download_id, false).await {
+                                Ok(()) => {
+                                    tracing::info!("Successfully removed download from list: {}", filename);
+                                    
+                                    // Delete file if requested and download is completed
+                                    if delete_file && is_completed {
+                                        if let Err(e) = std::fs::remove_file(&file_path) {
+                                            tracing::error!("Failed to delete file {}: {}", file_path.display(), e);
+                                            {
+                                                let mut app_state = app.app_state().write().unwrap();
+                                                app_state.last_error = Some(format!("Failed to delete file: {}", e));
+                                            }
+                                        } else {
+                                            tracing::info!("Successfully deleted file: {}", file_path.display());
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    tracing::error!("Failed to remove download {}: {}", filename, e);
+                                    // Update app state with error
+                                    {
+                                        let mut app_state = app.app_state().write().unwrap();
+                                        app_state.last_error = Some(format!("Failed to remove download: {}", e));
+                                    }
+                                }
+                            }
+                        } else {
+                            tracing::warn!("Engine adapter not available for remove operation");
+                            {
+                                let mut app_state = app.app_state().write().unwrap();
+                                app_state.last_error = Some("Engine not available".to_string());
+                            }
+                        }
+                    });
+                }
+            },
+            || {
+                tracing::debug!("Remove operation cancelled by user");
+            },
+        );
+        
+        // Store the dialog entity
+        self.confirmation_dialog = Some(cx.new(|_| dialog));
+        cx.notify();
+    }
+    
+    /// Close the confirmation dialog
+    fn close_confirmation_dialog(&mut self, cx: &mut Context<Self>) {
+        self.confirmation_dialog = None;
+        cx.notify();
+    }
+    
+    /// Delete the downloaded file from disk
+    fn delete_downloaded_file(&self) -> Result<(), std::io::Error> {
+        let file_path = self.download_info.file_path();
+        
+        if file_path.exists() {
+            std::fs::remove_file(&file_path)?;
+            tracing::info!("Deleted file from disk: {}", file_path.display());
+        } else {
+            tracing::warn!("File not found for deletion: {}", file_path.display());
+        }
+        
+        Ok(())
     }
     
     /// Get the appropriate action buttons based on download state
@@ -305,7 +546,7 @@ impl DownloadItemView {
     }
     
     /// Render action buttons
-    fn render_action_buttons(&self, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_action_buttons(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let buttons = self.get_action_buttons();
         
         div()
@@ -315,43 +556,35 @@ impl DownloadItemView {
                 buttons
                     .into_iter()
                     .map(|(action, label, enabled)| {
-                        let download_id = self.download_info.id.clone();
                         Button::new(action)
                             .label(label)
                             .disabled(!enabled)
-                            .on_click(move |_, _, _cx| {
+                            .on_click(cx.listener(move |this, _event, _window, cx| {
                                 match action {
                                     "pause" => {
-                                        tracing::debug!("Pause button clicked for {}", download_id);
-                                        // TODO: Handle pause
+                                        this.handle_pause(cx);
                                     }
                                     "resume" => {
-                                        tracing::debug!("Resume button clicked for {}", download_id);
-                                        // TODO: Handle resume
+                                        this.handle_resume(cx);
                                     }
                                     "cancel" => {
-                                        tracing::debug!("Cancel button clicked for {}", download_id);
-                                        // TODO: Handle cancel
+                                        this.handle_cancel(cx);
                                     }
                                     "remove" => {
-                                        tracing::debug!("Remove button clicked for {}", download_id);
-                                        // TODO: Handle remove
+                                        this.handle_remove(cx);
                                     }
                                     "open_file" => {
-                                        tracing::debug!("Open file button clicked for {}", download_id);
-                                        // TODO: Handle open file
+                                        this.handle_open_file(cx);
                                     }
                                     "open_folder" => {
-                                        tracing::debug!("Open folder button clicked for {}", download_id);
-                                        // TODO: Handle open folder
+                                        this.handle_open_folder(cx);
                                     }
                                     "retry" => {
-                                        tracing::debug!("Retry button clicked for {}", download_id);
-                                        // TODO: Handle retry
+                                        this.handle_retry(cx);
                                     }
                                     _ => {}
                                 }
-                            })
+                            }))
                     })
                     .collect::<Vec<_>>()
             )
@@ -370,6 +603,7 @@ impl Render for DownloadItemView {
         let _download_id = self.download_info.id.clone();
         
         div()
+            .relative()
             .w_full()
             .p_4()
             .border_b_1()
@@ -431,6 +665,9 @@ impl Render for DownloadItemView {
                             .child(self.render_action_buttons(cx))
                     )
             )
+            .when_some(self.confirmation_dialog.clone(), |this, dialog| {
+                this.child(dialog)
+            })
     }
 }
 

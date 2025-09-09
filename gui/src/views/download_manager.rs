@@ -160,27 +160,180 @@ impl DownloadManagerView {
     }
     
     /// Handle bulk pause action
-    fn handle_bulk_pause(&mut self, _cx: &mut Context<Self>) {
-        tracing::info!("Bulk pause requested for {} downloads", self.selected_downloads.len());
-        // TODO: Implement bulk pause via engine adapter
+    fn handle_bulk_pause(&mut self, cx: &mut Context<Self>) {
+        let selected_ids: Vec<_> = self.selected_downloads.iter().cloned().collect();
+        let app = self.app.clone();
+        
+        tracing::info!("Bulk pause requested for {} downloads", selected_ids.len());
+        
+        tokio::spawn(async move {
+            if let Some(adapter) = app.engine_adapter() {
+                let mut success_count = 0;
+                let mut error_count = 0;
+                
+                for download_id in selected_ids {
+                    match adapter.engine().pause_download(&download_id).await {
+                        Ok(()) => {
+                            success_count += 1;
+                            tracing::debug!("Successfully paused download: {}", download_id);
+                        }
+                        Err(e) => {
+                            error_count += 1;
+                            tracing::error!("Failed to pause download {}: {}", download_id, e);
+                        }
+                    }
+                }
+                
+                tracing::info!("Bulk pause completed: {} successful, {} failed", success_count, error_count);
+                
+                if error_count > 0 {
+                    let mut app_state = app.app_state().write().unwrap();
+                    app_state.last_error = Some(format!("Failed to pause {} downloads", error_count));
+                }
+            } else {
+                tracing::warn!("Engine adapter not available for bulk pause operation");
+                {
+                    let mut app_state = app.app_state().write().unwrap();
+                    app_state.last_error = Some("Engine not available".to_string());
+                }
+            }
+        });
     }
     
     /// Handle bulk resume action
-    fn handle_bulk_resume(&mut self, _cx: &mut Context<Self>) {
-        tracing::info!("Bulk resume requested for {} downloads", self.selected_downloads.len());
-        // TODO: Implement bulk resume via engine adapter
+    fn handle_bulk_resume(&mut self, cx: &mut Context<Self>) {
+        let selected_ids: Vec<_> = self.selected_downloads.iter().cloned().collect();
+        let app = self.app.clone();
+        
+        tracing::info!("Bulk resume requested for {} downloads", selected_ids.len());
+        
+        tokio::spawn(async move {
+            if let Some(adapter) = app.engine_adapter() {
+                let mut success_count = 0;
+                let mut error_count = 0;
+                
+                for download_id in selected_ids {
+                    match adapter.engine().resume_download(&download_id).await {
+                        Ok(()) => {
+                            success_count += 1;
+                            tracing::debug!("Successfully resumed download: {}", download_id);
+                        }
+                        Err(e) => {
+                            error_count += 1;
+                            tracing::error!("Failed to resume download {}: {}", download_id, e);
+                        }
+                    }
+                }
+                
+                tracing::info!("Bulk resume completed: {} successful, {} failed", success_count, error_count);
+                
+                if error_count > 0 {
+                    let mut app_state = app.app_state().write().unwrap();
+                    app_state.last_error = Some(format!("Failed to resume {} downloads", error_count));
+                }
+            } else {
+                tracing::warn!("Engine adapter not available for bulk resume operation");
+                {
+                    let mut app_state = app.app_state().write().unwrap();
+                    app_state.last_error = Some("Engine not available".to_string());
+                }
+            }
+        });
     }
     
     /// Handle bulk cancel action
-    fn handle_bulk_cancel(&mut self, _cx: &mut Context<Self>) {
-        tracing::info!("Bulk cancel requested for {} downloads", self.selected_downloads.len());
-        // TODO: Implement bulk cancel via engine adapter
+    fn handle_bulk_cancel(&mut self, cx: &mut Context<Self>) {
+        let selected_ids: Vec<_> = self.selected_downloads.iter().cloned().collect();
+        let app = self.app.clone();
+        
+        tracing::info!("Bulk cancel requested for {} downloads", selected_ids.len());
+        
+        // Show confirmation for bulk cancel
+        // For now, proceed directly (in a full implementation, show confirmation dialog)
+        tokio::spawn(async move {
+            if let Some(adapter) = app.engine_adapter() {
+                let mut success_count = 0;
+                let mut error_count = 0;
+                
+                for download_id in selected_ids {
+                    match adapter.engine().remove_download(&download_id, true).await {
+                        Ok(()) => {
+                            success_count += 1;
+                            tracing::debug!("Successfully cancelled download: {}", download_id);
+                        }
+                        Err(e) => {
+                            error_count += 1;
+                            tracing::error!("Failed to cancel download {}: {}", download_id, e);
+                        }
+                    }
+                }
+                
+                tracing::info!("Bulk cancel completed: {} successful, {} failed", success_count, error_count);
+                
+                if error_count > 0 {
+                    let mut app_state = app.app_state().write().unwrap();
+                    app_state.last_error = Some(format!("Failed to cancel {} downloads", error_count));
+                }
+            } else {
+                tracing::warn!("Engine adapter not available for bulk cancel operation");
+                {
+                    let mut app_state = app.app_state().write().unwrap();
+                    app_state.last_error = Some("Engine not available".to_string());
+                }
+            }
+        });
     }
     
     /// Handle clear completed action
-    fn handle_clear_completed(&mut self, _cx: &mut Context<Self>) {
+    fn handle_clear_completed(&mut self, cx: &mut Context<Self>) {
+        let app = self.app.clone();
+        
         tracing::info!("Clear completed downloads requested");
-        // TODO: Implement clear completed via engine adapter
+        
+        tokio::spawn(async move {
+            if let Some(adapter) = app.engine_adapter() {
+                // Get all completed downloads
+                match adapter.engine().completed_downloads().await {
+                    Ok(completed_downloads) => {
+                        let mut success_count = 0;
+                        let mut error_count = 0;
+                        
+                        for download in completed_downloads {
+                            match adapter.engine().remove_download(&download.id, false).await {
+                                Ok(()) => {
+                                    success_count += 1;
+                                    tracing::debug!("Successfully removed completed download: {}", download.id);
+                                }
+                                Err(e) => {
+                                    error_count += 1;
+                                    tracing::error!("Failed to remove completed download {}: {}", download.id, e);
+                                }
+                            }
+                        }
+                        
+                        tracing::info!("Clear completed downloads: {} successful, {} failed", success_count, error_count);
+                        
+                        if error_count > 0 {
+                            let mut app_state = app.app_state().write().unwrap();
+                            app_state.last_error = Some(format!("Failed to clear {} completed downloads", error_count));
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to get completed downloads: {}", e);
+                        {
+                            let mut app_state = app.app_state().write().unwrap();
+                            app_state.last_error = Some(format!("Failed to get completed downloads: {}", e));
+                        }
+                    }
+                }
+            } else {
+                tracing::warn!("Engine adapter not available for clear completed operation");
+                {
+                    let mut app_state = app.app_state().write().unwrap();
+                    app_state.last_error = Some("Engine not available".to_string());
+                }
+            }
+        });
     }
     
     /// Handle opening the add download modal
@@ -241,27 +394,24 @@ impl DownloadManagerView {
                 Button::new("pause_all")
                     .label("Pause All")
                     .disabled(self.selected_downloads.is_empty())
-                    .on_click(move |_, _, _cx| {
-                        tracing::info!("Pause all button clicked");
-                        // TODO: Implement pause all
-                    })
+                    .on_click(cx.listener(|this, _event, _window, cx| {
+                        this.handle_bulk_pause(cx);
+                    }))
             )
             .child(
                 Button::new("resume_all")
                     .label("Resume All")
                     .disabled(self.selected_downloads.is_empty())
-                    .on_click(move |_, _, _cx| {
-                        tracing::info!("Resume all button clicked");
-                        // TODO: Implement resume all
-                    })
+                    .on_click(cx.listener(|this, _event, _window, cx| {
+                        this.handle_bulk_resume(cx);
+                    }))
             )
             .child(
                 Button::new("clear_completed")
                     .label("Clear Completed")
-                    .on_click(move |_, _, _cx| {
-                        tracing::info!("Clear completed button clicked");
-                        // TODO: Implement clear completed
-                    })
+                    .on_click(cx.listener(|this, _event, _window, cx| {
+                        this.handle_clear_completed(cx);
+                    }))
             )
             .child(
                 Button::new("settings")
@@ -274,7 +424,7 @@ impl DownloadManagerView {
     }
     
     /// Render the filter tabs
-    fn render_filter_tabs(&self, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_filter_tabs(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let _current_filter = &self.current_filter;
         
         div()
@@ -290,42 +440,37 @@ impl DownloadManagerView {
                     .child(
                         Button::new("filter_all")
                             .label("All")
-                            .on_click(move |_, _, _cx| {
-                                tracing::debug!("All filter tab clicked");
-                                // TODO: Handle filter change to All
-                            })
+                            .on_click(cx.listener(|this, _event, _window, cx| {
+                                this.handle_filter_change(FilterState::All, cx);
+                            }))
                     )
                     .child(
                         Button::new("filter_active")
                             .label("Active")
-                            .on_click(move |_, _, _cx| {
-                                tracing::debug!("Active filter tab clicked");
-                                // TODO: Handle filter change to Active
-                            })
+                            .on_click(cx.listener(|this, _event, _window, cx| {
+                                this.handle_filter_change(FilterState::Active, cx);
+                            }))
                     )
                     .child(
                         Button::new("filter_completed")
                             .label("Completed")
-                            .on_click(move |_, _, _cx| {
-                                tracing::debug!("Completed filter tab clicked");
-                                // TODO: Handle filter change to Completed
-                            })
+                            .on_click(cx.listener(|this, _event, _window, cx| {
+                                this.handle_filter_change(FilterState::Completed, cx);
+                            }))
                     )
                     .child(
                         Button::new("filter_failed")
                             .label("Failed")
-                            .on_click(move |_, _, _cx| {
-                                tracing::debug!("Failed filter tab clicked");
-                                // TODO: Handle filter change to Failed
-                            })
+                            .on_click(cx.listener(|this, _event, _window, cx| {
+                                this.handle_filter_change(FilterState::Failed, cx);
+                            }))
                     )
                     .child(
                         Button::new("filter_paused")
                             .label("Paused")
-                            .on_click(move |_, _, _cx| {
-                                tracing::debug!("Paused filter tab clicked");
-                                // TODO: Handle filter change to Paused
-                            })
+                            .on_click(cx.listener(|this, _event, _window, cx| {
+                                this.handle_filter_change(FilterState::Paused, cx);
+                            }))
                     )
             )
     }
