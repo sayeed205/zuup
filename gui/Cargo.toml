@@ -1,0 +1,10 @@
+[package]
+name = "zuup"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1"
+
+gpui = { git = "https://github.com/zed-industries/zed.git" }
+gpui-component = { git = "https://github.com/longbridge/gpui-component.git" }

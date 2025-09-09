@@ -14,7 +14,7 @@
 use std::io::{self, Write};
 use std::time::Duration;
 use tokio::time::Instant;
-use zuup_core::{types::DownloadRequest, ZuupConfig, ZuupEngine};
+use zuup_core::{ZuupConfig, ZuupEngine, types::DownloadRequest};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -38,7 +38,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "https://mirror.telepoint.bg/archlinux/iso/2025.09.01/archlinux-2025.09.01-x86_64.iso",
     ];
 
-    println!("Starting multi-source download with {} mirrors:", arch_iso_mirrors.len());
+    println!(
+        "Starting multi-source download with {} mirrors:",
+        arch_iso_mirrors.len()
+    );
     for (i, mirror) in arch_iso_mirrors.iter().enumerate() {
         println!("  {}. {}", i + 1, mirror);
     }
@@ -78,7 +81,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 // Show source changes
                 if active_sources != last_active_sources {
-                    println!("\nActive sources changed: {} -> {}", last_active_sources, active_sources);
+                    println!(
+                        "\nActive sources changed: {} -> {}",
+                        last_active_sources, active_sources
+                    );
                     last_active_sources = active_sources;
                 }
 
@@ -96,12 +102,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 if info.state.is_terminal() {
                     println!("\n\nMulti-source download completed!");
-                    println!("File saved to: {}/{}", info.output_path.display(), info.filename);
+                    println!(
+                        "File saved to: {}/{}",
+                        info.output_path.display(),
+                        info.filename
+                    );
 
                     if let Some(error) = &info.error_message {
                         println!("Error: {}", error);
                     } else {
-                        println!("Successfully downloaded using {} mirror sources", arch_iso_mirrors.len());
+                        println!(
+                            "Successfully downloaded using {} mirror sources",
+                            arch_iso_mirrors.len()
+                        );
                         println!("Total time: {}", format_duration(elapsed.as_secs()));
                         println!("Average speed: {}/s", format_bytes(speed));
                     }
