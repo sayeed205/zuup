@@ -4,6 +4,8 @@ use gpui_component::{
     StyledExt,
 };
 
+mod config;
+
 pub struct HelloWorld;
 
 impl Render for HelloWorld {
