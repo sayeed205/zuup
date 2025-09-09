@@ -30,20 +30,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         tokio::time::sleep(Duration::from_millis(250)).await;
         match engine.get_download_info(download_id.clone()).await {
             Ok(info) => {
-                // Extract information from DownloadInfo
+                // All information is now provided by the library - no need to calculate!
                 let downloaded = info.progress.downloaded_size;
                 let total_size = info.progress.total_size;
-
-                // Calculate elapsed time and speed
+                let speed = info.progress.download_speed;
+                let upload_speed = info.progress.upload_speed.unwrap_or(0);
+                let percentage = info.progress.percentage;
+                let eta = info.progress.eta;
                 let elapsed = start.elapsed();
-                let speed = if elapsed.as_secs() > 0 {
-                    downloaded / elapsed.as_secs()
-                } else {
-                    0
-                };
 
-                // Display progress information
-                display_progress(downloaded, total_size, speed, elapsed);
+                // Display progress information using library-provided data
+                display_progress_enhanced(downloaded, total_size, speed, upload_speed, percentage, eta, elapsed);
 
                 // Additional information from DownloadInfo
                 if info.state.is_terminal() {
@@ -68,16 +65,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// Display progress information with enhanced formatting
-fn display_progress(downloaded: u64, total_size: Option<u64>, speed: u64, elapsed: Duration) {
-    // Create progress bar
-    let (progress_bar, percentage) = if let Some(total) = total_size {
-        let percentage = if total > 0 {
-            (downloaded as f64 / total as f64 * 100.0) as u8
-        } else {
-            0
-        };
-        let bar_width = 50; // Wider progress bar
+/// Display progress information using library-provided data
+fn display_progress_enhanced(
+    downloaded: u64, 
+    total_size: Option<u64>, 
+    speed: u64, 
+    upload_speed: u64,
+    percentage: u8,
+    eta: Option<Duration>,
+    elapsed: Duration
+) {
+    // Create progress bar using library-calculated percentage
+    let (progress_bar, _) = if let Some(total) = total_size {
+        let bar_width = 50;
         let filled = (percentage as usize * bar_width) / 100;
         let empty = bar_width - filled;
         let bar = format!(
@@ -92,40 +92,55 @@ fn display_progress(downloaded: u64, total_size: Option<u64>, speed: u64, elapse
         (bar, 0)
     };
 
-    // Format sizes and speeds
+    // Format sizes and speeds using library data
     let downloaded_str = format_bytes(downloaded);
     let total_str = total_size
         .map(format_bytes)
         .unwrap_or_else(|| "Unknown".to_string());
     let speed_str = format_bytes(speed);
+    let upload_str = format_bytes(upload_speed);
 
-    // Calculate ETA
-    let eta = if speed > 0 && total_size.is_some() {
-        let remaining = total_size.unwrap().saturating_sub(downloaded);
-        if remaining > 0 {
-            let eta_secs = remaining / speed;
-            format_duration(eta_secs)
-        } else {
-            "Complete".to_string()
-        }
-    } else {
-        "Unknown".to_string()
-    };
+    // Use library-calculated ETA
+    let eta_str = eta
+        .map(|d| format_duration(d.as_secs()))
+        .unwrap_or_else(|| {
+            if percentage >= 100 {
+                "Complete".to_string()
+            } else {
+                "Unknown".to_string()
+            }
+        });
 
     // Calculate speed in Mbps for reference
-    let mbps = (speed as f64 * 8.0) / 1_000_000.0;
+    let download_mbps = (speed as f64 * 8.0) / 1_000_000.0;
+    let upload_mbps = (upload_speed as f64 * 8.0) / 1_000_000.0;
 
-    // Print progress (overwrite previous line)
-    print!(
-        "\r{} {} / {} | {}/s ({:.1} Mbps) | ETA: {} | Time: {}",
-        progress_bar,
-        downloaded_str,
-        total_str,
-        speed_str,
-        mbps,
-        eta,
-        format_duration(elapsed.as_secs())
-    );
+    // Print progress with upload speed for torrents
+    if upload_speed > 0 {
+        print!(
+            "\r{} {} / {} | ↓{}/s ({:.1} Mbps) ↑{}/s ({:.1} Mbps) | ETA: {} | Time: {}",
+            progress_bar,
+            downloaded_str,
+            total_str,
+            speed_str,
+            download_mbps,
+            upload_str,
+            upload_mbps,
+            eta_str,
+            format_duration(elapsed.as_secs())
+        );
+    } else {
+        print!(
+            "\r{} {} / {} | {}/s ({:.1} Mbps) | ETA: {} | Time: {}",
+            progress_bar,
+            downloaded_str,
+            total_str,
+            speed_str,
+            download_mbps,
+            eta_str,
+            format_duration(elapsed.as_secs())
+        );
+    }
     io::stdout().flush().unwrap();
 }
 

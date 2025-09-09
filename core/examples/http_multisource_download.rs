@@ -14,16 +14,12 @@
 use std::io::{self, Write};
 use std::time::Duration;
 use tokio::time::Instant;
-use zuup_core::{ZuupConfig, ZuupEngine, types::DownloadRequest};
+use zuup_core::{types::DownloadRequest, ZuupConfig, ZuupEngine};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize logging with more detailed output for multi-source downloads
-    tracing_subscriber::fmt()warning: `zuup-core` (example "magnet") generated 1 warning
-    Finished `dev` profile [unoptimized + debuginfo] target(s) in 10.65s
-     Running `target/debug/examples/magnet`
-Starting download: magnet:?xt=urn:btih:7920acc28f0ec4d75ac0e0edd82789092cf8ded1&dn=archlinux-2025.09.01-x86_64.iso
-[█████████████████████████] ???% 0 B / Unknown | 0 B/s (0.0 Mbps) | ETA: Unknown | Time: 6m 15s
+    tracing_subscriber::fmt()
         .with_env_filter("zuup_core=info,zuup_core::protocols::http=debug,zuup_core::engine=debug")
         .init();
 
@@ -49,39 +45,36 @@ Starting download: magnet:?xt=urn:btih:7920acc28f0ec4d75ac0e0edd82789092cf8ded1&
     println!();
 
     let start = Instant::now();
-    
+
     // Parse URLs and create download request with multiple sources
     let urls: Result<Vec<_>, _> = arch_iso_mirrors
         .iter()
         .map(|url| url::Url::parse(url))
         .collect();
-    
+
     let urls = urls?;
     let request = DownloadRequest::new(urls);
     let download_id = engine.add_download(request).await?;
-    
+
     println!("Download ID: {}", download_id);
     engine.start_download(&download_id).await?;
 
     let mut last_active_sources = 0;
-    
+
     // Monitor download progress
     loop {
         tokio::time::sleep(Duration::from_millis(500)).await;
-        
+
         match engine.get_download_info(download_id.clone()).await {
             Ok(info) => {
+                // All information is now provided by the library - no need to calculate!
                 let downloaded = info.progress.downloaded_size;
                 let total_size = info.progress.total_size;
+                let speed = info.progress.download_speed;
+                let percentage = info.progress.percentage;
+                let eta = info.progress.eta;
                 let active_sources = info.progress.connections;
-
-                // Calculate elapsed time and speed
                 let elapsed = start.elapsed();
-                let speed = if elapsed.as_secs() > 0 {
-                    downloaded / elapsed.as_secs()
-                } else {
-                    0
-                };
 
                 // Show source changes
                 if active_sources != last_active_sources {
@@ -89,20 +82,22 @@ Starting download: magnet:?xt=urn:btih:7920acc28f0ec4d75ac0e0edd82789092cf8ded1&
                     last_active_sources = active_sources;
                 }
 
-                // Display progress with multi-source information
-                display_multisource_progress(
-                    downloaded, 
-                    total_size, 
-                    speed, 
-                    elapsed, 
+                // Display progress with multi-source information using library-provided data
+                display_progress(
+                    downloaded,
+                    total_size,
+                    speed,
+                    percentage,
+                    eta,
+                    elapsed,
                     active_sources,
-                    arch_iso_mirrors.len()
+                    arch_iso_mirrors.len(),
                 );
 
                 if info.state.is_terminal() {
                     println!("\n\nMulti-source download completed!");
                     println!("File saved to: {}/{}", info.output_path.display(), info.filename);
-                    
+
                     if let Some(error) = &info.error_message {
                         println!("Error: {}", error);
                     } else {
@@ -124,56 +119,49 @@ Starting download: magnet:?xt=urn:btih:7920acc28f0ec4d75ac0e0edd82789092cf8ded1&
     Ok(())
 }
 
-/// Display progress information with multi-source details
-fn display_multisource_progress(
-    downloaded: u64, 
-    total_size: Option<u64>, 
-    speed: u64, 
+/// Display progress information with multi-source details using library-provided data
+fn display_progress(
+    downloaded: u64,
+    total_size: Option<u64>,
+    speed: u64,
+    percentage: u8,
+    eta: Option<Duration>,
     elapsed: Duration,
     active_sources: u32,
     total_sources: usize,
 ) {
-    // Create progress bar
-    let (progress_bar, _percentage) = if let Some(total) = total_size {
-        let percentage = if total > 0 {
-            (downloaded as f64 / total as f64 * 100.0) as u8
-        } else {
-            0
-        };
+    // Create progress bar using library-calculated percentage
+    let progress_bar = if let Some(_total) = total_size {
         let bar_width = 40;
         let filled = (percentage as usize * bar_width) / 100;
         let empty = bar_width - filled;
-        let bar = format!(
+        format!(
             "[{}{}] {:3}%",
             "█".repeat(filled),
             "░".repeat(empty),
             percentage
-        );
-        (bar, percentage)
+        )
     } else {
-        let bar = format!("[{}] ???%", "█".repeat(20));
-        (bar, 0)
+        format!("[{}] ???%", "█".repeat(20))
     };
 
-    // Format sizes and speeds
+    // Format sizes and speeds using library data
     let downloaded_str = format_bytes(downloaded);
     let total_str = total_size
         .map(format_bytes)
         .unwrap_or_else(|| "Unknown".to_string());
     let speed_str = format_bytes(speed);
 
-    // Calculate ETA
-    let eta = if speed > 0 && total_size.is_some() {
-        let remaining = total_size.unwrap().saturating_sub(downloaded);
-        if remaining > 0 {
-            let eta_secs = remaining / speed;
-            format_duration(eta_secs)
-        } else {
-            "Complete".to_string()
-        }
-    } else {
-        "Unknown".to_string()
-    };
+    // Use library-calculated ETA
+    let eta_str = eta
+        .map(|d| format_duration(d.as_secs()))
+        .unwrap_or_else(|| {
+            if percentage >= 100 {
+                "Complete".to_string()
+            } else {
+                "Unknown".to_string()
+            }
+        });
 
     // Calculate speed in Mbps
     let mbps = (speed as f64 * 8.0) / 1_000_000.0;
@@ -194,7 +182,7 @@ fn display_multisource_progress(
         speed_str,
         mbps,
         source_indicator,
-        eta,
+        eta_str,
         format_duration(elapsed.as_secs())
     );
     io::stdout().flush().unwrap();

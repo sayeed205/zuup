@@ -874,7 +874,10 @@ impl BitTorrentDownload {
         let config = self.config.clone();
 
         tokio::spawn(async move {
-            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(5));
+            let mut interval = tokio::time::interval(tokio::time::Duration::from_millis(500));
+            let mut last_downloaded = 0u64;
+            let mut last_uploaded = 0u64;
+            let mut last_update = std::time::Instant::now();
 
             loop {
                 interval.tick().await;
@@ -889,27 +892,68 @@ impl BitTorrentDownload {
 
                 // Update progress from torrent handle
                 let stats = handle.stats();
+                let now = std::time::Instant::now();
+                let time_elapsed = now.duration_since(last_update).as_secs_f64();
+
+                // Calculate speeds
+                let download_speed = if time_elapsed > 0.0 {
+                    let bytes_diff = stats.progress_bytes.saturating_sub(last_downloaded);
+                    (bytes_diff as f64 / time_elapsed) as u64
+                } else {
+                    0
+                };
+
+                let upload_speed = if time_elapsed > 0.0 {
+                    let bytes_diff = stats.uploaded_bytes.saturating_sub(last_uploaded);
+                    (bytes_diff as f64 / time_elapsed) as u64
+                } else {
+                    0
+                };
 
                 // Add some debugging - only log when there are changes or periodically
                 tracing::debug!(
-                    "Torrent stats: state={:?}, total_bytes={}, progress_bytes={}, uploaded_bytes={}",
-                    stats.state, stats.total_bytes, stats.progress_bytes, stats.uploaded_bytes
+                    "Torrent stats: state={:?}, total_bytes={}, progress_bytes={}, uploaded_bytes={}, download_speed={}, upload_speed={}",
+                    stats.state, stats.total_bytes, stats.progress_bytes, stats.uploaded_bytes, download_speed, upload_speed
                 );
 
                 {
                     let mut progress_guard = progress.write().await;
+                    
+                    // Update basic progress info
                     progress_guard.total_size = Some(stats.total_bytes);
                     progress_guard.downloaded_size = stats.progress_bytes;
                     progress_guard.upload_size = Some(stats.uploaded_bytes);
+                    progress_guard.download_speed = download_speed;
+                    progress_guard.upload_speed = Some(upload_speed);
+                    progress_guard.updated_at = chrono::Utc::now();
 
                     // Calculate completion percentage
                     if stats.total_bytes > 0 {
                         progress_guard.percentage = ((stats.progress_bytes as f64 / stats.total_bytes as f64) * 100.0) as u8;
                     }
 
+                    // Calculate ETA
+                    if download_speed > 0 && stats.total_bytes > stats.progress_bytes {
+                        let remaining_bytes = stats.total_bytes - stats.progress_bytes;
+                        let eta_seconds = remaining_bytes / download_speed;
+                        progress_guard.eta = Some(Duration::from_secs(eta_seconds));
+                    } else if stats.progress_bytes >= stats.total_bytes {
+                        progress_guard.eta = None; // Complete
+                    }
+
                     // Update connections count (placeholder - would need actual peer count from librqbit)
                     progress_guard.connections = 0; // Would get from handle.peer_count() or similar
+
+                    // Mark as started if not already
+                    if progress_guard.started_at.is_none() {
+                        progress_guard.started_at = Some(chrono::Utc::now());
+                    }
                 }
+
+                // Update tracking variables
+                last_downloaded = stats.progress_bytes;
+                last_uploaded = stats.uploaded_bytes;
+                last_update = now;
 
                 // Check if download is complete
                 if stats.progress_bytes >= stats.total_bytes && stats.total_bytes > 0 {

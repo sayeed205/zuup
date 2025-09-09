@@ -500,11 +500,17 @@ impl HttpDownload {
             content_length = HttpProtocolHandler::new().content_length(&self.url).await.unwrap_or(None);
         }
 
-        // Update progress with total size
+        // Update progress with total size and initial state
         if let Some(total) = content_length {
             let mut progress = self.progress.write().await;
             progress.set_total_size(total);
             progress.downloaded_size = size_on_disk;
+            progress.updated_at = chrono::Utc::now();
+            
+            // Calculate initial percentage
+            if total > 0 {
+                progress.percentage = ((size_on_disk as f64 / total as f64) * 100.0) as u8;
+            }
         }
 
         // Check if already complete
@@ -661,12 +667,17 @@ impl HttpDownload {
             // Write chunk to file
             file.write_all(&chunk).await.map_err(ZuupError::Io)?;
 
-            // Update progress with correct speed calculation
+            // Update progress with comprehensive information
             {
                 let mut progress = self.progress.write().await;
                 progress.downloaded_size = final_size;
                 if let Some(total) = total_size {
                     progress.total_size = Some(total);
+                    
+                    // Calculate percentage
+                    if total > 0 {
+                        progress.percentage = ((final_size as f64 / total as f64) * 100.0) as u8;
+                    }
                 }
                 
                 // Calculate speed based on new data downloaded, not total
@@ -677,7 +688,28 @@ impl HttpDownload {
                 } else {
                     progress.download_speed = 0;
                 }
+                
+                // Calculate ETA
+                if progress.download_speed > 0 {
+                    if let Some(total) = total_size {
+                        let remaining_bytes = total.saturating_sub(final_size);
+                        if remaining_bytes > 0 {
+                            progress.eta = Some(Duration::from_secs(remaining_bytes / progress.download_speed));
+                        } else {
+                            progress.eta = None; // Complete
+                        }
+                    }
+                } else {
+                    progress.eta = None;
+                }
+                
                 progress.connections = 1;
+                progress.updated_at = chrono::Utc::now();
+                
+                // Mark as started if not already
+                if progress.started_at.is_none() {
+                    progress.started_at = Some(chrono::Utc::now());
+                }
             }
 
             // Progress is automatically saved by the download manager
