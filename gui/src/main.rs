@@ -8,12 +8,15 @@ use gpui_component::{
 
 mod config;
 mod theme;
+mod engine;
+mod app;
 
 use config::{ConfigManager, ThemeMode};
-use theme::{ThemeManager, SystemThemeDetector};
+use theme::SystemThemeDetector;
 
 pub struct MainView {
     current_theme: ThemeMode,
+    engine_status: String,
 }
 
 impl MainView {
@@ -34,7 +37,10 @@ impl MainView {
         
         let current_theme = config_manager.gui_config().theme;
         
-        Self { current_theme }
+        Self { 
+            current_theme,
+            engine_status: "Engine integration ready".to_string(),
+        }
     }
     
     fn get_effective_theme(&self) -> ThemeMode {
@@ -59,6 +65,7 @@ impl Render for MainView {
             .child("Zuup Download Manager")
             .child(format!("Current theme: {:?}", self.current_theme))
             .child(format!("Effective theme: {:?}", effective_theme))
+            .child(format!("Engine: {}", self.engine_status))
             .child(
                 div()
                     .h_flex()
