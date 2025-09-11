@@ -57,6 +57,118 @@ impl DownloadManagerView {
         }
     }
     
+    /// Refresh download statistics and trigger UI updates
+    pub fn refresh_statistics(&mut self, cx: &mut Context<Self>) {
+        // This method can be called periodically to update statistics
+        // In a real implementation, this would fetch fresh data from the engine
+        
+        // For now, we'll just notify the context to trigger a re-render
+        // which will recalculate all the statistics in the status bar
+        cx.notify();
+        
+        // Schedule the next refresh (in a real implementation)
+        // cx.spawn(|this, mut cx| async move {
+        //     tokio::time::sleep(Duration::from_millis(500)).await;
+        //     this.update(&mut cx, |this, cx| {
+        //         this.refresh_statistics(cx);
+        //     }).ok();
+        // }).detach();
+    }
+    
+    /// Calculate overall progress statistics for all downloads
+    pub fn calculate_overall_stats(&self) -> OverallStats {
+        let active_downloads: Vec<_> = self.filtered_downloads
+            .iter()
+            .filter(|d| matches!(d.state, DownloadState::Active | DownloadState::Preparing))
+            .collect();
+        
+        let paused_downloads: Vec<_> = self.filtered_downloads
+            .iter()
+            .filter(|d| matches!(d.state, DownloadState::Paused))
+            .collect();
+        
+        let completed_downloads: Vec<_> = self.filtered_downloads
+            .iter()
+            .filter(|d| matches!(d.state, DownloadState::Completed))
+            .collect();
+        
+        let failed_downloads: Vec<_> = self.filtered_downloads
+            .iter()
+            .filter(|d| matches!(d.state, DownloadState::Failed(_)))
+            .collect();
+        
+        let total_speed: u64 = active_downloads
+            .iter()
+            .map(|d| d.progress.download_speed)
+            .sum();
+        
+        let total_connections: u32 = active_downloads
+            .iter()
+            .map(|d| d.progress.connections)
+            .sum();
+        
+        // Calculate overall progress for active and paused downloads
+        let (total_downloaded, total_size, downloads_with_size) = active_downloads
+            .iter()
+            .chain(paused_downloads.iter())
+            .fold((0u64, 0u64, 0usize), |(acc_downloaded, acc_total, count), d| {
+                let downloaded = d.progress.downloaded_size;
+                if let Some(size) = d.progress.total_size {
+                    (acc_downloaded + downloaded, acc_total + size, count + 1)
+                } else {
+                    (acc_downloaded + downloaded, acc_total, count)
+                }
+            });
+        
+        let overall_progress = if total_size > 0 {
+            ((total_downloaded as f64 / total_size as f64) * 100.0) as u8
+        } else {
+            0
+        };
+        
+        // Calculate estimated time for all active downloads
+        let overall_eta = if total_speed > 0 && total_size > total_downloaded {
+            let remaining = total_size - total_downloaded;
+            Some(std::time::Duration::from_secs(remaining / total_speed))
+        } else {
+            None
+        };
+        
+        OverallStats {
+            active_count: active_downloads.len(),
+            paused_count: paused_downloads.len(),
+            completed_count: completed_downloads.len(),
+            failed_count: failed_downloads.len(),
+            total_count: self.filtered_downloads.len(),
+            total_speed,
+            total_connections,
+            total_downloaded,
+            total_size,
+            overall_progress,
+            overall_eta,
+            downloads_with_known_size: downloads_with_size,
+        }
+    }
+}
+
+/// Overall statistics for all downloads
+#[derive(Debug, Clone)]
+pub struct OverallStats {
+    pub active_count: usize,
+    pub paused_count: usize,
+    pub completed_count: usize,
+    pub failed_count: usize,
+    pub total_count: usize,
+    pub total_speed: u64,
+    pub total_connections: u32,
+    pub total_downloaded: u64,
+    pub total_size: u64,
+    pub overall_progress: u8,
+    pub overall_eta: Option<std::time::Duration>,
+    pub downloads_with_known_size: usize,
+}
+
+impl DownloadManagerView {
     /// Update the download list from the core engine
     pub fn update_downloads(&mut self, downloads: Vec<DownloadInfo>) {
         // Apply current filter
@@ -523,55 +635,179 @@ impl DownloadManagerView {
             .into_any_element()
     }
     
-    /// Render the status bar
+    /// Render the status bar with enhanced statistics
     fn render_status_bar(&self, _cx: &mut Context<Self>) -> impl IntoElement {
-        let active_count = self.filtered_downloads
-            .iter()
-            .filter(|d| matches!(d.state, DownloadState::Active | DownloadState::Preparing))
-            .count();
+        let stats = self.calculate_overall_stats();
         
-        let completed_count = self.filtered_downloads
-            .iter()
-            .filter(|d| matches!(d.state, DownloadState::Completed))
-            .count();
-        
-        let total_speed: u64 = self.filtered_downloads
-            .iter()
-            .filter(|d| matches!(d.state, DownloadState::Active))
-            .map(|d| d.progress.download_speed)
-            .sum();
-        
-        let speed_text = if total_speed > 0 {
-            format_bytes_per_second(total_speed)
+        let speed_text = if stats.total_speed > 0 {
+            format_bytes_per_second(stats.total_speed)
         } else {
             "0 B/s".to_string()
+        };
+        
+        let eta_text = if let Some(eta) = stats.overall_eta {
+            format!(" • ETA: {}", format_duration_simple(eta))
+        } else {
+            String::new()
         };
         
         div()
             .h_flex()
             .justify_between()
             .items_center()
-            .px_3()
-            .py_2()
-            .bg(gpui::rgb(0xf9fafb))
+            .px_4()
+            .py_3()
+            .bg(gpui::rgb(0xf8fafc))
             .border_t_1()
-            .border_color(gpui::rgb(0xd1d5db))
+            .border_color(gpui::rgb(0xe2e8f0))
             .text_sm()
-            .text_color(gpui::rgb(0x6b7280))
             .child(
                 div()
                     .h_flex()
-                    .gap_4()
-                    .child(format!("{} active", active_count))
-                    .child(format!("{} completed", completed_count))
-                    .child(format!("{} total", self.filtered_downloads.len()))
+                    .gap_6()
+                    .items_center()
+                    .child(
+                        div()
+                            .h_flex()
+                            .gap_1()
+                            .items_center()
+                            .child(
+                                div()
+                                    .w_2()
+                                    .h_2()
+                                    .bg(gpui::rgb(0x10b981))
+                                    .rounded_full()
+                            )
+                            .child(
+                                div()
+                                    .text_color(gpui::rgb(0x374151))
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .child(format!("{} active", stats.active_count))
+                            )
+                    )
+                    .child(
+                        div()
+                            .h_flex()
+                            .gap_1()
+                            .items_center()
+                            .child(
+                                div()
+                                    .w_2()
+                                    .h_2()
+                                    .bg(gpui::rgb(0x059669))
+                                    .rounded_full()
+                            )
+                            .child(
+                                div()
+                                    .text_color(gpui::rgb(0x374151))
+                                    .child(format!("{} completed", stats.completed_count))
+                            )
+                    )
+                    .when(stats.paused_count > 0, |parent_div| {
+                        parent_div.child(
+                            div()
+                                .h_flex()
+                                .gap_1()
+                                .items_center()
+                                .child(
+                                    div()
+                                        .w_2()
+                                        .h_2()
+                                        .bg(gpui::rgb(0xf59e0b))
+                                        .rounded_full()
+                                )
+                                .child(
+                                    div()
+                                        .text_color(gpui::rgb(0x374151))
+                                        .child(format!("{} paused", stats.paused_count))
+                                )
+                        )
+                    })
+                    .when(stats.failed_count > 0, |parent_div| {
+                        parent_div.child(
+                            div()
+                                .h_flex()
+                                .gap_1()
+                                .items_center()
+                                .child(
+                                    div()
+                                        .w_2()
+                                        .h_2()
+                                        .bg(gpui::rgb(0xef4444))
+                                        .rounded_full()
+                                )
+                                .child(
+                                    div()
+                                        .text_color(gpui::rgb(0x374151))
+                                        .child(format!("{} failed", stats.failed_count))
+                                )
+                        )
+                    })
+                    .when(stats.total_size > 0, |parent_div| {
+                        parent_div.child(
+                            div()
+                                .h_flex()
+                                .gap_2()
+                                .items_center()
+                                .child(
+                                    div()
+                                        .text_color(gpui::rgb(0x6b7280))
+                                        .child("Overall:")
+                                )
+                                .child(
+                                    div()
+                                        .text_color(gpui::rgb(0x374151))
+                                        .font_weight(FontWeight::MEDIUM)
+                                        .child(format!("{}% ({} / {})", 
+                                            stats.overall_progress,
+                                            format_bytes(stats.total_downloaded),
+                                            format_bytes(stats.total_size)
+                                        ))
+                                )
+                        )
+                    })
             )
             .child(
                 div()
                     .h_flex()
-                    .gap_2()
-                    .child("Total speed:")
-                    .child(speed_text)
+                    .gap_6()
+                    .items_center()
+                    .child(
+                        div()
+                            .h_flex()
+                            .gap_2()
+                            .items_center()
+                            .child(
+                                div()
+                                    .text_color(gpui::rgb(0x6b7280))
+                                    .child("Speed:")
+                            )
+                            .child(
+                                div()
+                                    .text_color(gpui::rgb(0x059669))
+                                    .font_weight(FontWeight::BOLD)
+                                    .child(format!("{}{}", speed_text, eta_text))
+                            )
+                    )
+                    .when(stats.total_connections > 0, |parent_div| {
+                        parent_div.child(
+                            div()
+                                .h_flex()
+                                .gap_2()
+                                .items_center()
+                                .child(
+                                    div()
+                                        .text_color(gpui::rgb(0x6b7280))
+                                        .child("Connections:")
+                                )
+                                .child(
+                                    div()
+                                        .text_color(gpui::rgb(0x374151))
+                                        .font_weight(FontWeight::MEDIUM)
+                                        .child(format!("{}", stats.total_connections))
+                                )
+                        )
+                    })
             )
     }
 }
@@ -601,7 +837,7 @@ impl Render for DownloadManagerView {
     }
 }
 
-/// Format bytes per second for display
+/// Format bytes per second for display with enhanced precision
 fn format_bytes_per_second(bytes_per_second: u64) -> String {
     const UNITS: &[&str] = &["B/s", "KB/s", "MB/s", "GB/s", "TB/s"];
     
@@ -619,8 +855,39 @@ fn format_bytes_per_second(bytes_per_second: u64) -> String {
     
     if unit_index == 0 {
         format!("{} {}", size as u64, UNITS[unit_index])
-    } else {
+    } else if size >= 100.0 {
+        format!("{:.0} {}", size, UNITS[unit_index])
+    } else if size >= 10.0 {
         format!("{:.1} {}", size, UNITS[unit_index])
+    } else {
+        format!("{:.2} {}", size, UNITS[unit_index])
+    }
+}
+
+/// Format bytes for display with enhanced precision
+fn format_bytes(bytes: u64) -> String {
+    const UNITS: &[&str] = &["B", "KB", "MB", "GB", "TB"];
+    
+    if bytes == 0 {
+        return "0 B".to_string();
+    }
+    
+    let mut size = bytes as f64;
+    let mut unit_index = 0;
+    
+    while size >= 1024.0 && unit_index < UNITS.len() - 1 {
+        size /= 1024.0;
+        unit_index += 1;
+    }
+    
+    if unit_index == 0 {
+        format!("{} {}", size as u64, UNITS[unit_index])
+    } else if size >= 100.0 {
+        format!("{:.0} {}", size, UNITS[unit_index])
+    } else if size >= 10.0 {
+        format!("{:.1} {}", size, UNITS[unit_index])
+    } else {
+        format!("{:.2} {}", size, UNITS[unit_index])
     }
 }
 
@@ -703,5 +970,22 @@ mod tests {
         assert_eq!(format_bytes_per_second(1536), "1.5 KB/s");
         assert_eq!(format_bytes_per_second(1024 * 1024), "1.0 MB/s");
         assert_eq!(format_bytes_per_second(1024 * 1024 * 1024), "1.0 GB/s");
+    }
+}
+// Format duration for display (simplified version)
+fn format_duration_simple(duration: std::time::Duration) -> String {
+    let total_seconds = duration.as_secs();
+    
+    if total_seconds < 60 {
+        format!("{}s", total_seconds)
+    } else if total_seconds < 3600 {
+        let minutes = total_seconds / 60;
+        format!("{}m", minutes)
+    } else if total_seconds < 86400 {
+        let hours = total_seconds / 3600;
+        format!("{}h", hours)
+    } else {
+        let days = total_seconds / 86400;
+        format!("{}d", days)
     }
 }

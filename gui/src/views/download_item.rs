@@ -54,6 +54,51 @@ impl DownloadItemView {
         }
     }
     
+    /// Update progress with real-time statistics
+    pub fn update_progress(&mut self, new_progress: zuup_core::types::DownloadProgress, cx: &mut Context<Self>) {
+        let old_percentage = self.download_info.progress.percentage;
+        let old_speed = self.download_info.progress.download_speed;
+        
+        self.download_info.progress = new_progress;
+        self.last_update = std::time::Instant::now();
+        
+        // Only notify if there's a significant change to avoid excessive re-renders
+        let percentage_changed = (self.download_info.progress.percentage as i16 - old_percentage as i16).abs() >= 1;
+        let speed_changed = (self.download_info.progress.download_speed as i64 - old_speed as i64).abs() > 1024; // 1KB/s threshold
+        
+        if percentage_changed || speed_changed {
+            cx.notify();
+        }
+    }
+    
+    /// Get formatted progress statistics for display
+    pub fn get_progress_stats(&self) -> ProgressStats {
+        ProgressStats {
+            percentage: self.download_info.progress.percentage,
+            downloaded_size: self.download_info.progress.downloaded_size,
+            total_size: self.download_info.progress.total_size,
+            download_speed: self.download_info.progress.download_speed,
+            eta: self.download_info.progress.eta,
+            connections: self.download_info.progress.connections,
+            is_indeterminate: self.download_info.progress.total_size.is_none() && 
+                matches!(self.download_info.state, DownloadState::Active | DownloadState::Preparing),
+        }
+    }
+}
+
+/// Progress statistics for display
+#[derive(Debug, Clone)]
+pub struct ProgressStats {
+    pub percentage: u8,
+    pub downloaded_size: u64,
+    pub total_size: Option<u64>,
+    pub download_speed: u64,
+    pub eta: Option<std::time::Duration>,
+    pub connections: u32,
+    pub is_indeterminate: bool,
+}
+
+impl DownloadItemView {
     /// Update the download information
     pub fn update_download_info(&mut self, new_info: DownloadInfo) {
         self.download_info = new_info;
@@ -451,7 +496,7 @@ impl DownloadItemView {
         }
     }
     
-    /// Render the progress bar
+    /// Render the progress bar with enhanced visual indicators
     fn render_progress_bar(&self, _cx: &mut Context<Self>) -> impl IntoElement {
         let progress_value = if let Some(total_size) = self.download_info.progress.total_size {
             if total_size > 0 {
@@ -460,71 +505,150 @@ impl DownloadItemView {
                 0.0
             }
         } else {
-            // Indeterminate progress for unknown size
-            0.0
+            // For indeterminate progress, show a pulsing animation
+            if matches!(self.download_info.state, DownloadState::Active | DownloadState::Preparing) {
+                // Use a simple animation based on time
+                let elapsed = self.last_update.elapsed().as_millis() as f64;
+                let pulse = ((elapsed / 1000.0).sin() + 1.0) / 2.0; // 0.0 to 1.0
+                pulse * 30.0 // Show 0-30% for indeterminate
+            } else {
+                0.0
+            }
         };
         
-        let progress_color = match &self.download_info.state {
-            DownloadState::Active | DownloadState::Preparing => gpui::rgb(0x3b82f6), // Blue
-            DownloadState::Completed => gpui::rgb(0x10b981), // Green
-            DownloadState::Failed(_) => gpui::rgb(0xef4444), // Red
-            DownloadState::Paused => gpui::rgb(0xf59e0b), // Amber
-            DownloadState::Cancelled => gpui::rgb(0x6b7280), // Gray
-            _ => gpui::rgb(0x6b7280), // Gray for other states
+        let (progress_color, bg_color) = match &self.download_info.state {
+            DownloadState::Active => (gpui::rgb(0x3b82f6), gpui::rgb(0xdbeafe)), // Blue with light blue bg
+            DownloadState::Preparing => (gpui::rgb(0x8b5cf6), gpui::rgb(0xede9fe)), // Purple with light purple bg
+            DownloadState::Completed => (gpui::rgb(0x10b981), gpui::rgb(0xd1fae5)), // Green with light green bg
+            DownloadState::Failed(_) => (gpui::rgb(0xef4444), gpui::rgb(0xfee2e2)), // Red with light red bg
+            DownloadState::Paused => (gpui::rgb(0xf59e0b), gpui::rgb(0xfef3c7)), // Amber with light amber bg
+            DownloadState::Cancelled => (gpui::rgb(0x6b7280), gpui::rgb(0xf3f4f6)), // Gray with light gray bg
+            _ => (gpui::rgb(0x6b7280), gpui::rgb(0xe5e7eb)), // Default gray
         };
+        
+        let is_indeterminate = self.download_info.progress.total_size.is_none() && 
+            matches!(self.download_info.state, DownloadState::Active | DownloadState::Preparing);
         
         div()
             .w_full()
-            .h_2()
-            .bg(gpui::rgb(0xe5e7eb))
+            .h_3() // Slightly taller for better visibility
+            .bg(bg_color)
             .rounded_full()
             .overflow_hidden()
+            .relative()
             .child(
                 div()
                     .h_full()
                     .bg(progress_color)
                     .w(relative(progress_value as f32 / 100.0))
                     .rounded_full()
+                    .when(is_indeterminate, |div| {
+                        // Add a subtle animation for indeterminate progress
+                        div.opacity(0.8)
+                    })
             )
+            .when(is_indeterminate, |parent_div| {
+                // Add a moving shimmer effect for indeterminate progress
+                parent_div.child(
+                    div()
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .h_full()
+                        .w_8()
+                        .bg(gpui::rgb(0xffffff))
+                        .opacity(0.3)
+                        .rounded_full()
+                        // In a real implementation, this would have CSS animation
+                )
+            })
     }
     
-    /// Render download status and speed information
+    /// Render download status and speed information with enhanced statistics
     fn render_status_info(&self, _cx: &mut Context<Self>) -> impl IntoElement {
-        let status_text = match &self.download_info.state {
+        let (status_text, status_color) = match &self.download_info.state {
             DownloadState::Active => {
                 let speed = format_bytes_per_second(self.download_info.progress.download_speed);
                 let eta = if let Some(eta) = self.download_info.progress.eta {
                     format_duration(eta)
                 } else {
-                    "Unknown".to_string()
+                    "Calculating...".to_string()
                 };
-                format!("{} • ETA: {}", speed, eta)
+                let connections = if self.download_info.progress.connections > 0 {
+                    format!(" • {} connections", self.download_info.progress.connections)
+                } else {
+                    String::new()
+                };
+                (format!("{} • ETA: {}{}", speed, eta, connections), gpui::rgb(0x059669))
             }
-            DownloadState::Preparing => "Preparing...".to_string(),
-            DownloadState::Paused => "Paused".to_string(),
+            DownloadState::Preparing => {
+                ("Preparing download...".to_string(), gpui::rgb(0x7c3aed))
+            }
+            DownloadState::Paused => {
+                let speed = if self.download_info.progress.download_speed > 0 {
+                    format!(" • Last speed: {}", format_bytes_per_second(self.download_info.progress.download_speed))
+                } else {
+                    String::new()
+                };
+                (format!("Paused{}", speed), gpui::rgb(0xd97706))
+            }
             DownloadState::Completed => {
                 if let Some(completed_at) = self.download_info.completed_at {
                     let elapsed = chrono::Utc::now().signed_duration_since(completed_at);
-                    format!("Completed {} ago", format_duration_chrono(elapsed))
+                    let avg_speed = if let Some(started_at) = self.download_info.started_at {
+                        let duration = completed_at.signed_duration_since(started_at);
+                        if let Ok(duration_std) = duration.to_std() {
+                            let seconds = duration_std.as_secs();
+                            if seconds > 0 {
+                                let avg = self.download_info.progress.downloaded_size / seconds;
+                                format!(" • Avg: {}", format_bytes_per_second(avg))
+                            } else {
+                                String::new()
+                            }
+                        } else {
+                            String::new()
+                        }
+                    } else {
+                        String::new()
+                    };
+                    (format!("Completed {} ago{}", format_duration_chrono(elapsed), avg_speed), gpui::rgb(0x059669))
                 } else {
-                    "Completed".to_string()
+                    ("Completed".to_string(), gpui::rgb(0x059669))
                 }
             }
-            DownloadState::Failed(error) => format!("Failed: {}", error),
-            DownloadState::Cancelled => "Cancelled".to_string(),
-            DownloadState::Pending => "Pending".to_string(),
-            DownloadState::Waiting => "Waiting".to_string(),
-            DownloadState::Retrying => "Retrying...".to_string(),
+            DownloadState::Failed(error) => {
+                let truncated_error = if error.len() > 50 {
+                    format!("{}...", &error[..47])
+                } else {
+                    error.clone()
+                };
+                (format!("Failed: {}", truncated_error), gpui::rgb(0xdc2626))
+            }
+            DownloadState::Cancelled => ("Cancelled by user".to_string(), gpui::rgb(0x6b7280)),
+            DownloadState::Pending => ("Queued for download".to_string(), gpui::rgb(0x6b7280)),
+            DownloadState::Waiting => ("Waiting for resources".to_string(), gpui::rgb(0x6b7280)),
+            DownloadState::Retrying => ("Retrying download...".to_string(), gpui::rgb(0xd97706)),
         };
         
         let size_text = if let Some(total_size) = self.download_info.progress.total_size {
+            let percentage = if total_size > 0 {
+                (self.download_info.progress.downloaded_size as f64 / total_size as f64) * 100.0
+            } else {
+                0.0
+            };
             format!(
-                "{} / {}",
+                "{} / {} ({}%)",
                 format_bytes(self.download_info.progress.downloaded_size),
-                format_bytes(total_size)
+                format_bytes(total_size),
+                percentage as u8
             )
         } else {
-            format_bytes(self.download_info.progress.downloaded_size)
+            let downloaded = format_bytes(self.download_info.progress.downloaded_size);
+            if downloaded == "0 B" {
+                "Size unknown".to_string()
+            } else {
+                format!("{} downloaded", downloaded)
+            }
         };
         
         div()
@@ -534,12 +658,13 @@ impl DownloadItemView {
             .text_sm()
             .child(
                 div()
-                    .text_color(gpui::rgb(0x6b7280))
+                    .text_color(status_color)
+                    .font_weight(FontWeight::MEDIUM)
                     .child(status_text)
             )
             .child(
                 div()
-                    .text_color(gpui::rgb(0x9ca3af))
+                    .text_color(gpui::rgb(0x374151))
                     .font_weight(FontWeight::MEDIUM)
                     .child(size_text)
             )
@@ -671,7 +796,7 @@ impl Render for DownloadItemView {
     }
 }
 
-/// Format bytes for display
+/// Format bytes for display with enhanced precision
 fn format_bytes(bytes: u64) -> String {
     const UNITS: &[&str] = &["B", "KB", "MB", "GB", "TB"];
     
@@ -689,30 +814,74 @@ fn format_bytes(bytes: u64) -> String {
     
     if unit_index == 0 {
         format!("{} {}", size as u64, UNITS[unit_index])
-    } else {
+    } else if size >= 100.0 {
+        format!("{:.0} {}", size, UNITS[unit_index])
+    } else if size >= 10.0 {
         format!("{:.1} {}", size, UNITS[unit_index])
+    } else {
+        format!("{:.2} {}", size, UNITS[unit_index])
     }
 }
 
-/// Format bytes per second for display
+/// Format bytes per second for display with enhanced precision
 fn format_bytes_per_second(bytes_per_second: u64) -> String {
-    format!("{}/s", format_bytes(bytes_per_second))
+    const UNITS: &[&str] = &["B/s", "KB/s", "MB/s", "GB/s", "TB/s"];
+    
+    if bytes_per_second == 0 {
+        return "0 B/s".to_string();
+    }
+    
+    let mut size = bytes_per_second as f64;
+    let mut unit_index = 0;
+    
+    while size >= 1024.0 && unit_index < UNITS.len() - 1 {
+        size /= 1024.0;
+        unit_index += 1;
+    }
+    
+    if unit_index == 0 {
+        format!("{} {}", size as u64, UNITS[unit_index])
+    } else if size >= 100.0 {
+        format!("{:.0} {}", size, UNITS[unit_index])
+    } else if size >= 10.0 {
+        format!("{:.1} {}", size, UNITS[unit_index])
+    } else {
+        format!("{:.2} {}", size, UNITS[unit_index])
+    }
 }
 
-/// Format duration for display
+/// Format duration for display with enhanced precision
 fn format_duration(duration: std::time::Duration) -> String {
     let total_seconds = duration.as_secs();
     
-    if total_seconds < 60 {
+    if total_seconds < 1 {
+        "< 1s".to_string()
+    } else if total_seconds < 60 {
         format!("{}s", total_seconds)
     } else if total_seconds < 3600 {
         let minutes = total_seconds / 60;
         let seconds = total_seconds % 60;
-        format!("{}m {}s", minutes, seconds)
-    } else {
+        if seconds == 0 {
+            format!("{}m", minutes)
+        } else {
+            format!("{}m {}s", minutes, seconds)
+        }
+    } else if total_seconds < 86400 {
         let hours = total_seconds / 3600;
         let minutes = (total_seconds % 3600) / 60;
-        format!("{}h {}m", hours, minutes)
+        if minutes == 0 {
+            format!("{}h", hours)
+        } else {
+            format!("{}h {}m", hours, minutes)
+        }
+    } else {
+        let days = total_seconds / 86400;
+        let hours = (total_seconds % 86400) / 3600;
+        if hours == 0 {
+            format!("{}d", days)
+        } else {
+            format!("{}d {}h", days, hours)
+        }
     }
 }
 
