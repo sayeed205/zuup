@@ -1,5 +1,5 @@
 [workspace]
-members = ['core', "gui"]
+members = ['core', "gui", "zuup-tauri/src-tauri"]
 resolver = "3"
 
 [workspace.dependencies]
@@ -56,4 +56,4 @@ async_ftp = "6"
 ssh2 = "0.9"
 
 # BitTorrent protocol dependencies
-librqbit = "8" 
+librqbit = "8"
