@@ -15,9 +15,16 @@
       {
         "decorations": false,
         "transparent": true,
-        "title": "Zuup",
-        "width": 800,
-        "height": 600
+        "title": "Zuup Download Manager",
+        "width": 1200,
+        "height": 800,
+        "minWidth": 800,
+        "minHeight": 600,
+        "resizable": true,
+        "maximizable": true,
+        "minimizable": true,
+        "closable": true,
+        "center": true
       }
     ],
     "macOSPrivateApi": true,

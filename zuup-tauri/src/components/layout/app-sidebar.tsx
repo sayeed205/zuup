@@ -1,20 +1,15 @@
 import * as React from 'react'
-import { Download, Magnet } from 'lucide-react'
 
 import {
   Sidebar,
   SidebarContent,
   SidebarFooter,
-  SidebarHeader,
   SidebarRail,
-  useSidebar,
 } from '@/components/ui/sidebar'
 import { NavGroup } from '@/components/layout/nav-group'
 import { sidebarData } from '@/components/layout/data/sidebar-data'
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
-  const { state } = useSidebar()
-  const isCollapsed = state === 'collapsed'
 
   return (
     <Sidebar collapsible="icon" variant="sidebar" {...props}>

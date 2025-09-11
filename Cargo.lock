@@ -11481,12 +11481,23 @@ dependencies = [
 name = "zuup-tauri"
 version = "0.1.0"
 dependencies = [
+ "chrono",
+ "config",
+ "dirs 6.0.0",
+ "parking_lot 0.12.4",
  "serde",
  "serde_json",
  "tauri",
  "tauri-build",
  "tauri-plugin-opener",
+ "thiserror 2.0.16",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+ "uuid",
  "window-vibrancy 0.6.0 (git+https://github.com/tauri-apps/window-vibrancy)",
+ "zuup-core",
 ]
 
 [[package]]
