@@ -19,7 +19,7 @@ code {
 }
 
 :root {
-  --background: oklch(1 0 0);
+  --background: transparent !important;
   --foreground: oklch(0.141 0.005 285.823);
   --card: oklch(1 0 0);
   --card-foreground: oklch(0.141 0.005 285.823);
@@ -55,7 +55,7 @@ code {
 }
 
 .dark {
-  --background: oklch(0.141 0.005 285.823);
+  --background: transparent !important;
   --foreground: oklch(0.985 0 0);
   --card: oklch(0.141 0.005 285.823);
   --card-foreground: oklch(0.985 0 0);
@@ -129,10 +129,14 @@ code {
 }
 
 @layer base {
+  html,
+  body {
+    background: transparent !important;
+  }
   * {
     @apply border-border outline-ring/50;
   }
   body {
-    @apply bg-background text-foreground;
+    @apply text-foreground;
   }
 }

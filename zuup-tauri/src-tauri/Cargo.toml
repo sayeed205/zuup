@@ -13,8 +13,9 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["macos-private-api"] }
 tauri-plugin-opener = "2"
+window-vibrancy = { git = "https://github.com/tauri-apps/window-vibrancy" }
 
 serde = { workspace = true }
 serde_json = { workspace = true }

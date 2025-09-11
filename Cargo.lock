@@ -8719,7 +8719,7 @@ dependencies = [
  "urlpattern",
  "webkit2gtk",
  "webview2-com",
- "window-vibrancy",
+ "window-vibrancy 0.6.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "windows 0.61.3",
 ]
 
@@ -10383,6 +10383,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "window-vibrancy"
+version = "0.6.0"
+source = "git+https://github.com/tauri-apps/window-vibrancy#c9c64651fb22a6ab277964512895b7195c9215d5"
+dependencies = [
+ "objc2 0.6.2",
+ "objc2-app-kit",
+ "objc2-core-foundation",
+ "objc2-foundation 0.3.1",
+ "raw-window-handle",
+ "windows-sys 0.59.0",
+ "windows-version",
+]
+
+[[package]]
 name = "windows"
 version = "0.57.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -11472,6 +11486,7 @@ dependencies = [
  "tauri",
  "tauri-build",
  "tauri-plugin-opener",
+ "window-vibrancy 0.6.0 (git+https://github.com/tauri-apps/window-vibrancy)",
 ]
 
 [[package]]
