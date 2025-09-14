@@ -1,6 +1,6 @@
-use tauri::{AppHandle, Emitter};
+use super::download::{DownloadInfo, DownloadState, DownloadStats, ProgressInfo};
 use serde::Serialize;
-use super::download::{DownloadInfo, DownloadStats, ProgressInfo, DownloadState};
+use tauri::{AppHandle, Emitter};
 
 #[derive(Clone, Serialize)]
 pub struct DownloadProgressEvent {
@@ -29,6 +29,7 @@ pub struct StatsUpdateEvent {
     pub stats: DownloadStats,
 }
 
+#[derive(Clone)]
 pub struct EventService {
     app_handle: AppHandle,
 }

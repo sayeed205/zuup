@@ -2,6 +2,7 @@ import { Outlet, createRootRouteWithContext } from '@tanstack/react-router'
 import { TanStackRouterDevtoolsPanel } from '@tanstack/react-router-devtools'
 import Cookies from 'js-cookie'
 import { TanstackDevtools } from '@tanstack/react-devtools'
+import { platform } from '@tauri-apps/plugin-os'
 
 import TanStackQueryDevtools from '../integrations/tanstack-query/devtools'
 
@@ -10,15 +11,22 @@ import { Toaster } from '@/components/ui/sonner'
 import { AppSidebar } from '@/components/layout/app-sidebar'
 import { cn } from '@/lib/utils'
 import { SidebarProvider } from '@/components/ui/sidebar'
+import { WindowControls } from '@/components/layout/controls/window-controlls'
 
 interface MyRouterContext {
   queryClient: QueryClient
 }
 
 const defaultOpen = Cookies.get('sidebar_state') !== 'false'
+const currentPlatform = platform()
+
 export const Route = createRootRouteWithContext<MyRouterContext>()({
   component: () => (
     <>
+      <div className="fixed right-1 top-1">
+        {currentPlatform === 'linux' && <WindowControls platform="gnome" />}
+        {currentPlatform === 'windows' && <WindowControls platform="windows" />}
+      </div>
       <SidebarProvider defaultOpen={defaultOpen}>
         <AppSidebar />
         <div

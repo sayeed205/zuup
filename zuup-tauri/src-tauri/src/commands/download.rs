@@ -1,5 +1,8 @@
+use crate::services::{
+    DownloadService,
+    download::{AddDownloadRequest, DownloadInfo, DownloadStats},
+};
 use tauri::State;
-use crate::services::{DownloadService, download::{AddDownloadRequest, DownloadInfo, DownloadStats}};
 
 #[tauri::command]
 pub async fn add_download(
@@ -13,8 +16,10 @@ pub async fn add_download(
         download_path,
         filename,
     };
-    
-    download_service.add_download(request)
+
+    download_service
+        .add_download(request)
+        .await
         .map_err(|e| e.to_string())
 }
 
@@ -23,7 +28,9 @@ pub async fn pause_download(
     download_service: State<'_, DownloadService>,
     id: String,
 ) -> Result<(), String> {
-    download_service.pause_download(&id)
+    download_service
+        .pause_download(&id)
+        .await
         .map_err(|e| e.to_string())
 }
 
@@ -32,7 +39,9 @@ pub async fn resume_download(
     download_service: State<'_, DownloadService>,
     id: String,
 ) -> Result<(), String> {
-    download_service.resume_download(&id)
+    download_service
+        .resume_download(&id)
+        .await
         .map_err(|e| e.to_string())
 }
 
@@ -41,7 +50,9 @@ pub async fn cancel_download(
     download_service: State<'_, DownloadService>,
     id: String,
 ) -> Result<(), String> {
-    download_service.cancel_download(&id)
+    download_service
+        .cancel_download(&id)
+        .await
         .map_err(|e| e.to_string())
 }
 
@@ -50,7 +61,9 @@ pub async fn remove_download(
     download_service: State<'_, DownloadService>,
     id: String,
 ) -> Result<(), String> {
-    download_service.remove_download(&id)
+    download_service
+        .remove_download(&id)
+        .await
         .map_err(|e| e.to_string())
 }
 
@@ -58,12 +71,18 @@ pub async fn remove_download(
 pub async fn get_downloads(
     download_service: State<'_, DownloadService>,
 ) -> Result<Vec<DownloadInfo>, String> {
-    Ok(download_service.get_downloads())
+    download_service
+        .get_downloads()
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub async fn get_download_stats(
     download_service: State<'_, DownloadService>,
 ) -> Result<DownloadStats, String> {
-    Ok(download_service.get_download_stats())
+    download_service
+        .get_download_stats()
+        .await
+        .map_err(|e| e.to_string())
 }

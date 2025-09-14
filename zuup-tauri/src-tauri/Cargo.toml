@@ -18,7 +18,7 @@ tauri-plugin-opener = "2"
 window-vibrancy = { git = "https://github.com/tauri-apps/window-vibrancy" }
 
 # Zuup core integration
-zuup-core = { path = "../../core" }
+zuup-core = { path = "../../core", features = ["http", "ftp", "sftp", "torrent"] }
 
 # Workspace dependencies
 serde = { workspace = true }
@@ -35,3 +35,5 @@ url = { workspace = true }
 # Additional dependencies for download manager
 uuid = { version = "1.0", features = ["v4", "serde"] }
 parking_lot = "0.12"
+reqwest = { version = "0.12", features = ["blocking"] }
+tauri-plugin-os = "2"

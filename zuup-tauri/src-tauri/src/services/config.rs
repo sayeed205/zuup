@@ -1,7 +1,7 @@
-use std::path::PathBuf;
-use std::sync::Arc;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
+use std::sync::Arc;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -52,7 +52,8 @@ impl Default for AppConfig {
     fn default() -> Self {
         Self {
             general: GeneralConfig {
-                download_directory: dirs::download_dir().unwrap_or_else(|| dirs::home_dir().unwrap_or_default()),
+                download_directory: dirs::download_dir()
+                    .unwrap_or_else(|| dirs::home_dir().unwrap_or_default()),
                 max_concurrent_downloads: 3,
                 auto_start_downloads: true,
             },
@@ -82,6 +83,7 @@ impl Default for GuiConfig {
     }
 }
 
+#[derive(Clone)]
 pub struct ConfigService {
     config_dir: PathBuf,
     app_config: Arc<Mutex<AppConfig>>,

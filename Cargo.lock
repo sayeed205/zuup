@@ -3694,9 +3694,11 @@ dependencies = [
  "percent-encoding",
  "pin-project-lite",
  "socket2 0.6.0",
+ "system-configuration",
  "tokio",
  "tower-service",
  "tracing",
+ "windows-registry 0.5.3",
 ]
 
 [[package]]
@@ -5917,6 +5919,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "os_info"
+version = "3.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d0e1ac5fde8d43c34139135df8ea9ee9465394b2d8d20f032d38998f64afffc3"
+dependencies = [
+ "log",
+ "plist",
+ "serde",
+ "windows-sys 0.52.0",
+]
+
+[[package]]
 name = "pango"
 version = "0.18.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7068,8 +7082,11 @@ dependencies = [
  "async-compression",
  "base64 0.22.1",
  "bytes",
+ "encoding_rs",
+ "futures-channel",
  "futures-core",
  "futures-util",
+ "h2",
  "http",
  "http-body",
  "http-body-util",
@@ -7079,6 +7096,7 @@ dependencies = [
  "hyper-util",
  "js-sys",
  "log",
+ "mime",
  "native-tls",
  "percent-encoding",
  "pin-project-lite",
@@ -8823,6 +8841,24 @@ dependencies = [
  "url",
  "windows 0.61.3",
  "zbus",
+]
+
+[[package]]
+name = "tauri-plugin-os"
+version = "2.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "77a1c77ebf6f20417ab2a74e8c310820ba52151406d0c80fbcea7df232e3f6ba"
+dependencies = [
+ "gethostname",
+ "log",
+ "os_info",
+ "serde",
+ "serde_json",
+ "serialize-to-javascript",
+ "sys-locale",
+ "tauri",
+ "tauri-plugin",
+ "thiserror 2.0.16",
 ]
 
 [[package]]
@@ -11485,11 +11521,13 @@ dependencies = [
  "config",
  "dirs 6.0.0",
  "parking_lot 0.12.4",
+ "reqwest 0.12.23",
  "serde",
  "serde_json",
  "tauri",
  "tauri-build",
  "tauri-plugin-opener",
+ "tauri-plugin-os",
  "thiserror 2.0.16",
  "tokio",
  "tracing",

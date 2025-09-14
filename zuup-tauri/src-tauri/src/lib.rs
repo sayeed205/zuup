@@ -7,11 +7,11 @@ use window_vibrancy::{NSVisualEffectMaterial, apply_vibrancy};
 #[cfg(target_os = "windows")]
 use window_vibrancy::apply_mica;
 
-mod services;
 mod commands;
+mod services;
 
-use services::{ConfigService, DownloadService, EventService};
 use commands::*;
+use services::{ConfigService, DownloadService, EventService};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -19,18 +19,22 @@ pub fn run() {
     tracing_subscriber::fmt::init();
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_os::init())
         .setup(|app| {
             // Initialize services
             let config_service = ConfigService::new()
                 .map_err(|e| format!("Failed to initialize config service: {}", e))?;
-            
+
             let download_service = DownloadService::new();
             let event_service = EventService::new(app.handle().clone());
 
             // Store services in app state
-            app.manage(config_service);
-            app.manage(download_service);
-            app.manage(event_service);
+            app.manage(config_service.clone());
+            app.manage(download_service.clone());
+            app.manage(event_service.clone());
+
+            // Set up event service in download service
+            download_service.set_event_service(event_service);
 
             let _window = app.get_webview_window("main").unwrap();
 
