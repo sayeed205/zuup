@@ -12,13 +12,31 @@ __email__ = "team@zuup.dev"
 from .core.app import Application
 from .core.interfaces import DownloadEngine
 from .core.task_manager import TaskManager
-from .storage.models import DownloadTask, ProgressInfo, TaskStatus
+from .storage.models import (
+    DownloadTask,
+    EngineType,
+    GlobalConfig,
+    ProgressInfo,
+    ProxyConfig,
+    TaskConfig,
+    TaskStatus,
+)
+from .storage.validation import ValidationResult, validate_download_task_data
 
 __all__ = [
+    # Core application
     "Application",
     "DownloadEngine",
-    "DownloadTask",
-    "ProgressInfo",
     "TaskManager",
+    # Data models
+    "DownloadTask",
+    "EngineType",
+    "GlobalConfig",
+    "ProgressInfo",
+    "ProxyConfig",
+    "TaskConfig",
     "TaskStatus",
+    # Validation
+    "ValidationResult",
+    "validate_download_task_data",
 ]
