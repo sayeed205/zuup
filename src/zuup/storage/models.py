@@ -3,7 +3,6 @@
 from datetime import datetime, timedelta
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict
 from urllib.parse import urlparse
 
 from cuid import cuid
@@ -86,21 +85,21 @@ class ProgressInfo(BaseModel):
     def validate_progress_consistency(self) -> "ProgressInfo":
         """Validate progress information consistency."""
         # Ensure downloaded bytes doesn't exceed total bytes
-        if (self.total_bytes is not None and 
+        if (self.total_bytes is not None and
             self.downloaded_bytes > self.total_bytes):
             raise ValueError("Downloaded bytes cannot exceed total bytes")
-        
+
         # Validate peer relationships
-        if (self.peers_connected is not None and 
-            self.peers_total is not None and 
+        if (self.peers_connected is not None and
+            self.peers_total is not None and
             self.peers_connected > self.peers_total):
             raise ValueError("Connected peers cannot exceed total peers")
-        
-        if (self.seeds_connected is not None and 
-            self.seeds_total is not None and 
+
+        if (self.seeds_connected is not None and
+            self.seeds_total is not None and
             self.seeds_connected > self.seeds_total):
             raise ValueError("Connected seeds cannot exceed total seeds")
-        
+
         return self
 
     @property
@@ -127,7 +126,7 @@ class ProxyConfig(BaseModel):
         """Validate proxy URL format."""
         if v is None:
             return v
-        
+
         try:
             parsed = urlparse(v)
             if not parsed.scheme or not parsed.netloc:
@@ -260,14 +259,14 @@ class GlobalConfig(BaseModel):
             # Ensure path is absolute
             if not v.is_absolute():
                 v = v.expanduser().resolve()
-            
+
             # Create directory if it doesn't exist
             v.mkdir(parents=True, exist_ok=True)
-            
+
             # Check if directory is writable
             if not v.exists() or not v.is_dir():
                 raise ValueError(f"Path {v} is not a valid directory")
-            
+
             return v
         except Exception as e:
             raise ValueError(f"Invalid path {v}: {e}") from e
@@ -332,12 +331,12 @@ class DownloadTask(BaseModel):
         """Validate URL format and supported schemes."""
         if not v.strip():
             raise ValueError("URL cannot be empty")
-        
+
         try:
             parsed = urlparse(v)
             if not parsed.scheme:
                 raise ValueError("URL must include a scheme")
-            
+
             # Check supported schemes
             supported_schemes = {
                 "http", "https",  # HTTP engine
@@ -345,11 +344,11 @@ class DownloadTask(BaseModel):
                 "magnet",  # Torrent engine
                 "file",  # Local files
             }
-            
+
             scheme = parsed.scheme.lower()
             if scheme not in supported_schemes:
                 raise ValueError(f"Unsupported URL scheme: {parsed.scheme}")
-            
+
             # Special validation for different schemes
             if scheme == "magnet":
                 # Magnet URLs don't need netloc, but should have xt parameter
@@ -363,7 +362,7 @@ class DownloadTask(BaseModel):
                 # File URLs should have a path
                 if not parsed.path:
                     raise ValueError("File URL must include path")
-            
+
             return v
         except Exception as e:
             raise ValueError(f"Invalid URL format: {e}") from e
@@ -376,15 +375,15 @@ class DownloadTask(BaseModel):
             # Ensure path is absolute
             if not v.is_absolute():
                 v = v.expanduser().resolve()
-            
+
             # Check if parent directory exists or can be created
             parent = v.parent
             parent.mkdir(parents=True, exist_ok=True)
-            
+
             # Check if parent is writable
             if not parent.exists() or not parent.is_dir():
                 raise ValueError(f"Parent directory {parent} is not accessible")
-            
+
             return v
         except Exception as e:
             raise ValueError(f"Invalid destination path {v}: {e}") from e
@@ -395,19 +394,19 @@ class DownloadTask(BaseModel):
         """Validate filename for filesystem compatibility."""
         if v is None:
             return v
-        
+
         if not v.strip():
             raise ValueError("Filename cannot be empty")
-        
+
         # Check for invalid characters
         invalid_chars = '<>:"/\\|?*'
         if any(char in v for char in invalid_chars):
             raise ValueError(f"Filename contains invalid characters: {invalid_chars}")
-        
+
         # Check length (most filesystems have 255 character limit)
         if len(v) > 255:
             raise ValueError("Filename too long (max 255 characters)")
-        
+
         return v.strip()
 
     @field_validator("file_size")
@@ -424,27 +423,27 @@ class DownloadTask(BaseModel):
         # Ensure progress status matches task status
         if self.progress.status != self.status:
             self.progress.status = self.status
-        
+
         # Validate engine type matches URL scheme
         url_scheme = urlparse(self.url).scheme.lower()
-        
+
         engine_scheme_mapping = {
             EngineType.HTTP: {"http", "https"},
             EngineType.FTP: {"ftp", "ftps", "sftp"},
             EngineType.TORRENT: {"magnet", "http", "https", "file"},  # Torrents can be magnet, HTTP, or local .torrent files
             EngineType.MEDIA: {"http", "https"},  # Media engine can handle HTTP URLs
         }
-        
+
         valid_schemes = engine_scheme_mapping.get(self.engine_type, set())
         if url_scheme not in valid_schemes:
             raise ValueError(f"Engine type {self.engine_type.value} incompatible with URL scheme {url_scheme}")
-        
+
         # Additional validation for torrent engine with HTTP/file URLs
-        if (self.engine_type == EngineType.TORRENT and 
-            url_scheme in {"http", "https", "file"} and 
+        if (self.engine_type == EngineType.TORRENT and
+            url_scheme in {"http", "https", "file"} and
             not self.url.lower().endswith('.torrent')):
             raise ValueError("HTTP/file URLs for torrent engine must point to .torrent files")
-        
+
         return self
 
     def update_progress(self, progress: ProgressInfo) -> None:

@@ -28,12 +28,10 @@ class FTPEngine(BaseDownloadEngine):
         Yields:
             Progress information updates
         """
-        # Implementation will be added in task 4
+        # Implementation will be added in later tasks
         logger.info(f"Starting FTP download for task {task.id}")
-        # Temporary implementation to satisfy type checker
-        if False:  # pragma: no cover
-            yield ProgressInfo()
-        raise NotImplementedError("FTP download will be implemented in task 4")
+        raise NotImplementedError("FTP download will be implemented in later tasks")
+        yield  # type: ignore[unreachable]
 
     async def pause(self, task_id: str) -> None:
         """Pause FTP download."""

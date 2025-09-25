@@ -13,7 +13,7 @@ if TYPE_CHECKING:
 class DownloadEngine(Protocol):
     """Protocol for download engine implementations."""
 
-    async def download(self, task: DownloadTask) -> AsyncIterator[ProgressInfo]:
+    def download(self, task: DownloadTask) -> AsyncIterator[ProgressInfo]:
         """
         Start downloading a task and yield progress updates.
 

@@ -28,12 +28,10 @@ class MediaEngine(BaseDownloadEngine):
         Yields:
             Progress information updates
         """
-        # Implementation will be added in task 4
+        # Implementation will be added in later tasks
         logger.info(f"Starting media download for task {task.id}")
-        # Temporary implementation to satisfy type checker
-        if False:  # pragma: no cover
-            yield ProgressInfo()
-        raise NotImplementedError("Media download will be implemented in task 4")
+        raise NotImplementedError("Media download will be implemented in later tasks")
+        yield  # type: ignore[unreachable]
 
     async def pause(self, task_id: str) -> None:
         """Pause media download."""
