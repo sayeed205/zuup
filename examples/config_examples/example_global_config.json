@@ -1,0 +1,21 @@
+{
+  "max_concurrent_downloads": 5,
+  "default_download_path": "~/Downloads/zuup",
+  "temp_directory": "~/.cache/zuup",
+  "max_connections_per_download": 16,
+  "user_agent": "Zuup/0.1.0 (Custom)",
+  "proxy_settings": {
+    "enabled": false,
+    "http_proxy": null,
+    "https_proxy": null,
+    "socks_proxy": null,
+    "username": null,
+    "password": null
+  },
+  "logging_level": "DEBUG",
+  "server_host": "0.0.0.0",
+  "server_port": 8080,
+  "theme": "dark",
+  "auto_start_downloads": true,
+  "show_notifications": true
+}

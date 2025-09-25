@@ -1,0 +1,25 @@
+{
+  "max_connections": 8,
+  "download_speed_limit": 1048576,
+  "upload_speed_limit": 524288,
+  "retry_attempts": 5,
+  "timeout": 60,
+  "headers": {
+    "User-Agent": "Custom Download Agent",
+    "Accept": "*/*"
+  },
+  "cookies": {
+    "session_id": "example_session_123"
+  },
+  "enable_seeding": true,
+  "seed_ratio_limit": 2.0,
+  "seed_time_limit": 86400,
+  "proxy": {
+    "enabled": true,
+    "http_proxy": "http://proxy.example.com:8080",
+    "https_proxy": "https://proxy.example.com:8080",
+    "socks_proxy": null,
+    "username": "proxy_user",
+    "password": "proxy_pass"
+  }
+}
