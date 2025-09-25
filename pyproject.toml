@@ -4,4 +4,8 @@ version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.10"
-dependencies = []
+dependencies = [
+    "libtorrent>=2.0.11",
+    "pycurl>=7.45.7",
+    "yt-dlp>=2025.9.23",
+]
