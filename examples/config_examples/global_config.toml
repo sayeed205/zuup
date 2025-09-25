@@ -1,0 +1,51 @@
+# Example global configuration file
+# This file demonstrates the available configuration options
+
+[global]
+max_concurrent_downloads = 5
+default_download_path = "~/Downloads"
+temp_directory = "~/.cache/zuup"
+max_connections_per_download = 16
+user_agent = "Zuup/0.1.0 (Custom)"
+
+[global.proxy]
+enabled = false
+http_proxy = ""
+https_proxy = ""
+socks_proxy = ""
+username = ""
+password = ""
+
+[global.logging]
+level = "INFO"
+file_path = "~/.config/zuup/logs/app.log"
+
+[server]
+host = "0.0.0.0"  # Listen on all interfaces
+port = 8080
+
+[gui]
+theme = "dark"
+auto_start_downloads = true
+show_notifications = true
+
+[engines.http]
+# HTTP/HTTPS specific settings
+default_timeout = 30
+max_redirects = 10
+verify_ssl = true
+
+[engines.torrent]
+# BitTorrent specific settings
+enable_dht = true
+enable_pex = true
+enable_lsd = true
+max_upload_rate = 0  # 0 = unlimited
+max_download_rate = 0  # 0 = unlimited
+
+[engines.media]
+# Media download (yt-dlp) specific settings
+format = "best"
+extract_audio = false
+audio_format = "mp3"
+audio_quality = "192"
