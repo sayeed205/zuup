@@ -234,6 +234,10 @@ class GlobalConfig(BaseModel):
     proxy_settings: ProxyConfig | None = None
     logging_level: str = "INFO"
 
+    # Database settings
+    database_path: Path = Path.home() / ".cache" / "download-manager" / "tasks.db"
+    enable_database_backup: bool = True
+
     # Server settings
     server_host: str = "127.0.0.1"
     server_port: int = 8080
@@ -242,6 +246,9 @@ class GlobalConfig(BaseModel):
     theme: str = "dark"
     auto_start_downloads: bool = True
     show_notifications: bool = True
+
+    # Monitoring settings
+    enable_monitoring: bool = True
 
     @field_validator("max_concurrent_downloads", "max_connections_per_download")
     @classmethod
@@ -253,8 +260,8 @@ class GlobalConfig(BaseModel):
 
     @field_validator("default_download_path", "temp_directory")
     @classmethod
-    def validate_paths(cls, v: Path) -> Path:
-        """Validate and create paths if they don't exist."""
+    def validate_directory_paths(cls, v: Path) -> Path:
+        """Validate and create directory paths if they don't exist."""
         try:
             # Ensure path is absolute
             if not v.is_absolute():
@@ -270,6 +277,26 @@ class GlobalConfig(BaseModel):
             return v
         except Exception as e:
             raise ValueError(f"Invalid path {v}: {e}") from e
+
+    @field_validator("database_path")
+    @classmethod
+    def validate_database_path(cls, v: Path) -> Path:
+        """Validate database path and create parent directory if needed."""
+        try:
+            # Ensure path is absolute
+            if not v.is_absolute():
+                v = v.expanduser().resolve()
+
+            # Create parent directory if it doesn't exist
+            v.parent.mkdir(parents=True, exist_ok=True)
+
+            # Check if parent directory is writable
+            if not v.parent.exists() or not v.parent.is_dir():
+                raise ValueError(f"Database parent directory {v.parent} is not valid")
+
+            return v
+        except Exception as e:
+            raise ValueError(f"Invalid database path {v}: {e}") from e
 
     @field_validator("logging_level")
     @classmethod
