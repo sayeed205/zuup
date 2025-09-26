@@ -8,6 +8,7 @@ environment properly catches type errors.
 
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 
 
@@ -146,7 +147,7 @@ T = TypeVar('T')
 class Container(Generic[T]):
     def __init__(self, value: T) -> None:
         self.value = value
-    
+
     def get(self) -> T:
         return self.value
 
@@ -359,4 +360,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     success = main()
-    exit(0 if success else 1)
+    sys.exit(0 if success else 1)
