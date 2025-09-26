@@ -224,22 +224,26 @@ class HttpFtpEngine(BaseDownloadEngine):
             curl_handle.setopt(pycurl.NOBODY, 1)  # HEAD request
             curl_handle.setopt(pycurl.FOLLOWLOCATION, 1)
             curl_handle.setopt(pycurl.MAXREDIRS, self.config.max_redirects)
+            # Automatically referer on redirects
+            curl_handle.setopt(pycurl.AUTOREFERER, 1)
             curl_handle.setopt(pycurl.TIMEOUT, self.config.connect_timeout)
             curl_handle.setopt(pycurl.USERAGENT, self.config.user_agent.encode("utf-8"))
 
-            # SSL settings
-            if not self.config.verify_ssl:
-                curl_handle.setopt(pycurl.SSL_VERIFYPEER, 0)
-                curl_handle.setopt(pycurl.SSL_VERIFYHOST, 0)
+            # SSL/TLS settings
+            self._setup_curl_ssl_options(curl_handle)
 
             # Authentication
             if self.config.auth.method.value != "none":
                 self._setup_curl_auth(curl_handle)
 
-            # Custom headers
-            if self.config.custom_headers:
-                headers = [f"{k}: {v}" for k, v in self.config.custom_headers.items()]
-                curl_handle.setopt(pycurl.HTTPHEADER, headers)
+            # Custom headers (including bearer token if applicable)
+            self._setup_curl_headers(curl_handle)
+
+            # Cookies
+            self._setup_curl_cookies(curl_handle)
+
+            # Proxy settings
+            self._setup_curl_proxy(curl_handle)
 
             # Perform HEAD request
             await asyncio.get_event_loop().run_in_executor(None, curl_handle.perform)
@@ -251,7 +255,8 @@ class HttpFtpEngine(BaseDownloadEngine):
             effective_url = curl_handle.getinfo(pycurl.EFFECTIVE_URL)
 
             if response_code not in (200, 206):
-                raise NetworkError(f"Server returned HTTP {response_code}")
+                error_msg = self._get_http_error_message(response_code)
+                raise NetworkError(error_msg)
 
             # Check for range support
             accept_ranges = False
@@ -290,6 +295,13 @@ class HttpFtpEngine(BaseDownloadEngine):
             curl_handle.setopt(pycurl.HTTPAUTH, pycurl.HTTPAUTH_BASIC)
         elif auth.method.value == "digest":
             curl_handle.setopt(pycurl.HTTPAUTH, pycurl.HTTPAUTH_DIGEST)
+        elif auth.method.value == "bearer":
+            # Bearer token authentication via Authorization header
+            if auth.token:
+                headers = self.config.custom_headers.copy()
+                headers["Authorization"] = f"Bearer {auth.token}"
+                header_list = [f"{k}: {v}" for k, v in headers.items()]
+                curl_handle.setopt(pycurl.HTTPHEADER, header_list)
         elif auth.method.value == "ntlm":
             curl_handle.setopt(pycurl.HTTPAUTH, pycurl.HTTPAUTH_NTLM)
         elif auth.method.value == "negotiate":
@@ -299,6 +311,88 @@ class HttpFtpEngine(BaseDownloadEngine):
 
         if auth.username and auth.password:
             curl_handle.setopt(pycurl.USERPWD, f"{auth.username}:{auth.password}")
+
+    def _setup_curl_cookies(self, curl_handle: pycurl.Curl) -> None:
+        """Setup cookies for curl handle."""
+        if self.config.cookies:
+            # Convert cookies dict to cookie string format
+            cookie_string = "; ".join([f"{k}={v}" for k, v in self.config.cookies.items()])
+            curl_handle.setopt(pycurl.COOKIE, cookie_string.encode("utf-8"))
+
+    def _setup_curl_proxy(self, curl_handle: pycurl.Curl) -> None:
+        """Setup proxy configuration for curl handle."""
+        proxy = self.config.proxy
+        
+        if not proxy.enabled or not proxy.host:
+            return
+
+        # Set proxy URL
+        proxy_url = proxy.proxy_url
+        curl_handle.setopt(pycurl.PROXY, proxy_url.encode("utf-8"))
+
+        # Set proxy type
+        proxy_type_map = {
+            "http": pycurl.PROXYTYPE_HTTP,
+            "https": pycurl.PROXYTYPE_HTTP,  # HTTPS proxy uses HTTP CONNECT
+            "socks4": pycurl.PROXYTYPE_SOCKS4,
+            "socks4a": pycurl.PROXYTYPE_SOCKS4A,
+            "socks5": pycurl.PROXYTYPE_SOCKS5,
+            "socks5h": pycurl.PROXYTYPE_SOCKS5_HOSTNAME,
+        }
+
+        if proxy.proxy_type.value in proxy_type_map:
+            curl_handle.setopt(pycurl.PROXYTYPE, proxy_type_map[proxy.proxy_type.value])
+
+        # Set proxy authentication if provided
+        if proxy.username and proxy.password:
+            curl_handle.setopt(pycurl.PROXYUSERPWD, f"{proxy.username}:{proxy.password}")
+
+    def _setup_curl_headers(self, curl_handle: pycurl.Curl) -> None:
+        """Setup custom headers for curl handle."""
+        headers = []
+        
+        # Add custom headers
+        if self.config.custom_headers:
+            headers.extend([f"{k}: {v}" for k, v in self.config.custom_headers.items()])
+        
+        # Add bearer token if using bearer authentication
+        if (self.config.auth.method.value == "bearer" and 
+            self.config.auth.token and 
+            "Authorization" not in self.config.custom_headers):
+            headers.append(f"Authorization: Bearer {self.config.auth.token}")
+        
+        if headers:
+            curl_handle.setopt(pycurl.HTTPHEADER, headers)
+
+    def _setup_curl_ssl_options(self, curl_handle: pycurl.Curl) -> None:
+        """Setup SSL/TLS options for curl handle."""
+        # Basic SSL verification
+        if self.config.verify_ssl:
+            curl_handle.setopt(pycurl.SSL_VERIFYPEER, 1)
+            curl_handle.setopt(pycurl.SSL_VERIFYHOST, 2)
+        else:
+            curl_handle.setopt(pycurl.SSL_VERIFYPEER, 0)
+            curl_handle.setopt(pycurl.SSL_VERIFYHOST, 0)
+
+        # Custom CA certificate bundle
+        if self.config.ca_cert_path and self.config.ca_cert_path.exists():
+            curl_handle.setopt(pycurl.CAINFO, str(self.config.ca_cert_path))
+
+        # Client certificate authentication
+        if self.config.client_cert_path and self.config.client_cert_path.exists():
+            curl_handle.setopt(pycurl.SSLCERT, str(self.config.client_cert_path))
+            
+        if self.config.client_key_path and self.config.client_key_path.exists():
+            curl_handle.setopt(pycurl.SSLKEY, str(self.config.client_key_path))
+
+        # SSL cipher list
+        if self.config.ssl_cipher_list:
+            curl_handle.setopt(pycurl.SSL_CIPHER_LIST, self.config.ssl_cipher_list.encode("utf-8"))
+
+        # Enable compression if configured
+        if self.config.enable_compression:
+            # Accept all supported encodings
+            curl_handle.setopt(pycurl.ACCEPT_ENCODING, b"")
 
     def _extract_filename_from_url(self, url: str) -> str:
         """
@@ -324,6 +418,75 @@ class HttpFtpEngine(BaseDownloadEngine):
 
         except Exception:
             return "download"
+
+    def _get_http_error_message(self, response_code: int) -> str:
+        """
+        Get a descriptive error message for HTTP status codes.
+
+        Args:
+            response_code: HTTP response code
+
+        Returns:
+            Descriptive error message
+        """
+        http_status_messages = {
+            # 3xx Redirection
+            300: "Multiple Choices",
+            301: "Moved Permanently", 
+            302: "Found",
+            303: "See Other",
+            304: "Not Modified",
+            305: "Use Proxy",
+            307: "Temporary Redirect",
+            308: "Permanent Redirect",
+            
+            # 4xx Client Error
+            400: "Bad Request",
+            401: "Unauthorized - Authentication required",
+            402: "Payment Required",
+            403: "Forbidden - Access denied",
+            404: "Not Found - File does not exist",
+            405: "Method Not Allowed",
+            406: "Not Acceptable",
+            407: "Proxy Authentication Required",
+            408: "Request Timeout",
+            409: "Conflict",
+            410: "Gone - File no longer available",
+            411: "Length Required",
+            412: "Precondition Failed",
+            413: "Payload Too Large",
+            414: "URI Too Long",
+            415: "Unsupported Media Type",
+            416: "Range Not Satisfiable",
+            417: "Expectation Failed",
+            418: "I'm a teapot",
+            421: "Misdirected Request",
+            422: "Unprocessable Entity",
+            423: "Locked",
+            424: "Failed Dependency",
+            425: "Too Early",
+            426: "Upgrade Required",
+            428: "Precondition Required",
+            429: "Too Many Requests - Rate limited",
+            431: "Request Header Fields Too Large",
+            451: "Unavailable For Legal Reasons",
+            
+            # 5xx Server Error
+            500: "Internal Server Error",
+            501: "Not Implemented",
+            502: "Bad Gateway",
+            503: "Service Unavailable - Server temporarily overloaded",
+            504: "Gateway Timeout",
+            505: "HTTP Version Not Supported",
+            506: "Variant Also Negotiates",
+            507: "Insufficient Storage",
+            508: "Loop Detected",
+            510: "Not Extended",
+            511: "Network Authentication Required",
+        }
+
+        status_message = http_status_messages.get(response_code, "Unknown Error")
+        return f"HTTP {response_code}: {status_message}"
 
     async def _calculate_segments(
         self, task: DownloadTask, supports_ranges: bool

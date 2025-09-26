@@ -173,21 +173,22 @@ class CurlWorker:
             pycurl.USERAGENT, self.config.user_agent.encode("utf-8")
         )
 
-        # Follow redirects
+        # Follow redirects with enhanced configuration
         if self.config.follow_redirects:
             self.curl_handle.setopt(pycurl.FOLLOWLOCATION, 1)
             self.curl_handle.setopt(pycurl.MAXREDIRS, self.config.max_redirects)
+            # Automatically referer on redirects
+            self.curl_handle.setopt(pycurl.AUTOREFERER, 1)
+            # Keep POST method on 301/302 redirects (default behavior)
+            # pycurl handles this automatically
 
-        # SSL settings
-        if not self.config.verify_ssl:
-            self.curl_handle.setopt(pycurl.SSL_VERIFYPEER, 0)
-            self.curl_handle.setopt(pycurl.SSL_VERIFYHOST, 0)
+        # SSL/TLS settings
+        self._setup_ssl_options()
 
-        # Custom headers
-        if self.config.custom_headers:
-            headers = [f"{k}: {v}" for k, v in self.config.custom_headers.items()]
-            self.curl_handle.setopt(pycurl.HTTPHEADER, headers)
-
+        # Setup HTTP/HTTPS specific features
+        self._setup_headers()
+        self._setup_cookies()
+        
         # Authentication
         if self.config.auth.method.value != "none":
             self._setup_authentication()
@@ -215,6 +216,30 @@ class CurlWorker:
 
         logger.debug(f"Initialized curl handle for worker {self.worker_id}")
 
+    def _setup_headers(self) -> None:
+        """Setup custom headers for curl handle."""
+        headers = []
+        
+        # Add custom headers
+        if self.config.custom_headers:
+            headers.extend([f"{k}: {v}" for k, v in self.config.custom_headers.items()])
+        
+        # Add bearer token if using bearer authentication and not already in headers
+        if (self.config.auth.method.value == "bearer" and 
+            self.config.auth.token and 
+            not any(h.lower().startswith("authorization:") for h in headers)):
+            headers.append(f"Authorization: Bearer {self.config.auth.token}")
+        
+        if headers:
+            self.curl_handle.setopt(pycurl.HTTPHEADER, headers)
+
+    def _setup_cookies(self) -> None:
+        """Setup cookies for curl handle."""
+        if self.config.cookies:
+            # Convert cookies dict to cookie string format
+            cookie_string = "; ".join([f"{k}={v}" for k, v in self.config.cookies.items()])
+            self.curl_handle.setopt(pycurl.COOKIE, cookie_string.encode("utf-8"))
+
     def _setup_authentication(self) -> None:
         """Setup authentication for curl handle."""
         auth = self.config.auth
@@ -223,6 +248,9 @@ class CurlWorker:
             self.curl_handle.setopt(pycurl.HTTPAUTH, pycurl.HTTPAUTH_BASIC)
         elif auth.method.value == "digest":
             self.curl_handle.setopt(pycurl.HTTPAUTH, pycurl.HTTPAUTH_DIGEST)
+        elif auth.method.value == "bearer":
+            # Bearer token is handled in _setup_headers()
+            pass
         elif auth.method.value == "ntlm":
             self.curl_handle.setopt(pycurl.HTTPAUTH, pycurl.HTTPAUTH_NTLM)
         elif auth.method.value == "negotiate":
@@ -230,25 +258,25 @@ class CurlWorker:
         elif auth.method.value == "auto":
             self.curl_handle.setopt(pycurl.HTTPAUTH, pycurl.HTTPAUTH_ANY)
 
-        if auth.username and auth.password:
+        # Set username and password for non-bearer authentication
+        if auth.username and auth.password and auth.method.value != "bearer":
             self.curl_handle.setopt(pycurl.USERPWD, f"{auth.username}:{auth.password}")
-        elif auth.token:
-            # Bearer token authentication
-            headers = self.config.custom_headers.copy()
-            headers["Authorization"] = f"Bearer {auth.token}"
-            header_list = [f"{k}: {v}" for k, v in headers.items()]
-            self.curl_handle.setopt(pycurl.HTTPHEADER, header_list)
 
     def _setup_proxy(self) -> None:
         """Setup proxy configuration for curl handle."""
         proxy = self.config.proxy
 
-        if proxy.proxy_url:
-            self.curl_handle.setopt(pycurl.PROXY, proxy.proxy_url)
+        if not proxy.enabled or not proxy.host:
+            return
+
+        # Set proxy URL
+        proxy_url = proxy.proxy_url
+        self.curl_handle.setopt(pycurl.PROXY, proxy_url.encode("utf-8"))
 
         # Set proxy type
         proxy_type_map = {
             "http": pycurl.PROXYTYPE_HTTP,
+            "https": pycurl.PROXYTYPE_HTTP,  # HTTPS proxy uses HTTP CONNECT
             "socks4": pycurl.PROXYTYPE_SOCKS4,
             "socks4a": pycurl.PROXYTYPE_SOCKS4A,
             "socks5": pycurl.PROXYTYPE_SOCKS5,
@@ -259,6 +287,40 @@ class CurlWorker:
             self.curl_handle.setopt(
                 pycurl.PROXYTYPE, proxy_type_map[proxy.proxy_type.value]
             )
+
+        # Set proxy authentication if provided
+        if proxy.username and proxy.password:
+            self.curl_handle.setopt(pycurl.PROXYUSERPWD, f"{proxy.username}:{proxy.password}")
+
+    def _setup_ssl_options(self) -> None:
+        """Setup SSL/TLS options for curl handle."""
+        # Basic SSL verification
+        if self.config.verify_ssl:
+            self.curl_handle.setopt(pycurl.SSL_VERIFYPEER, 1)
+            self.curl_handle.setopt(pycurl.SSL_VERIFYHOST, 2)
+        else:
+            self.curl_handle.setopt(pycurl.SSL_VERIFYPEER, 0)
+            self.curl_handle.setopt(pycurl.SSL_VERIFYHOST, 0)
+
+        # Custom CA certificate bundle
+        if self.config.ca_cert_path and self.config.ca_cert_path.exists():
+            self.curl_handle.setopt(pycurl.CAINFO, str(self.config.ca_cert_path))
+
+        # Client certificate authentication
+        if self.config.client_cert_path and self.config.client_cert_path.exists():
+            self.curl_handle.setopt(pycurl.SSLCERT, str(self.config.client_cert_path))
+            
+        if self.config.client_key_path and self.config.client_key_path.exists():
+            self.curl_handle.setopt(pycurl.SSLKEY, str(self.config.client_key_path))
+
+        # SSL cipher list
+        if self.config.ssl_cipher_list:
+            self.curl_handle.setopt(pycurl.SSL_CIPHER_LIST, self.config.ssl_cipher_list.encode("utf-8"))
+
+        # Enable compression if configured
+        if self.config.enable_compression:
+            # Accept all supported encodings
+            self.curl_handle.setopt(pycurl.ACCEPT_ENCODING, b"")
 
     def _open_temp_file(self) -> None:
         """Open temporary file for writing segment data."""
@@ -415,6 +477,7 @@ class CurlWorker:
 
             # Check if download was successful
             response_code = self.curl_handle.getinfo(pycurl.RESPONSE_CODE)
+            effective_url = self.curl_handle.getinfo(pycurl.EFFECTIVE_URL)
 
             if response_code in (200, 206):  # OK or Partial Content
                 self.status = WorkerStatus.COMPLETED
@@ -428,12 +491,18 @@ class CurlWorker:
                     success=True,
                     downloaded_bytes=self.downloaded_bytes,
                     response_code=response_code,
+                    effective_url=effective_url.decode("utf-8") if effective_url else None,
                 )
             else:
-                error_msg = f"HTTP error {response_code}"
+                error_msg = self._get_http_error_message(response_code)
                 self.status = WorkerStatus.FAILED
                 self.error_message = error_msg
-                return self._create_result(success=False, error=error_msg)
+                return self._create_result(
+                    success=False, 
+                    error=error_msg,
+                    response_code=response_code,
+                    effective_url=effective_url.decode("utf-8") if effective_url else None,
+                )
 
         except pycurl.error as e:
             # Handle pycurl specific errors
@@ -507,6 +576,75 @@ class CurlWorker:
             result["error"] = self.error_message
 
         return result
+
+    def _get_http_error_message(self, response_code: int) -> str:
+        """
+        Get a descriptive error message for HTTP status codes.
+
+        Args:
+            response_code: HTTP response code
+
+        Returns:
+            Descriptive error message
+        """
+        http_status_messages = {
+            # 3xx Redirection
+            300: "Multiple Choices",
+            301: "Moved Permanently", 
+            302: "Found",
+            303: "See Other",
+            304: "Not Modified",
+            305: "Use Proxy",
+            307: "Temporary Redirect",
+            308: "Permanent Redirect",
+            
+            # 4xx Client Error
+            400: "Bad Request",
+            401: "Unauthorized - Authentication required",
+            402: "Payment Required",
+            403: "Forbidden - Access denied",
+            404: "Not Found - File does not exist",
+            405: "Method Not Allowed",
+            406: "Not Acceptable",
+            407: "Proxy Authentication Required",
+            408: "Request Timeout",
+            409: "Conflict",
+            410: "Gone - File no longer available",
+            411: "Length Required",
+            412: "Precondition Failed",
+            413: "Payload Too Large",
+            414: "URI Too Long",
+            415: "Unsupported Media Type",
+            416: "Range Not Satisfiable",
+            417: "Expectation Failed",
+            418: "I'm a teapot",
+            421: "Misdirected Request",
+            422: "Unprocessable Entity",
+            423: "Locked",
+            424: "Failed Dependency",
+            425: "Too Early",
+            426: "Upgrade Required",
+            428: "Precondition Required",
+            429: "Too Many Requests - Rate limited",
+            431: "Request Header Fields Too Large",
+            451: "Unavailable For Legal Reasons",
+            
+            # 5xx Server Error
+            500: "Internal Server Error",
+            501: "Not Implemented",
+            502: "Bad Gateway",
+            503: "Service Unavailable - Server temporarily overloaded",
+            504: "Gateway Timeout",
+            505: "HTTP Version Not Supported",
+            506: "Variant Also Negotiates",
+            507: "Insufficient Storage",
+            508: "Loop Detected",
+            510: "Not Extended",
+            511: "Network Authentication Required",
+        }
+
+        status_message = http_status_messages.get(response_code, "Unknown Error")
+        return f"HTTP {response_code}: {status_message}"
 
     def pause(self) -> None:
         """Pause the download."""
