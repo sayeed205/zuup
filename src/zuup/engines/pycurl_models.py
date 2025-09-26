@@ -2,15 +2,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from enum import Enum
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Union
-from urllib.parse import urlparse
+from typing import Any
 
-import pycurl
 from cuid import cuid
+import pycurl
 from pydantic import BaseModel, Field, field_validator, model_validator
-
 
 # ============================================================================
 # Segment and Progress Models
@@ -40,7 +39,7 @@ class DownloadSegment(BaseModel):
     status: SegmentStatus = SegmentStatus.PENDING
     downloaded_bytes: int = 0
     retry_count: int = 0
-    error_message: Optional[str] = None
+    error_message: str | None = None
 
     @field_validator("start_byte", "end_byte", "downloaded_bytes")
     @classmethod
@@ -59,7 +58,7 @@ class DownloadSegment(BaseModel):
         return v
 
     @model_validator(mode="after")
-    def validate_byte_range(self) -> "DownloadSegment":
+    def validate_byte_range(self) -> DownloadSegment:
         """Validate byte range consistency."""
         if self.start_byte > self.end_byte:
             raise ValueError("start_byte cannot be greater than end_byte")
@@ -103,7 +102,7 @@ class WorkerProgress(BaseModel):
     total_bytes: int = 0
     download_speed: float = 0.0  # bytes per second
     status: WorkerStatus = WorkerStatus.INITIALIZING
-    error: Optional[str] = None
+    error: str | None = None
 
     @field_validator("downloaded_bytes", "total_bytes")
     @classmethod
@@ -122,7 +121,7 @@ class WorkerProgress(BaseModel):
         return v
 
     @model_validator(mode="after")
-    def validate_progress_consistency(self) -> "WorkerProgress":
+    def validate_progress_consistency(self) -> WorkerProgress:
         """Validate progress consistency."""
         if self.total_bytes > 0 and self.downloaded_bytes > self.total_bytes:
             raise ValueError("Downloaded bytes cannot exceed total bytes")
@@ -157,12 +156,12 @@ class AuthConfig(BaseModel):
     """Authentication configuration for HTTP/FTP downloads."""
 
     method: AuthMethod = AuthMethod.NONE
-    username: Optional[str] = None
-    password: Optional[str] = None
-    token: Optional[str] = None  # For bearer token authentication
+    username: str | None = None
+    password: str | None = None
+    token: str | None = None  # For bearer token authentication
 
     @model_validator(mode="after")
-    def validate_auth_config(self) -> "AuthConfig":
+    def validate_auth_config(self) -> AuthConfig:
         """Validate authentication configuration consistency."""
         if self.method == AuthMethod.NONE:
             return self
@@ -193,14 +192,14 @@ class AuthConfig(BaseModel):
 class SshConfig(BaseModel):
     """SSH configuration for SFTP downloads."""
 
-    private_key_path: Optional[Path] = None
-    public_key_path: Optional[Path] = None
-    known_hosts_path: Optional[Path] = None
-    passphrase: Optional[str] = None
+    private_key_path: Path | None = None
+    public_key_path: Path | None = None
+    known_hosts_path: Path | None = None
+    passphrase: str | None = None
 
     @field_validator("private_key_path", "public_key_path", "known_hosts_path")
     @classmethod
-    def validate_file_paths(cls, v: Optional[Path]) -> Optional[Path]:
+    def validate_file_paths(cls, v: Path | None) -> Path | None:
         """Validate SSH file paths exist and are readable."""
         if v is None:
             return v
@@ -214,7 +213,7 @@ class SshConfig(BaseModel):
         return v
 
     @model_validator(mode="after")
-    def validate_ssh_config(self) -> "SshConfig":
+    def validate_ssh_config(self) -> SshConfig:
         """Validate SSH configuration consistency."""
         # If public key is provided, private key should also be provided
         if self.public_key_path and not self.private_key_path:
@@ -241,8 +240,8 @@ class ProxyConfig(BaseModel):
     proxy_type: ProxyType = ProxyType.HTTP
     host: str = ""
     port: int = 8080
-    username: Optional[str] = None
-    password: Optional[str] = None
+    username: str | None = None
+    password: str | None = None
 
     @field_validator("port")
     @classmethod
@@ -259,7 +258,7 @@ class ProxyConfig(BaseModel):
         return v.strip()
 
     @model_validator(mode="after")
-    def validate_proxy_config(self) -> "ProxyConfig":
+    def validate_proxy_config(self) -> ProxyConfig:
         """Validate proxy configuration consistency."""
         if self.enabled and not self.host:
             raise ValueError("Proxy host is required when proxy is enabled")
@@ -297,15 +296,15 @@ class HttpFtpConfig(BaseModel):
     user_agent: str = "Zuup-PyCurl/1.0"
     follow_redirects: bool = True
     max_redirects: int = 10
-    custom_headers: Dict[str, str] = Field(default_factory=dict)
-    cookies: Dict[str, str] = Field(default_factory=dict)
+    custom_headers: dict[str, str] = Field(default_factory=dict)
+    cookies: dict[str, str] = Field(default_factory=dict)
 
     # SSL/TLS settings
     verify_ssl: bool = True
-    ca_cert_path: Optional[Path] = None
-    client_cert_path: Optional[Path] = None
-    client_key_path: Optional[Path] = None
-    ssl_cipher_list: Optional[str] = None
+    ca_cert_path: Path | None = None
+    client_cert_path: Path | None = None
+    client_key_path: Path | None = None
+    ssl_cipher_list: str | None = None
 
     # Authentication
     auth: AuthConfig = Field(default_factory=AuthConfig)
@@ -425,7 +424,7 @@ class CurlError(BaseModel):
     curl_message: str
     category: ErrorCategory
     action: ErrorAction
-    context: Dict[str, Any] = Field(default_factory=dict)
+    context: dict[str, Any] = Field(default_factory=dict)
     timestamp: float = Field(default_factory=lambda: __import__("time").time())
 
     @field_validator("curl_code")
@@ -438,8 +437,8 @@ class CurlError(BaseModel):
 
     @classmethod
     def from_curl_code(
-        cls, curl_code: int, context: Optional[Dict[str, Any]] = None
-    ) -> "CurlError":
+        cls, curl_code: int, context: dict[str, Any] | None = None
+    ) -> CurlError:
         """Create a CurlError from a pycurl error code."""
         # Map curl error codes to categories and actions
         error_mapping = {
@@ -520,19 +519,19 @@ CurlProgressCallback = Callable[[int, int, int, int], int]
 CurlHeaderCallback = Callable[[bytes], int]
 
 # Type alias for curl options dictionary
-CurlOptions = Dict[int, Union[str, int, bool, Callable]]
+CurlOptions = dict[int, str | int | bool | Callable]
 
 # Type alias for segment results
-SegmentResult = Dict[str, Any]
+SegmentResult = dict[str, Any]
 
 # Type alias for merge results
-MergeResult = Dict[str, Any]
+MergeResult = dict[str, Any]
 
 # Type alias for finalize results
-FinalizeResult = Dict[str, Any]
+FinalizeResult = dict[str, Any]
 
 # Type alias for error context
-ErrorContext = Dict[str, Any]
+ErrorContext = dict[str, Any]
 
 
 # ============================================================================
@@ -545,7 +544,7 @@ class CompletedSegment(BaseModel):
 
     segment: DownloadSegment
     temp_file_path: Path
-    checksum: Optional[str] = None
+    checksum: str | None = None
 
     @field_validator("temp_file_path")
     @classmethod
@@ -563,7 +562,7 @@ class SegmentMergeInfo(BaseModel):
 
     total_segments: int
     merged_segments: int
-    current_segment: Optional[str] = None
+    current_segment: str | None = None
     bytes_merged: int = 0
     total_bytes: int = 0
 
@@ -576,7 +575,7 @@ class SegmentMergeInfo(BaseModel):
         return v
 
     @model_validator(mode="after")
-    def validate_merge_consistency(self) -> "SegmentMergeInfo":
+    def validate_merge_consistency(self) -> SegmentMergeInfo:
         """Validate merge information consistency."""
         if self.merged_segments > self.total_segments:
             raise ValueError("Merged segments cannot exceed total segments")
