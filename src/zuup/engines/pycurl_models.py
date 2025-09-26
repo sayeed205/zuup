@@ -446,8 +446,10 @@ class CurlError(BaseModel):
             pycurl.E_COULDNT_RESOLVE_HOST: (ErrorCategory.NETWORK, ErrorAction.RETRY),
             pycurl.E_COULDNT_CONNECT: (ErrorCategory.NETWORK, ErrorAction.RETRY),
             pycurl.E_OPERATION_TIMEDOUT: (ErrorCategory.TIMEOUT, ErrorAction.RETRY),
+            pycurl.E_OPERATION_TIMEOUTED: (ErrorCategory.TIMEOUT, ErrorAction.RETRY),  # Alternative spelling
             pycurl.E_RECV_ERROR: (ErrorCategory.NETWORK, ErrorAction.RETRY),
             pycurl.E_SEND_ERROR: (ErrorCategory.NETWORK, ErrorAction.RETRY),
+            pycurl.E_GOT_NOTHING: (ErrorCategory.NETWORK, ErrorAction.RETRY),
             # Protocol errors
             pycurl.E_HTTP_RETURNED_ERROR: (
                 ErrorCategory.PROTOCOL,
@@ -458,12 +460,17 @@ class CurlError(BaseModel):
                 ErrorAction.RETRY,
             ),
             pycurl.E_PARTIAL_FILE: (ErrorCategory.PROTOCOL, ErrorAction.RETRY),
+            pycurl.E_FTP_PARTIAL_FILE: (ErrorCategory.PROTOCOL, ErrorAction.RETRY),
             # Authentication errors
             pycurl.E_LOGIN_DENIED: (
                 ErrorCategory.AUTHENTICATION,
                 ErrorAction.FAIL_DOWNLOAD,
             ),
             pycurl.E_REMOTE_ACCESS_DENIED: (
+                ErrorCategory.AUTHENTICATION,
+                ErrorAction.FAIL_DOWNLOAD,
+            ),
+            pycurl.E_FTP_ACCESS_DENIED: (
                 ErrorCategory.AUTHENTICATION,
                 ErrorAction.FAIL_DOWNLOAD,
             ),
@@ -477,6 +484,7 @@ class CurlError(BaseModel):
                 ErrorAction.FAIL_DOWNLOAD,
             ),
             pycurl.E_SSL_CACERT: (ErrorCategory.PROTOCOL, ErrorAction.FAIL_DOWNLOAD),
+            pycurl.E_PEER_FAILED_VERIFICATION: (ErrorCategory.PROTOCOL, ErrorAction.FAIL_DOWNLOAD),
             # File system errors
             pycurl.E_WRITE_ERROR: (ErrorCategory.FILESYSTEM, ErrorAction.FAIL_DOWNLOAD),
             pycurl.E_FILE_COULDNT_READ_FILE: (
@@ -494,11 +502,82 @@ class CurlError(BaseModel):
             curl_code, (ErrorCategory.CURL, ErrorAction.RETRY)
         )
 
-        # Get curl error message
-        try:
-            curl_message = str(pycurl.error(curl_code))
-        except:
-            curl_message = f"Unknown curl error: {curl_code}"
+        # Get curl error message - map common error codes to descriptive messages
+        error_messages = {
+            pycurl.E_OK: "No error",
+            pycurl.E_UNSUPPORTED_PROTOCOL: "Unsupported protocol",
+            pycurl.E_FAILED_INIT: "Failed initialization",
+            pycurl.E_URL_MALFORMAT: "URL malformed",
+            pycurl.E_COULDNT_RESOLVE_PROXY: "Couldn't resolve proxy",
+            pycurl.E_COULDNT_RESOLVE_HOST: "Couldn't resolve host",
+            pycurl.E_COULDNT_CONNECT: "Couldn't connect to server",
+            pycurl.E_FTP_WEIRD_SERVER_REPLY: "FTP weird server reply",
+            pycurl.E_REMOTE_ACCESS_DENIED: "Remote access denied",
+            pycurl.E_HTTP_RETURNED_ERROR: "HTTP returned error",
+            pycurl.E_WRITE_ERROR: "Write error",
+            pycurl.E_MALFORMAT_USER: "Malformed user",
+            pycurl.E_FTP_COULDNT_STOR_FILE: "FTP couldn't store file",
+            pycurl.E_READ_ERROR: "Read error",
+            pycurl.E_OUT_OF_MEMORY: "Out of memory",
+            pycurl.E_OPERATION_TIMEDOUT: "Operation timed out",
+            pycurl.E_OPERATION_TIMEOUTED: "Operation timed out",
+            pycurl.E_FTP_COULDNT_SET_ASCII: "FTP couldn't set ASCII",
+            pycurl.E_FTP_PORT_FAILED: "FTP port failed",
+            pycurl.E_FTP_COULDNT_USE_REST: "FTP couldn't use REST",
+            pycurl.E_RANGE_ERROR: "Range error",
+            pycurl.E_HTTP_POST_ERROR: "HTTP POST error",
+            pycurl.E_SSL_CONNECT_ERROR: "SSL connect error",
+            pycurl.E_BAD_DOWNLOAD_RESUME: "Bad download resume",
+            pycurl.E_FILE_COULDNT_READ_FILE: "File couldn't read file",
+            pycurl.E_LDAP_CANNOT_BIND: "LDAP cannot bind",
+            pycurl.E_LDAP_SEARCH_FAILED: "LDAP search failed",
+            pycurl.E_FUNCTION_NOT_FOUND: "Function not found",
+            pycurl.E_ABORTED_BY_CALLBACK: "Aborted by callback",
+            pycurl.E_BAD_FUNCTION_ARGUMENT: "Bad function argument",
+            pycurl.E_INTERFACE_FAILED: "Interface failed",
+            pycurl.E_TOO_MANY_REDIRECTS: "Too many redirects",
+            pycurl.E_UNKNOWN_TELNET_OPTION: "Unknown telnet option",
+            pycurl.E_TELNET_OPTION_SYNTAX: "Telnet option syntax",
+            pycurl.E_PEER_FAILED_VERIFICATION: "Peer failed verification",
+            pycurl.E_GOT_NOTHING: "Got nothing",
+            pycurl.E_SSL_ENGINE_NOTFOUND: "SSL engine not found",
+            pycurl.E_SSL_ENGINE_SETFAILED: "SSL engine set failed",
+            pycurl.E_SEND_ERROR: "Send error",
+            pycurl.E_RECV_ERROR: "Receive error",
+            pycurl.E_SSL_CERTPROBLEM: "SSL certificate problem",
+            pycurl.E_SSL_CIPHER: "SSL cipher",
+            pycurl.E_SSL_CACERT: "SSL CA certificate",
+            pycurl.E_BAD_CONTENT_ENCODING: "Bad content encoding",
+            pycurl.E_LDAP_INVALID_URL: "LDAP invalid URL",
+            pycurl.E_FILESIZE_EXCEEDED: "File size exceeded",
+            pycurl.E_USE_SSL_FAILED: "Use SSL failed",
+            pycurl.E_SEND_FAIL_REWIND: "Send fail rewind",
+            pycurl.E_SSL_ENGINE_INITFAILED: "SSL engine init failed",
+            pycurl.E_LOGIN_DENIED: "Login denied",
+            pycurl.E_TFTP_NOTFOUND: "TFTP not found",
+            pycurl.E_TFTP_PERM: "TFTP permission",
+            pycurl.E_REMOTE_DISK_FULL: "Remote disk full",
+            pycurl.E_TFTP_ILLEGAL: "TFTP illegal",
+            pycurl.E_TFTP_UNKNOWNID: "TFTP unknown ID",
+            pycurl.E_REMOTE_FILE_EXISTS: "Remote file exists",
+            pycurl.E_TFTP_NOSUCHUSER: "TFTP no such user",
+            pycurl.E_CONV_FAILED: "Conversion failed",
+            pycurl.E_CONV_REQD: "Conversion required",
+            pycurl.E_SSL_CACERT_BADFILE: "SSL CA certificate bad file",
+            pycurl.E_REMOTE_FILE_NOT_FOUND: "Remote file not found",
+            pycurl.E_SSH: "SSH error",
+            pycurl.E_SSL_SHUTDOWN_FAILED: "SSL shutdown failed",
+            pycurl.E_AGAIN: "Again",
+            pycurl.E_SSL_CRL_BADFILE: "SSL CRL bad file",
+            pycurl.E_SSL_ISSUER_ERROR: "SSL issuer error",
+            pycurl.E_FTP_PRET_FAILED: "FTP PRET failed",
+            pycurl.E_RTSP_CSEQ_ERROR: "RTSP CSEQ error",
+            pycurl.E_RTSP_SESSION_ERROR: "RTSP session error",
+            pycurl.E_FTP_BAD_FILE_LIST: "FTP bad file list",
+            pycurl.E_CHUNK_FAILED: "Chunk failed",
+        }
+        
+        curl_message = error_messages.get(curl_code, f"Curl error {curl_code}")
 
         return cls(
             curl_code=curl_code,
