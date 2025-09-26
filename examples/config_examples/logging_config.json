@@ -1,0 +1,56 @@
+{
+  "logging": {
+    "level": "INFO",
+    "console": {
+      "enabled": true,
+      "rich_console": true,
+      "level": "INFO"
+    },
+    "file": {
+      "enabled": true,
+      "path": "logs/zuup.log",
+      "level": "DEBUG",
+      "structured": false,
+      "max_size_mb": 10,
+      "backup_count": 5
+    },
+    "error_file": {
+      "enabled": true,
+      "path": "logs/zuup_errors.log",
+      "level": "ERROR",
+      "structured": true
+    },
+    "debug": {
+      "enabled": false,
+      "path": "logs/debug/",
+      "system_info": true
+    }
+  },
+  "monitoring": {
+    "enabled": true,
+    "metrics": {
+      "history_size": 1000,
+      "export_interval_minutes": 60,
+      "export_path": "logs/metrics/"
+    },
+    "performance": {
+      "enabled": true,
+      "interval_seconds": 5.0,
+      "cpu_warning_threshold": 80.0,
+      "memory_warning_threshold": 80.0,
+      "stall_detection_seconds": 60
+    },
+    "error_reporting": {
+      "enabled": true,
+      "output_dir": "logs/errors/",
+      "max_recent_errors": 100
+    }
+  },
+  "debugging": {
+    "enabled": false,
+    "session_auto_save": true,
+    "function_tracing": false,
+    "profiling": true,
+    "output_dir": "logs/debug/"
+  }
+}

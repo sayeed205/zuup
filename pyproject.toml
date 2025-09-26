@@ -30,28 +30,24 @@ dependencies = [
     "libtorrent>=2.0.11",
     "pycurl>=7.45.7",
     "yt-dlp>=2025.9.23",
-    "paramiko>=3.0.0",  # SFTP support
-
+    "paramiko>=3.0.0", # SFTP support
     # Data models and validation
     "pydantic>=2.0.0",
-    "cuid>=0.4.0",  # Unique identifiers
-
+    "cuid>=0.4.0", # Unique identifiers
     # GUI framework
     "PySide6>=6.5.0",
-
     # API server
     "fastapi>=0.100.0",
     "uvicorn>=0.20.0",
-
     # Database and storage
     "sqlalchemy>=2.0.0",
     "aiosqlite>=0.19.0",
-
     # Utilities
-    "click>=8.0.0",  # CLI framework
-    "rich>=13.0.0",  # Rich console output
-    "httpx>=0.24.0",  # HTTP client
-    "cryptography>=41.0.0",  # Secure storage
+    "click>=8.0.0", # CLI framework
+    "rich>=13.0.0", # Rich console output
+    "httpx>=0.24.0", # HTTP client
+    "cryptography>=41.0.0", # Secure storage
+    "psutil>=5.9.0", # System monitoring
 ]
 
 [project.optional-dependencies]
