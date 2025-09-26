@@ -1,0 +1,45 @@
+{
+  "max_concurrent_downloads": 10,
+  "default_download_path": "/var/lib/zuup/downloads",
+  "temp_directory": "/tmp/zuup",
+  "max_connections_per_download": 32,
+  "user_agent": "Zuup/0.1.0 (Production Server)",
+  "proxy_settings": {
+    "enabled": false,
+    "http_proxy": null,
+    "https_proxy": null,
+    "socks_proxy": null,
+    "username": null,
+    "password": null,
+    "bypass_list": ["localhost", "127.0.0.1", "*.internal"]
+  },
+  "logging_level": "WARNING",
+  "server_host": "0.0.0.0",
+  "server_port": 8080,
+  "theme": "dark",
+  "auto_start_downloads": true,
+  "show_notifications": false,
+  "retry_attempts": 5,
+  "timeout": 60,
+  "bandwidth_limit": {
+    "enabled": true,
+    "download_speed_limit": 104857600,
+    "upload_speed_limit": 10485760
+  },
+  "security": {
+    "verify_ssl": true,
+    "allow_insecure_connections": false,
+    "certificate_path": "/etc/ssl/certs/zuup.pem"
+  },
+  "torrent_settings": {
+    "enable_dht": true,
+    "enable_lsd": true,
+    "enable_upnp": true,
+    "enable_natpmp": true,
+    "listen_port_min": 6881,
+    "listen_port_max": 6891,
+    "max_upload_slots": 8,
+    "seed_ratio_limit": 3.0,
+    "seed_time_limit": 259200
+  }
+}
