@@ -316,13 +316,15 @@ class HttpFtpEngine(BaseDownloadEngine):
         """Setup cookies for curl handle."""
         if self.config.cookies:
             # Convert cookies dict to cookie string format
-            cookie_string = "; ".join([f"{k}={v}" for k, v in self.config.cookies.items()])
+            cookie_string = "; ".join(
+                [f"{k}={v}" for k, v in self.config.cookies.items()]
+            )
             curl_handle.setopt(pycurl.COOKIE, cookie_string.encode("utf-8"))
 
     def _setup_curl_proxy(self, curl_handle: pycurl.Curl) -> None:
         """Setup proxy configuration for curl handle."""
         proxy = self.config.proxy
-        
+
         if not proxy.enabled or not proxy.host:
             return
 
@@ -345,22 +347,26 @@ class HttpFtpEngine(BaseDownloadEngine):
 
         # Set proxy authentication if provided
         if proxy.username and proxy.password:
-            curl_handle.setopt(pycurl.PROXYUSERPWD, f"{proxy.username}:{proxy.password}")
+            curl_handle.setopt(
+                pycurl.PROXYUSERPWD, f"{proxy.username}:{proxy.password}"
+            )
 
     def _setup_curl_headers(self, curl_handle: pycurl.Curl) -> None:
         """Setup custom headers for curl handle."""
         headers = []
-        
+
         # Add custom headers
         if self.config.custom_headers:
             headers.extend([f"{k}: {v}" for k, v in self.config.custom_headers.items()])
-        
+
         # Add bearer token if using bearer authentication
-        if (self.config.auth.method.value == "bearer" and 
-            self.config.auth.token and 
-            "Authorization" not in self.config.custom_headers):
+        if (
+            self.config.auth.method.value == "bearer"
+            and self.config.auth.token
+            and "Authorization" not in self.config.custom_headers
+        ):
             headers.append(f"Authorization: Bearer {self.config.auth.token}")
-        
+
         if headers:
             curl_handle.setopt(pycurl.HTTPHEADER, headers)
 
@@ -381,13 +387,15 @@ class HttpFtpEngine(BaseDownloadEngine):
         # Client certificate authentication
         if self.config.client_cert_path and self.config.client_cert_path.exists():
             curl_handle.setopt(pycurl.SSLCERT, str(self.config.client_cert_path))
-            
+
         if self.config.client_key_path and self.config.client_key_path.exists():
             curl_handle.setopt(pycurl.SSLKEY, str(self.config.client_key_path))
 
         # SSL cipher list
         if self.config.ssl_cipher_list:
-            curl_handle.setopt(pycurl.SSL_CIPHER_LIST, self.config.ssl_cipher_list.encode("utf-8"))
+            curl_handle.setopt(
+                pycurl.SSL_CIPHER_LIST, self.config.ssl_cipher_list.encode("utf-8")
+            )
 
         # Enable compression if configured
         if self.config.enable_compression:
@@ -432,14 +440,13 @@ class HttpFtpEngine(BaseDownloadEngine):
         http_status_messages = {
             # 3xx Redirection
             300: "Multiple Choices",
-            301: "Moved Permanently", 
+            301: "Moved Permanently",
             302: "Found",
             303: "See Other",
             304: "Not Modified",
             305: "Use Proxy",
             307: "Temporary Redirect",
             308: "Permanent Redirect",
-            
             # 4xx Client Error
             400: "Bad Request",
             401: "Unauthorized - Authentication required",
@@ -470,7 +477,6 @@ class HttpFtpEngine(BaseDownloadEngine):
             429: "Too Many Requests - Rate limited",
             431: "Request Header Fields Too Large",
             451: "Unavailable For Legal Reasons",
-            
             # 5xx Server Error
             500: "Internal Server Error",
             501: "Not Implemented",
