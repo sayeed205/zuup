@@ -446,7 +446,10 @@ class CurlError(BaseModel):
             pycurl.E_COULDNT_RESOLVE_HOST: (ErrorCategory.NETWORK, ErrorAction.RETRY),
             pycurl.E_COULDNT_CONNECT: (ErrorCategory.NETWORK, ErrorAction.RETRY),
             pycurl.E_OPERATION_TIMEDOUT: (ErrorCategory.TIMEOUT, ErrorAction.RETRY),
-            pycurl.E_OPERATION_TIMEOUTED: (ErrorCategory.TIMEOUT, ErrorAction.RETRY),  # Alternative spelling
+            pycurl.E_OPERATION_TIMEOUTED: (
+                ErrorCategory.TIMEOUT,
+                ErrorAction.RETRY,
+            ),  # Alternative spelling
             pycurl.E_RECV_ERROR: (ErrorCategory.NETWORK, ErrorAction.RETRY),
             pycurl.E_SEND_ERROR: (ErrorCategory.NETWORK, ErrorAction.RETRY),
             pycurl.E_GOT_NOTHING: (ErrorCategory.NETWORK, ErrorAction.RETRY),
@@ -484,7 +487,10 @@ class CurlError(BaseModel):
                 ErrorAction.FAIL_DOWNLOAD,
             ),
             pycurl.E_SSL_CACERT: (ErrorCategory.PROTOCOL, ErrorAction.FAIL_DOWNLOAD),
-            pycurl.E_PEER_FAILED_VERIFICATION: (ErrorCategory.PROTOCOL, ErrorAction.FAIL_DOWNLOAD),
+            pycurl.E_PEER_FAILED_VERIFICATION: (
+                ErrorCategory.PROTOCOL,
+                ErrorAction.FAIL_DOWNLOAD,
+            ),
             # File system errors
             pycurl.E_WRITE_ERROR: (ErrorCategory.FILESYSTEM, ErrorAction.FAIL_DOWNLOAD),
             pycurl.E_FILE_COULDNT_READ_FILE: (
@@ -576,7 +582,7 @@ class CurlError(BaseModel):
             pycurl.E_FTP_BAD_FILE_LIST: "FTP bad file list",
             pycurl.E_CHUNK_FAILED: "Chunk failed",
         }
-        
+
         curl_message = error_messages.get(curl_code, f"Curl error {curl_code}")
 
         return cls(
