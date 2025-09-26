@@ -58,7 +58,7 @@ dev = [
     "types-requests",
 
     # Code quality
-    "ruff>=0.1.0",
+    "ruff>=0.13.2",
 
     # Documentation
     "mkdocs>=1.5.0",
