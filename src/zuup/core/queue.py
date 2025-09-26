@@ -58,7 +58,9 @@ class QueuedTask:
         """Compare tasks for priority queue ordering."""
         if self.priority.value != other.priority.value:
             return self.priority.value > other.priority.value  # Higher priority first
-        return self.queued_at < other.queued_at  # Earlier queued first for same priority
+        return (
+            self.queued_at < other.queued_at
+        )  # Earlier queued first for same priority
 
 
 class DownloadQueue:
@@ -330,11 +332,11 @@ class DownloadQueue:
             True if task is tracked, False otherwise
         """
         return (
-            any(qt.task.id == task_id for qt in self._queue) or
-            task_id in self._active_tasks or
-            task_id in self._paused_tasks or
-            task_id in self._completed_tasks or
-            task_id in self._failed_tasks
+            any(qt.task.id == task_id for qt in self._queue)
+            or task_id in self._active_tasks
+            or task_id in self._paused_tasks
+            or task_id in self._completed_tasks
+            or task_id in self._failed_tasks
         )
 
     async def start_processing(self) -> None:

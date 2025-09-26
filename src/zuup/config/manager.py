@@ -14,13 +14,15 @@ from .settings import GlobalConfig, TaskConfig
 
 logger = logging.getLogger(__name__)
 
-T = TypeVar('T', bound=BaseModel)
+T = TypeVar("T", bound=BaseModel)
 
 
 class ValidationResult(Generic[T]):
     """Result of configuration validation."""
 
-    def __init__(self, is_valid: bool, config: T | None = None, errors: list[str] | None = None):
+    def __init__(
+        self, is_valid: bool, config: T | None = None, errors: list[str] | None = None
+    ):
         self.is_valid = is_valid
         self.config = config
         self.errors = errors or []
@@ -42,7 +44,7 @@ class SecureStorage:
 
         if self.key_file.exists():
             try:
-                with self.key_file.open('rb') as f:
+                with self.key_file.open("rb") as f:
                     self._key = f.read()
                 logger.debug("Loaded existing encryption key")
             except Exception as e:
@@ -55,7 +57,7 @@ class SecureStorage:
             try:
                 # Ensure only owner can read the key file
                 self.key_file.touch(mode=0o600)
-                with self.key_file.open('wb') as f:
+                with self.key_file.open("wb") as f:
                     f.write(self._key)
                 logger.info("Generated new encryption key")
             except Exception as e:
@@ -76,7 +78,7 @@ class SecureStorage:
 
             # Ensure only owner can read the credentials file
             self.credentials_file.touch(mode=0o600)
-            with self.credentials_file.open('wb') as f:
+            with self.credentials_file.open("wb") as f:
                 f.write(encrypted_data)
 
             logger.debug("Stored encrypted credentials")
@@ -93,7 +95,7 @@ class SecureStorage:
             key = self._get_or_create_key()
             fernet = Fernet(key)
 
-            with self.credentials_file.open('rb') as f:
+            with self.credentials_file.open("rb") as f:
                 encrypted_data = f.read()
 
             # Decrypt and deserialize
@@ -168,7 +170,7 @@ class ConfigManager:
 
             if env_value is not None:
                 # Handle nested config paths (e.g., "proxy_settings.enabled")
-                keys = config_path.split('.')
+                keys = config_path.split(".")
                 current = config_dict
 
                 # Navigate to parent of target key
@@ -183,8 +185,15 @@ class ConfigManager:
                     # Convert string values to appropriate types
                     if env_suffix.endswith(("_PORT", "_DOWNLOADS", "_CONNECTIONS")):
                         current[final_key] = int(env_value)
-                    elif env_suffix.endswith(("_DOWNLOADS", "_NOTIFICATIONS", "_ENABLED")):
-                        current[final_key] = env_value.lower() in ("true", "1", "yes", "on")
+                    elif env_suffix.endswith(
+                        ("_DOWNLOADS", "_NOTIFICATIONS", "_ENABLED")
+                    ):
+                        current[final_key] = env_value.lower() in (
+                            "true",
+                            "1",
+                            "yes",
+                            "on",
+                        )
                     elif env_suffix.endswith(("_PATH", "_DIRECTORY")):
                         current[final_key] = Path(env_value)
                     else:
@@ -192,7 +201,9 @@ class ConfigManager:
 
                     logger.debug(f"Applied environment override: {env_var}={env_value}")
                 except (ValueError, TypeError) as e:
-                    logger.warning(f"Invalid environment variable {env_var}={env_value}: {e}")
+                    logger.warning(
+                        f"Invalid environment variable {env_var}={env_value}: {e}"
+                    )
 
         return config_dict
 
@@ -202,7 +213,7 @@ class ConfigManager:
             return None
 
         try:
-            with file_path.open(encoding='utf-8') as f:
+            with file_path.open(encoding="utf-8") as f:
                 config_dict = json.load(f)
 
             # Apply environment variable overrides
@@ -217,7 +228,9 @@ class ConfigManager:
             logger.error(f"Failed to load configuration from {file_path}: {e}")
             return None
         except Exception as e:
-            logger.error(f"Unexpected error loading configuration from {file_path}: {e}")
+            logger.error(
+                f"Unexpected error loading configuration from {file_path}: {e}"
+            )
             return None
 
     def _save_config_file(self, file_path: Path, config: BaseModel) -> bool:
@@ -227,9 +240,9 @@ class ConfigManager:
             file_path.parent.mkdir(parents=True, exist_ok=True)
 
             # Convert to dict and save
-            config_dict = config.model_dump(mode='json')
+            config_dict = config.model_dump(mode="json")
 
-            with file_path.open('w', encoding='utf-8') as f:
+            with file_path.open("w", encoding="utf-8") as f:
                 json.dump(config_dict, f, indent=2, ensure_ascii=False)
 
             logger.debug(f"Saved configuration to {file_path}")
@@ -248,7 +261,9 @@ class ConfigManager:
         """
         if self._global_config is None:
             # Try to load from file
-            self._global_config = self._load_config_file(self.global_config_file, GlobalConfig)
+            self._global_config = self._load_config_file(
+                self.global_config_file, GlobalConfig
+            )
 
             if self._global_config is None:
                 # Use default configuration
@@ -349,7 +364,10 @@ class ConfigManager:
             validated_config = config.model_validate(config.model_dump())
             return ValidationResult(is_valid=True, config=validated_config)
         except ValidationError as e:
-            errors = [f"{'.'.join(map(str, error['loc']))}: {error['msg']}" for error in e.errors()]
+            errors = [
+                f"{'.'.join(map(str, error['loc']))}: {error['msg']}"
+                for error in e.errors()
+            ]
             return ValidationResult(is_valid=False, errors=errors)
         except Exception as e:
             return ValidationResult(is_valid=False, errors=[str(e)])
@@ -431,14 +449,14 @@ class ConfigManager:
         """
         try:
             export_data = {
-                "global_config": self.get_global_config().model_dump(mode='json'),
+                "global_config": self.get_global_config().model_dump(mode="json"),
                 "task_configs": {
-                    task_id: config.model_dump(mode='json')
+                    task_id: config.model_dump(mode="json")
                     for task_id, config in self._task_configs.items()
-                }
+                },
             }
 
-            with export_path.open('w', encoding='utf-8') as f:
+            with export_path.open("w", encoding="utf-8") as f:
                 json.dump(export_data, f, indent=2, ensure_ascii=False)
 
             logger.info(f"Exported configuration to {export_path}")
@@ -459,12 +477,14 @@ class ConfigManager:
             True if import was successful, False otherwise
         """
         try:
-            with import_path.open(encoding='utf-8') as f:
+            with import_path.open(encoding="utf-8") as f:
                 import_data = json.load(f)
 
             # Import global config
             if "global_config" in import_data:
-                global_config = GlobalConfig.model_validate(import_data["global_config"])
+                global_config = GlobalConfig.model_validate(
+                    import_data["global_config"]
+                )
                 self.update_global_config(global_config)
 
             # Import task configs

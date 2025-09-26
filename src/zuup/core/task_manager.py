@@ -68,7 +68,9 @@ class TaskManager:
         self._tasks: dict[str, DownloadTask] = {}
         self._task_engines: dict[str, DownloadEngine] = {}
         self._task_processors: dict[str, asyncio.Task[None]] = {}
-        self._progress_callbacks: dict[str, list[Callable[[str, ProgressInfo], None]]] = {}
+        self._progress_callbacks: dict[
+            str, list[Callable[[str, ProgressInfo], None]]
+        ] = {}
 
         # State management
         self._running = False
@@ -86,7 +88,11 @@ class TaskManager:
 
                 # Re-queue incomplete tasks
                 if task.status in (TaskStatus.PENDING, TaskStatus.PAUSED):
-                    priority = QueuePriority.HIGH if task.status == TaskStatus.PAUSED else QueuePriority.NORMAL
+                    priority = (
+                        QueuePriority.HIGH
+                        if task.status == TaskStatus.PAUSED
+                        else QueuePriority.NORMAL
+                    )
                     await self.queue.add_task(task, priority)
 
             logger.info(f"Loaded {len(existing_tasks)} existing tasks from database")
@@ -135,6 +141,7 @@ class TaskManager:
 
             # Convert string to EngineType enum
             from ..storage.models import EngineType
+
             try:
                 engine_type = EngineType(engine_type_str)
             except ValueError:
@@ -162,7 +169,9 @@ class TaskManager:
             # Validate task data
             validation_result = validate_download_task_data(task.model_dump())
             if not validation_result.is_valid:
-                raise TaskValidationError(f"Task validation failed: {validation_result.errors}")
+                raise TaskValidationError(
+                    f"Task validation failed: {validation_result.errors}"
+                )
 
             # Store task
             self._tasks[task.id] = task
@@ -202,14 +211,20 @@ class TaskManager:
                 return
 
             if task.status in (TaskStatus.COMPLETED, TaskStatus.CANCELLED):
-                raise TaskManagerError(f"Cannot start task {task_id}: status is {task.status.value}")
+                raise TaskManagerError(
+                    f"Cannot start task {task_id}: status is {task.status.value}"
+                )
 
             # Update task status
             task.status = TaskStatus.PENDING
             await self._update_task(task)
 
             # Add to queue
-            priority = QueuePriority.HIGH if task.status == TaskStatus.PAUSED else QueuePriority.NORMAL
+            priority = (
+                QueuePriority.HIGH
+                if task.status == TaskStatus.PAUSED
+                else QueuePriority.NORMAL
+            )
             await self.queue.add_task(task, priority)
 
             logger.info(f"Started task {task_id}")
@@ -401,7 +416,11 @@ class TaskManager:
             task = self._tasks[task_id]
 
             # Cancel task if it's active
-            if task.status in (TaskStatus.DOWNLOADING, TaskStatus.PENDING, TaskStatus.PAUSED):
+            if task.status in (
+                TaskStatus.DOWNLOADING,
+                TaskStatus.PENDING,
+                TaskStatus.PAUSED,
+            ):
                 await self.cancel_task(task_id)
 
             # Remove from database
@@ -485,9 +504,7 @@ class TaskManager:
 
                 # Start processing the task
                 task_id = queued_task.task.id
-                processor = asyncio.create_task(
-                    self._process_single_task(queued_task)
-                )
+                processor = asyncio.create_task(self._process_single_task(queued_task))
                 self._task_processors[task_id] = processor
 
                 logger.debug(f"Started processor for task {task_id}")
@@ -566,7 +583,9 @@ class TaskManager:
         self._tasks[task.id] = task
         await self.database.save_task(task)
 
-    async def _call_progress_callbacks(self, task_id: str, progress: ProgressInfo) -> None:
+    async def _call_progress_callbacks(
+        self, task_id: str, progress: ProgressInfo
+    ) -> None:
         """
         Call all progress callbacks for a task.
 

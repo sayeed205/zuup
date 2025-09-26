@@ -158,18 +158,13 @@ class BaseDownloadEngine(ABC):
 
         if not self.supports_protocol(task.url):
             raise ValidationError(
-                f"Engine {self.name} does not support URL: {task.url}",
-                task.id
+                f"Engine {self.name} does not support URL: {task.url}", task.id
             )
 
         if not task.destination:
             raise ValidationError("Task destination cannot be empty", task.id)
 
-    def _update_progress(
-        self,
-        task_id: str,
-        progress: ProgressInfo
-    ) -> None:
+    def _update_progress(self, task_id: str, progress: ProgressInfo) -> None:
         """
         Update progress information for a task.
 
@@ -178,14 +173,16 @@ class BaseDownloadEngine(ABC):
             progress: New progress information
         """
         self._task_progress[task_id] = progress
-        logger.debug(f"Updated progress for task {task_id}: {progress.downloaded_bytes} bytes")
+        logger.debug(
+            f"Updated progress for task {task_id}: {progress.downloaded_bytes} bytes"
+        )
 
     def _calculate_eta(
         self,
         task_id: str,
         downloaded_bytes: int,
         total_bytes: int | None,
-        current_speed: float
+        current_speed: float,
     ) -> timedelta | None:
         """
         Calculate estimated time of arrival for a download.
@@ -209,11 +206,7 @@ class BaseDownloadEngine(ABC):
         eta_seconds = remaining_bytes / current_speed
         return timedelta(seconds=eta_seconds)
 
-    def _calculate_average_speed(
-        self,
-        task_id: str,
-        downloaded_bytes: int
-    ) -> float:
+    def _calculate_average_speed(self, task_id: str, downloaded_bytes: int) -> float:
         """
         Calculate average download speed for a task.
 
@@ -277,8 +270,7 @@ class BaseDownloadEngine(ABC):
             List of active task IDs
         """
         return [
-            task_id for task_id, task in self._active_tasks.items()
-            if not task.done()
+            task_id for task_id, task in self._active_tasks.items() if not task.done()
         ]
 
     def get_engine_stats(self) -> dict[str, int | float]:
@@ -293,8 +285,7 @@ class BaseDownloadEngine(ABC):
 
         # Calculate total downloaded bytes across all tasks
         total_downloaded = sum(
-            progress.downloaded_bytes
-            for progress in self._task_progress.values()
+            progress.downloaded_bytes for progress in self._task_progress.values()
         )
 
         # Calculate average speed across active tasks

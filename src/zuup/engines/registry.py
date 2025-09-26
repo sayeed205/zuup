@@ -218,7 +218,8 @@ class EngineRegistry:
             stats[name] = {
                 "supported_protocols": len(supported_protocols.get(name, [])),
                 "cached_mappings": sum(
-                    1 for engine_name in self._protocol_mapping.values()
+                    1
+                    for engine_name in self._protocol_mapping.values()
                     if engine_name == name
                 ),
             }

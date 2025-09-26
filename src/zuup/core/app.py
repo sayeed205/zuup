@@ -80,7 +80,7 @@ class Application:
     def start_gui(self) -> None:
         """
         Start the application in GUI mode with embedded server.
-        
+
         Implements Requirement 3.1: GUI mode with embedded server
         """
         logger.info("Starting GUI mode with embedded server")
@@ -118,7 +118,9 @@ class Application:
                 )
 
                 self._server_task = asyncio.create_task(self.api_server.start())
-                logger.info(f"Embedded server started on port {global_config.server_port}")
+                logger.info(
+                    f"Embedded server started on port {global_config.server_port}"
+                )
 
                 # Show main window
                 self.main_window.show()
@@ -157,9 +159,9 @@ class Application:
     def start_server(self, host: str = "127.0.0.1", port: int = 8080) -> None:
         """
         Start the application in headless server mode.
-        
+
         Implements Requirement 3.2: Headless server mode for remote access
-        
+
         Args:
             host: Server host address
             port: Server port number
@@ -206,11 +208,11 @@ class Application:
     def start_combined(self, host: str = "127.0.0.1", port: int = 8080) -> None:
         """
         Start the application with both GUI and server.
-        
+
         Implements Requirement 3.1: GUI mode with embedded server
-        
+
         Args:
-            host: Server host address  
+            host: Server host address
             port: Server port number
         """
         logger.info(f"Starting combined mode with GUI and server on {host}:{port}")
@@ -287,9 +289,9 @@ class Application:
     def _configure_logging_for_mode(self, mode: str) -> None:
         """
         Configure logging based on deployment mode.
-        
+
         Implements Requirement 3.3: Configure appropriate logging and monitoring
-        
+
         Args:
             mode: Deployment mode (gui, server, combined)
         """
@@ -318,15 +320,16 @@ class Application:
     def _setup_signal_handlers(self) -> None:
         """Setup signal handlers for graceful shutdown."""
         try:
+
             def signal_handler(signum: int, frame) -> None:
                 logger.info(f"Received signal {signum}, initiating shutdown")
                 if self._running:
                     asyncio.create_task(self._initiate_shutdown())
 
             # Setup signal handlers for Unix systems (only works in main thread)
-            if hasattr(signal, 'SIGTERM'):
+            if hasattr(signal, "SIGTERM"):
                 signal.signal(signal.SIGTERM, signal_handler)
-            if hasattr(signal, 'SIGINT'):
+            if hasattr(signal, "SIGINT"):
                 signal.signal(signal.SIGINT, signal_handler)
 
         except ValueError as e:
@@ -386,7 +389,7 @@ class Application:
     def get_status(self) -> dict[str, str | bool | dict]:
         """
         Get application status information.
-        
+
         Returns:
             Dictionary with application status
         """
@@ -397,7 +400,7 @@ class Application:
                 "task_manager": self.task_manager is not None,
                 "api_server": self.api_server is not None,
                 "gui": self.main_window is not None,
-            }
+            },
         }
 
         # Add task manager stats if available

@@ -60,7 +60,7 @@ def start(
 ) -> None:
     """
     Start the Zuup download manager application.
-    
+
     Deployment modes:
     - Default: GUI with embedded server (combined mode)
     - --gui: GUI only with embedded server on localhost
@@ -77,7 +77,9 @@ def start(
         server_port = port or global_config.server_port
 
         if server_only:
-            console.print(f"[green]Starting headless server on {server_host}:{server_port}[/green]")
+            console.print(
+                f"[green]Starting headless server on {server_host}:{server_port}[/green]"
+            )
             console.print("[dim]Use Ctrl+C to stop the server[/dim]")
             app.start_server(host=server_host, port=server_port)
         elif gui:
@@ -156,10 +158,12 @@ def status(
 
             if response.status_code == 200:
                 data = response.json()
-                console.print(f"[green]✓[/green] Server running on {host}:{server_port}")
+                console.print(
+                    f"[green]✓[/green] Server running on {host}:{server_port}"
+                )
                 console.print(f"Status: {data.get('status', 'unknown')}")
 
-                components = data.get('components', {})
+                components = data.get("components", {})
                 for component, status in components.items():
                     status_icon = "[green]✓[/green]" if status else "[red]✗[/red]"
                     console.print(f"  {status_icon} {component}")
@@ -168,7 +172,9 @@ def status(
 
     except httpx.ConnectError:
         console.print(f"[red]✗[/red] Cannot connect to server on {host}:{server_port}")
-        console.print("[dim]Make sure the application is running with --server-only or combined mode[/dim]")
+        console.print(
+            "[dim]Make sure the application is running with --server-only or combined mode[/dim]"
+        )
     except Exception as e:
         console.print(f"[red]Error checking status: {e}[/red]")
         sys.exit(1)

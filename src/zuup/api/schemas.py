@@ -1,6 +1,5 @@
 """API response schemas."""
 
-
 from pydantic import BaseModel
 
 from ..storage.models import EngineType, TaskStatus

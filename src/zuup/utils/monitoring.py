@@ -68,9 +68,11 @@ class DownloadMetrics:
 
     def eta(self) -> timedelta | None:
         """Estimate time to completion."""
-        if (self.total_bytes and
-            self.current_download_speed > 0 and
-            self.downloaded_bytes < self.total_bytes):
+        if (
+            self.total_bytes
+            and self.current_download_speed > 0
+            and self.downloaded_bytes < self.total_bytes
+        ):
             remaining_bytes = self.total_bytes - self.downloaded_bytes
             seconds_remaining = remaining_bytes / self.current_download_speed
             return timedelta(seconds=seconds_remaining)
@@ -79,33 +81,33 @@ class DownloadMetrics:
     def to_dict(self) -> dict[str, Any]:
         """Convert metrics to dictionary for serialization."""
         return {
-            'task_id': self.task_id,
-            'engine_type': self.engine_type.value,
-            'url': self.url,
-            'start_time': self.start_time.isoformat(),
-            'end_time': self.end_time.isoformat() if self.end_time else None,
-            'duration_seconds': self.duration().total_seconds(),
-            'total_bytes': self.total_bytes,
-            'downloaded_bytes': self.downloaded_bytes,
-            'uploaded_bytes': self.uploaded_bytes,
-            'completion_percentage': self.completion_percentage(),
-            'current_download_speed': self.current_download_speed,
-            'current_upload_speed': self.current_upload_speed,
-            'peak_download_speed': self.peak_download_speed,
-            'peak_upload_speed': self.peak_upload_speed,
-            'average_download_speed': self.average_download_speed,
-            'average_upload_speed': self.average_upload_speed,
-            'active_connections': self.active_connections,
-            'max_connections': self.max_connections,
-            'peers_connected': self.peers_connected,
-            'seeds_connected': self.seeds_connected,
-            'share_ratio': self.share_ratio,
-            'retry_count': self.retry_count,
-            'error_count': self.error_count,
-            'last_error': self.last_error,
-            'eta_seconds': self.eta().total_seconds() if self.eta() else None,
-            'cpu_usage': self.cpu_usage,
-            'memory_usage': self.memory_usage,
+            "task_id": self.task_id,
+            "engine_type": self.engine_type.value,
+            "url": self.url,
+            "start_time": self.start_time.isoformat(),
+            "end_time": self.end_time.isoformat() if self.end_time else None,
+            "duration_seconds": self.duration().total_seconds(),
+            "total_bytes": self.total_bytes,
+            "downloaded_bytes": self.downloaded_bytes,
+            "uploaded_bytes": self.uploaded_bytes,
+            "completion_percentage": self.completion_percentage(),
+            "current_download_speed": self.current_download_speed,
+            "current_upload_speed": self.current_upload_speed,
+            "peak_download_speed": self.peak_download_speed,
+            "peak_upload_speed": self.peak_upload_speed,
+            "average_download_speed": self.average_download_speed,
+            "average_upload_speed": self.average_upload_speed,
+            "active_connections": self.active_connections,
+            "max_connections": self.max_connections,
+            "peers_connected": self.peers_connected,
+            "seeds_connected": self.seeds_connected,
+            "share_ratio": self.share_ratio,
+            "retry_count": self.retry_count,
+            "error_count": self.error_count,
+            "last_error": self.last_error,
+            "eta_seconds": self.eta().total_seconds() if self.eta() else None,
+            "cpu_usage": self.cpu_usage,
+            "memory_usage": self.memory_usage,
         }
 
 
@@ -129,26 +131,30 @@ class SystemMetrics:
     cpu_usage: float = 0.0
     memory_usage: int = 0  # bytes
     disk_usage: int = 0  # bytes
-    network_usage: dict[str, float] = field(default_factory=dict)  # interface -> bytes/sec
+    network_usage: dict[str, float] = field(
+        default_factory=dict
+    )  # interface -> bytes/sec
 
     # Engine statistics
-    engine_stats: dict[str, dict[str, int]] = field(default_factory=lambda: defaultdict(lambda: defaultdict(int)))
+    engine_stats: dict[str, dict[str, int]] = field(
+        default_factory=lambda: defaultdict(lambda: defaultdict(int))
+    )
 
     def to_dict(self) -> dict[str, Any]:
         """Convert system metrics to dictionary."""
         return {
-            'timestamp': self.timestamp.isoformat(),
-            'active_downloads': self.active_downloads,
-            'completed_downloads': self.completed_downloads,
-            'failed_downloads': self.failed_downloads,
-            'total_downloads': self.total_downloads,
-            'total_download_speed': self.total_download_speed,
-            'total_upload_speed': self.total_upload_speed,
-            'cpu_usage': self.cpu_usage,
-            'memory_usage': self.memory_usage,
-            'disk_usage': self.disk_usage,
-            'network_usage': dict(self.network_usage),
-            'engine_stats': {k: dict(v) for k, v in self.engine_stats.items()},
+            "timestamp": self.timestamp.isoformat(),
+            "active_downloads": self.active_downloads,
+            "completed_downloads": self.completed_downloads,
+            "failed_downloads": self.failed_downloads,
+            "total_downloads": self.total_downloads,
+            "total_download_speed": self.total_download_speed,
+            "total_upload_speed": self.total_upload_speed,
+            "cpu_usage": self.cpu_usage,
+            "memory_usage": self.memory_usage,
+            "disk_usage": self.disk_usage,
+            "network_usage": dict(self.network_usage),
+            "engine_stats": {k: dict(v) for k, v in self.engine_stats.items()},
         }
 
 
@@ -159,7 +165,9 @@ class MetricsCollector:
         self.history_size = history_size
         self.download_metrics: dict[str, DownloadMetrics] = {}
         self.system_metrics_history: deque[SystemMetrics] = deque(maxlen=history_size)
-        self.speed_history: dict[str, deque[float]] = defaultdict(lambda: deque(maxlen=100))
+        self.speed_history: dict[str, deque[float]] = defaultdict(
+            lambda: deque(maxlen=100)
+        )
 
         self._lock = threading.RLock()
         self._callbacks: list[Callable[[str, DownloadMetrics], None]] = []
@@ -175,11 +183,13 @@ class MetricsCollector:
                 engine_type=task.engine_type,
                 url=task.url,
                 start_time=datetime.now(),
-                total_bytes=task.file_size
+                total_bytes=task.file_size,
             )
             self.download_metrics[task.id] = metrics
 
-            self.logger.info(f"Started monitoring task {task.id} ({task.engine_type.value})")
+            self.logger.info(
+                f"Started monitoring task {task.id} ({task.engine_type.value})"
+            )
 
     def update_task_progress(self, task_id: str, progress: ProgressInfo) -> None:
         """Update progress metrics for a task."""
@@ -196,12 +206,16 @@ class MetricsCollector:
             metrics.current_download_speed = progress.download_speed
 
             # Update peak speeds
-            metrics.peak_download_speed = max(metrics.peak_download_speed, progress.download_speed)
+            metrics.peak_download_speed = max(
+                metrics.peak_download_speed, progress.download_speed
+            )
 
             # Update torrent-specific metrics
             if progress.upload_speed is not None:
                 metrics.current_upload_speed = progress.upload_speed
-                metrics.peak_upload_speed = max(metrics.peak_upload_speed, progress.upload_speed)
+                metrics.peak_upload_speed = max(
+                    metrics.peak_upload_speed, progress.upload_speed
+                )
 
             if progress.peers_connected is not None:
                 metrics.peers_connected = progress.peers_connected
@@ -302,24 +316,24 @@ class MetricsCollector:
             if psutil:
                 metrics.cpu_usage = psutil.cpu_percent()
                 metrics.memory_usage = psutil.virtual_memory().used
-                metrics.disk_usage = psutil.disk_usage('/').used
+                metrics.disk_usage = psutil.disk_usage("/").used
 
                 # Network usage (simplified)
                 net_io = psutil.net_io_counters()
                 metrics.network_usage = {
-                    'bytes_sent': net_io.bytes_sent,
-                    'bytes_recv': net_io.bytes_recv,
+                    "bytes_sent": net_io.bytes_sent,
+                    "bytes_recv": net_io.bytes_recv,
                 }
 
             # Engine statistics
             for task_metrics in self.download_metrics.values():
                 engine = task_metrics.engine_type.value
                 if task_metrics.end_time is None:
-                    metrics.engine_stats[engine]['active'] += 1
+                    metrics.engine_stats[engine]["active"] += 1
                 elif task_metrics.error_count > 0:
-                    metrics.engine_stats[engine]['failed'] += 1
+                    metrics.engine_stats[engine]["failed"] += 1
                 else:
-                    metrics.engine_stats[engine]['completed'] += 1
+                    metrics.engine_stats[engine]["completed"] += 1
 
             # Store in history
             self.system_metrics_history.append(metrics)
@@ -344,7 +358,8 @@ class MetricsCollector:
         cutoff_time = datetime.now() - duration
         with self._lock:
             return [
-                metrics for metrics in self.system_metrics_history
+                metrics
+                for metrics in self.system_metrics_history
                 if metrics.timestamp >= cutoff_time
             ]
 
@@ -352,22 +367,22 @@ class MetricsCollector:
         """Export all metrics to a JSON file."""
         with self._lock:
             data = {
-                'export_time': datetime.now().isoformat(),
-                'download_metrics': {
+                "export_time": datetime.now().isoformat(),
+                "download_metrics": {
                     task_id: metrics.to_dict()
                     for task_id, metrics in self.download_metrics.items()
                 },
-                'system_metrics_history': [
+                "system_metrics_history": [
                     metrics.to_dict() for metrics in self.system_metrics_history
                 ],
-                'speed_history': {
+                "speed_history": {
                     task_id: list(speeds)
                     for task_id, speeds in self.speed_history.items()
-                }
+                },
             }
 
             file_path.parent.mkdir(parents=True, exist_ok=True)
-            with open(file_path, 'w') as f:
+            with open(file_path, "w") as f:
                 json.dump(data, f, indent=2)
 
             self.logger.info(f"Exported metrics to {file_path}")
@@ -390,16 +405,20 @@ class MetricsCollector:
         if callback in self._system_callbacks:
             self._system_callbacks.remove(callback)
 
-    def clear_completed_tasks(self, older_than: timedelta = timedelta(hours=24)) -> None:
+    def clear_completed_tasks(
+        self, older_than: timedelta = timedelta(hours=24)
+    ) -> None:
         """Clear metrics for completed tasks older than specified time."""
         cutoff_time = datetime.now() - older_than
 
         with self._lock:
             to_remove = []
             for task_id, metrics in self.download_metrics.items():
-                if (metrics.end_time and
-                    metrics.end_time < cutoff_time and
-                    metrics.error_count == 0):
+                if (
+                    metrics.end_time
+                    and metrics.end_time < cutoff_time
+                    and metrics.error_count == 0
+                ):
                     to_remove.append(task_id)
 
             for task_id in to_remove:
@@ -408,7 +427,9 @@ class MetricsCollector:
                     del self.speed_history[task_id]
 
             if to_remove:
-                self.logger.info(f"Cleared metrics for {len(to_remove)} completed tasks")
+                self.logger.info(
+                    f"Cleared metrics for {len(to_remove)} completed tasks"
+                )
 
 
 class PerformanceMonitor:
@@ -455,22 +476,34 @@ class PerformanceMonitor:
 
                 # Log performance warnings
                 if system_metrics.cpu_usage > 80:
-                    self.logger.warning(f"High CPU usage: {system_metrics.cpu_usage:.1f}%")
+                    self.logger.warning(
+                        f"High CPU usage: {system_metrics.cpu_usage:.1f}%"
+                    )
 
                 if system_metrics.memory_usage > 0:
                     try:
                         import psutil
-                        memory_percent = (system_metrics.memory_usage / psutil.virtual_memory().total) * 100
+
+                        memory_percent = (
+                            system_metrics.memory_usage / psutil.virtual_memory().total
+                        ) * 100
                         if memory_percent > 80:
-                            self.logger.warning(f"High memory usage: {memory_percent:.1f}%")
+                            self.logger.warning(
+                                f"High memory usage: {memory_percent:.1f}%"
+                            )
                     except ImportError:
                         pass
 
                 # Check for stalled downloads
-                for task_id, metrics in self.metrics_collector.get_all_task_metrics().items():
-                    if (metrics.end_time is None and
-                        metrics.current_download_speed == 0 and
-                        metrics.duration().total_seconds() > 60):
+                for (
+                    task_id,
+                    metrics,
+                ) in self.metrics_collector.get_all_task_metrics().items():
+                    if (
+                        metrics.end_time is None
+                        and metrics.current_download_speed == 0
+                        and metrics.duration().total_seconds() > 60
+                    ):
                         self.logger.warning(f"Task {task_id} appears stalled")
 
                 await asyncio.sleep(self.interval)

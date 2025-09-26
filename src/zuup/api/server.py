@@ -85,7 +85,7 @@ class APIServer:
                 "components": {
                     "task_manager": self.task_manager is not None,
                     "config_manager": self.config_manager is not None,
-                }
+                },
             }
 
         @self.app.get("/api/v1/status")

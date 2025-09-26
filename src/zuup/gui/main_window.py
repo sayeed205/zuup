@@ -112,7 +112,9 @@ class MainWindow(QMainWindow):
 
         # Task list placeholder
         self.task_list_label = QLabel("No active downloads")
-        self.task_list_label.setStyleSheet("padding: 20px; border: 1px solid #ccc; margin: 10px;")
+        self.task_list_label.setStyleSheet(
+            "padding: 20px; border: 1px solid #ccc; margin: 10px;"
+        )
         task_layout.addWidget(self.task_list_label)
 
         main_layout.addLayout(task_layout)
@@ -231,7 +233,11 @@ class MainWindow(QMainWindow):
 
         if self.task_manager:
             # This is a placeholder - full implementation in later tasks
-            QMessageBox.information(self, "Info", "Pause all functionality will be implemented in later tasks")
+            QMessageBox.information(
+                self,
+                "Info",
+                "Pause all functionality will be implemented in later tasks",
+            )
         else:
             QMessageBox.warning(self, "Error", "Task manager not available")
 
@@ -241,7 +247,11 @@ class MainWindow(QMainWindow):
 
         if self.task_manager:
             # This is a placeholder - full implementation in later tasks
-            QMessageBox.information(self, "Info", "Resume all functionality will be implemented in later tasks")
+            QMessageBox.information(
+                self,
+                "Info",
+                "Resume all functionality will be implemented in later tasks",
+            )
         else:
             QMessageBox.warning(self, "Error", "Task manager not available")
 
@@ -263,7 +273,7 @@ class MainWindow(QMainWindow):
             "• FTP/SFTP downloads\n"
             "• BitTorrent downloads\n"
             "• Media downloads (yt-dlp)\n\n"
-            "Built with PySide6 and FastAPI"
+            "Built with PySide6 and FastAPI",
         )
 
     def show(self) -> None:

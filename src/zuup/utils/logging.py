@@ -31,25 +31,25 @@ class StructuredFormatter(logging.Formatter):
         }
 
         # Add extra fields if present
-        if hasattr(record, 'task_id'):
-            log_entry['task_id'] = record.task_id
-        if hasattr(record, 'engine_type'):
-            log_entry['engine_type'] = record.engine_type
-        if hasattr(record, 'download_speed'):
-            log_entry['download_speed'] = record.download_speed
-        if hasattr(record, 'progress_percentage'):
-            log_entry['progress_percentage'] = record.progress_percentage
-        if hasattr(record, 'error_code'):
-            log_entry['error_code'] = record.error_code
-        if hasattr(record, 'url'):
-            log_entry['url'] = record.url
+        if hasattr(record, "task_id"):
+            log_entry["task_id"] = record.task_id
+        if hasattr(record, "engine_type"):
+            log_entry["engine_type"] = record.engine_type
+        if hasattr(record, "download_speed"):
+            log_entry["download_speed"] = record.download_speed
+        if hasattr(record, "progress_percentage"):
+            log_entry["progress_percentage"] = record.progress_percentage
+        if hasattr(record, "error_code"):
+            log_entry["error_code"] = record.error_code
+        if hasattr(record, "url"):
+            log_entry["url"] = record.url
 
         # Add exception info if present
         if record.exc_info:
-            log_entry['exception'] = {
-                'type': record.exc_info[0].__name__,
-                'message': str(record.exc_info[1]),
-                'traceback': traceback.format_exception(*record.exc_info)
+            log_entry["exception"] = {
+                "type": record.exc_info[0].__name__,
+                "message": str(record.exc_info[1]),
+                "traceback": traceback.format_exception(*record.exc_info),
             }
 
         return json.dumps(log_entry, default=str)
@@ -61,67 +61,63 @@ class DownloadLoggerAdapter(logging.LoggerAdapter):
     def __init__(self, logger: logging.Logger, task_id: str, engine_type: EngineType):
         self.task_id = task_id
         self.engine_type = engine_type
-        super().__init__(logger, {'task_id': task_id, 'engine_type': engine_type.value})
+        super().__init__(logger, {"task_id": task_id, "engine_type": engine_type.value})
 
     def process(self, msg: str, kwargs: dict[str, Any]) -> tuple[str, dict[str, Any]]:
         """Process log message and add context."""
-        extra = kwargs.get('extra', {})
+        extra = kwargs.get("extra", {})
         extra.update(self.extra)
-        kwargs['extra'] = extra
+        kwargs["extra"] = extra
         return msg, kwargs
 
     def log_progress(self, progress: ProgressInfo, url: str = "") -> None:
         """Log download progress information."""
         extra = {
-            'download_speed': progress.download_speed,
-            'progress_percentage': progress.progress_percentage,
-            'downloaded_bytes': progress.downloaded_bytes,
-            'total_bytes': progress.total_bytes,
-            'status': progress.status.value,
-            'url': url
+            "download_speed": progress.download_speed,
+            "progress_percentage": progress.progress_percentage,
+            "downloaded_bytes": progress.downloaded_bytes,
+            "total_bytes": progress.total_bytes,
+            "status": progress.status.value,
+            "url": url,
         }
 
         if progress.upload_speed is not None:
-            extra['upload_speed'] = progress.upload_speed
+            extra["upload_speed"] = progress.upload_speed
         if progress.peers_connected is not None:
-            extra['peers_connected'] = progress.peers_connected
+            extra["peers_connected"] = progress.peers_connected
         if progress.ratio is not None:
-            extra['ratio'] = progress.ratio
+            extra["ratio"] = progress.ratio
 
         self.info(
             f"Progress: {progress.progress_percentage:.1f}% "
             f"({progress.downloaded_bytes}/{progress.total_bytes or 'unknown'} bytes) "
-            f"Speed: {progress.download_speed/1024/1024:.2f} MB/s",
-            extra=extra
+            f"Speed: {progress.download_speed / 1024 / 1024:.2f} MB/s",
+            extra=extra,
         )
 
     def log_error(self, error: Exception, error_code: str = "", url: str = "") -> None:
         """Log download error with context."""
         extra = {
-            'error_code': error_code,
-            'error_type': type(error).__name__,
-            'url': url
+            "error_code": error_code,
+            "error_type": type(error).__name__,
+            "url": url,
         }
 
-        self.error(
-            f"Download error: {error}",
-            extra=extra,
-            exc_info=True
-        )
+        self.error(f"Download error: {error}", extra=extra, exc_info=True)
 
     def log_completion(self, final_size: int, duration: float, url: str = "") -> None:
         """Log download completion."""
         extra = {
-            'final_size': final_size,
-            'duration_seconds': duration,
-            'average_speed': final_size / duration if duration > 0 else 0,
-            'url': url
+            "final_size": final_size,
+            "duration_seconds": duration,
+            "average_speed": final_size / duration if duration > 0 else 0,
+            "url": url,
         }
 
         self.info(
             f"Download completed: {final_size} bytes in {duration:.2f}s "
-            f"(avg: {extra['average_speed']/1024/1024:.2f} MB/s)",
-            extra=extra
+            f"(avg: {extra['average_speed'] / 1024 / 1024:.2f} MB/s)",
+            extra=extra,
         )
 
 
@@ -155,12 +151,12 @@ def setup_logging(
     # Create formatters
     standard_formatter = logging.Formatter(
         "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S"
+        datefmt="%Y-%m-%d %H:%M:%S",
     )
 
     detailed_formatter = logging.Formatter(
         "%(asctime)s - %(name)s - %(levelname)s - %(module)s:%(funcName)s:%(lineno)d - %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S"
+        datefmt="%Y-%m-%d %H:%M:%S",
     )
 
     # Console handler
@@ -169,7 +165,7 @@ def setup_logging(
             rich_tracebacks=True,
             show_time=True,
             show_path=False,
-            console=Console(stderr=True)
+            console=Console(stderr=True),
         )
         console_handler.setFormatter(logging.Formatter("%(message)s"))
         console_handler.setLevel(numeric_level)
@@ -186,10 +182,7 @@ def setup_logging(
 
         # Use rotating file handler to prevent huge log files
         file_handler = logging.handlers.RotatingFileHandler(
-            log_file,
-            maxBytes=max_log_size,
-            backupCount=backup_count,
-            encoding='utf-8'
+            log_file, maxBytes=max_log_size, backupCount=backup_count, encoding="utf-8"
         )
 
         if structured_logging:
@@ -206,7 +199,7 @@ def setup_logging(
             error_log_file,
             maxBytes=max_log_size,
             backupCount=backup_count,
-            encoding='utf-8'
+            encoding="utf-8",
         )
 
         if structured_logging:
@@ -233,11 +226,11 @@ def setup_logging(
 def get_download_logger(task_id: str, engine_type: EngineType) -> DownloadLoggerAdapter:
     """
     Get a logger adapter for download tasks with context.
-    
+
     Args:
         task_id: Unique task identifier
         engine_type: Type of download engine
-        
+
     Returns:
         Logger adapter with download context
     """
@@ -263,7 +256,7 @@ def log_system_info() -> None:
 def setup_debug_logging(log_dir: Path) -> None:
     """
     Set up debug logging configuration for development.
-    
+
     Args:
         log_dir: Directory to store debug logs
     """
@@ -275,7 +268,7 @@ def setup_debug_logging(log_dir: Path) -> None:
         rich_console=True,
         structured_logging=True,
         max_log_size=50 * 1024 * 1024,  # 50MB for debug logs
-        backup_count=3
+        backup_count=3,
     )
 
     # Log system info at startup

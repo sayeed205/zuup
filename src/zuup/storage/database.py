@@ -73,8 +73,12 @@ class DatabaseManager:
 
             # Create indexes for better query performance
             conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_created_at ON tasks(created_at)")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_engine_type ON tasks(engine_type)")
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_tasks_created_at ON tasks(created_at)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_tasks_engine_type ON tasks(engine_type)"
+            )
 
             conn.commit()
 
@@ -103,27 +107,30 @@ class DatabaseManager:
             config_json = task.config.model_dump_json()
             progress_json = task.progress.model_dump_json()
 
-            conn.execute("""
+            conn.execute(
+                """
                 INSERT OR REPLACE INTO tasks (
                     id, url, destination, filename, engine_type, status,
                     created_at, updated_at, file_size, mime_type, checksum,
                     config_json, progress_json
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                task.id,
-                task.url,
-                str(task.destination),
-                task.filename,
-                task.engine_type.value,
-                task.status.value,
-                task.created_at.isoformat(),
-                task.updated_at.isoformat(),
-                task.file_size,
-                task.mime_type,
-                task.checksum,
-                config_json,
-                progress_json,
-            ))
+            """,
+                (
+                    task.id,
+                    task.url,
+                    str(task.destination),
+                    task.filename,
+                    task.engine_type.value,
+                    task.status.value,
+                    task.created_at.isoformat(),
+                    task.updated_at.isoformat(),
+                    task.file_size,
+                    task.mime_type,
+                    task.checksum,
+                    config_json,
+                    progress_json,
+                ),
+            )
             conn.commit()
 
     async def load_task(self, task_id: str) -> DownloadTask | None:
@@ -150,10 +157,7 @@ class DatabaseManager:
         """Synchronous task load operation."""
         with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
-            cursor = conn.execute(
-                "SELECT * FROM tasks WHERE id = ?",
-                (task_id,)
-            )
+            cursor = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,))
             row = cursor.fetchone()
 
             if not row:
@@ -271,8 +275,7 @@ class DatabaseManager:
         with sqlite3.connect(self.db_path) as conn:
             if status_filter:
                 cursor = conn.execute(
-                    "SELECT COUNT(*) FROM tasks WHERE status = ?",
-                    (status_filter,)
+                    "SELECT COUNT(*) FROM tasks WHERE status = ?", (status_filter,)
                 )
             else:
                 cursor = conn.execute("SELECT COUNT(*) FROM tasks")
@@ -295,7 +298,9 @@ class DatabaseManager:
         """
         try:
             async with self._lock:
-                return await asyncio.to_thread(self._cleanup_completed_tasks_sync, older_than_days)
+                return await asyncio.to_thread(
+                    self._cleanup_completed_tasks_sync, older_than_days
+                )
         except Exception as e:
             logger.error(f"Failed to cleanup completed tasks: {e}")
             raise DatabaseError(f"Failed to cleanup completed tasks: {e}") from e
@@ -306,11 +311,14 @@ class DatabaseManager:
         cutoff_date = cutoff_date.replace(day=cutoff_date.day - older_than_days)
 
         with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.execute("""
+            cursor = conn.execute(
+                """
                 DELETE FROM tasks 
                 WHERE status IN ('completed', 'failed', 'cancelled') 
                 AND updated_at < ?
-            """, (cutoff_date.isoformat(),))
+            """,
+                (cutoff_date.isoformat(),),
+            )
             conn.commit()
             return cursor.rowcount
 

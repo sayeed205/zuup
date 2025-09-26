@@ -85,19 +85,22 @@ class ProgressInfo(BaseModel):
     def validate_progress_consistency(self) -> "ProgressInfo":
         """Validate progress information consistency."""
         # Ensure downloaded bytes doesn't exceed total bytes
-        if (self.total_bytes is not None and
-            self.downloaded_bytes > self.total_bytes):
+        if self.total_bytes is not None and self.downloaded_bytes > self.total_bytes:
             raise ValueError("Downloaded bytes cannot exceed total bytes")
 
         # Validate peer relationships
-        if (self.peers_connected is not None and
-            self.peers_total is not None and
-            self.peers_connected > self.peers_total):
+        if (
+            self.peers_connected is not None
+            and self.peers_total is not None
+            and self.peers_connected > self.peers_total
+        ):
             raise ValueError("Connected peers cannot exceed total peers")
 
-        if (self.seeds_connected is not None and
-            self.seeds_total is not None and
-            self.seeds_connected > self.seeds_total):
+        if (
+            self.seeds_connected is not None
+            and self.seeds_total is not None
+            and self.seeds_connected > self.seeds_total
+        ):
             raise ValueError("Connected seeds cannot exceed total seeds")
 
         return self
@@ -142,7 +145,9 @@ class ProxyConfig(BaseModel):
         """Validate proxy configuration consistency."""
         if self.enabled:
             if not any([self.http_proxy, self.https_proxy, self.socks_proxy]):
-                raise ValueError("At least one proxy URL must be provided when proxy is enabled")
+                raise ValueError(
+                    "At least one proxy URL must be provided when proxy is enabled"
+                )
         return self
 
 
@@ -366,8 +371,11 @@ class DownloadTask(BaseModel):
 
             # Check supported schemes
             supported_schemes = {
-                "http", "https",  # HTTP engine
-                "ftp", "ftps", "sftp",  # FTP engine
+                "http",
+                "https",  # HTTP engine
+                "ftp",
+                "ftps",
+                "sftp",  # FTP engine
                 "magnet",  # Torrent engine
                 "file",  # Local files
             }
@@ -457,19 +465,30 @@ class DownloadTask(BaseModel):
         engine_scheme_mapping = {
             EngineType.HTTP: {"http", "https"},
             EngineType.FTP: {"ftp", "ftps", "sftp"},
-            EngineType.TORRENT: {"magnet", "http", "https", "file"},  # Torrents can be magnet, HTTP, or local .torrent files
+            EngineType.TORRENT: {
+                "magnet",
+                "http",
+                "https",
+                "file",
+            },  # Torrents can be magnet, HTTP, or local .torrent files
             EngineType.MEDIA: {"http", "https"},  # Media engine can handle HTTP URLs
         }
 
         valid_schemes = engine_scheme_mapping.get(self.engine_type, set())
         if url_scheme not in valid_schemes:
-            raise ValueError(f"Engine type {self.engine_type.value} incompatible with URL scheme {url_scheme}")
+            raise ValueError(
+                f"Engine type {self.engine_type.value} incompatible with URL scheme {url_scheme}"
+            )
 
         # Additional validation for torrent engine with HTTP/file URLs
-        if (self.engine_type == EngineType.TORRENT and
-            url_scheme in {"http", "https", "file"} and
-            not self.url.lower().endswith('.torrent')):
-            raise ValueError("HTTP/file URLs for torrent engine must point to .torrent files")
+        if (
+            self.engine_type == EngineType.TORRENT
+            and url_scheme in {"http", "https", "file"}
+            and not self.url.lower().endswith(".torrent")
+        ):
+            raise ValueError(
+                "HTTP/file URLs for torrent engine must point to .torrent files"
+            )
 
         return self
 

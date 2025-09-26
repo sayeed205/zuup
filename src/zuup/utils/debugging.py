@@ -15,7 +15,7 @@ from typing import Any, TypeVar
 
 from ..storage.models import DownloadTask, ProgressInfo, TaskStatus
 
-F = TypeVar('F', bound=Callable[..., Any])
+F = TypeVar("F", bound=Callable[..., Any])
 
 
 class DebugInfo:
@@ -28,23 +28,32 @@ class DebugInfo:
         self.performance_data: dict[str, Any] = {}
         self.system_state: dict[str, Any] = {}
 
-    def add_function_call(self, func_name: str, args: tuple, kwargs: dict,
-                         duration: float, result: Any = None, error: Exception = None) -> None:
+    def add_function_call(
+        self,
+        func_name: str,
+        args: tuple,
+        kwargs: dict,
+        duration: float,
+        result: Any = None,
+        error: Exception = None,
+    ) -> None:
         """Add function call information."""
         call_info = {
-            'timestamp': datetime.now().isoformat(),
-            'function': func_name,
-            'args': str(args)[:200],  # Truncate long args
-            'kwargs': str(kwargs)[:200],
-            'duration_ms': duration * 1000,
-            'success': error is None,
+            "timestamp": datetime.now().isoformat(),
+            "function": func_name,
+            "args": str(args)[:200],  # Truncate long args
+            "kwargs": str(kwargs)[:200],
+            "duration_ms": duration * 1000,
+            "success": error is None,
         }
 
         if error:
-            call_info['error'] = {
-                'type': type(error).__name__,
-                'message': str(error),
-                'traceback': traceback.format_exception(type(error), error, error.__traceback__)
+            call_info["error"] = {
+                "type": type(error).__name__,
+                "message": str(error),
+                "traceback": traceback.format_exception(
+                    type(error), error, error.__traceback__
+                ),
             }
 
         self.function_calls.append(call_info)
@@ -52,35 +61,34 @@ class DebugInfo:
     def add_error(self, error: Exception, context: str = "") -> None:
         """Add error information."""
         error_info = {
-            'timestamp': datetime.now().isoformat(),
-            'type': type(error).__name__,
-            'message': str(error),
-            'context': context,
-            'traceback': traceback.format_exception(type(error), error, error.__traceback__)
+            "timestamp": datetime.now().isoformat(),
+            "type": type(error).__name__,
+            "message": str(error),
+            "context": context,
+            "traceback": traceback.format_exception(
+                type(error), error, error.__traceback__
+            ),
         }
         self.errors.append(error_info)
 
     def set_system_state(self, state: dict[str, Any]) -> None:
         """Set current system state."""
-        self.system_state = {
-            'timestamp': datetime.now().isoformat(),
-            **state
-        }
+        self.system_state = {"timestamp": datetime.now().isoformat(), **state}
 
     def to_dict(self) -> dict[str, Any]:
         """Convert debug info to dictionary."""
         return {
-            'timestamp': self.timestamp.isoformat(),
-            'function_calls': self.function_calls,
-            'errors': self.errors,
-            'performance_data': self.performance_data,
-            'system_state': self.system_state,
+            "timestamp": self.timestamp.isoformat(),
+            "function_calls": self.function_calls,
+            "errors": self.errors,
+            "performance_data": self.performance_data,
+            "system_state": self.system_state,
         }
 
     def save_to_file(self, file_path: Path) -> None:
         """Save debug info to file."""
         file_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(file_path, 'w') as f:
+        with open(file_path, "w") as f:
             json.dump(self.to_dict(), f, indent=2, default=str)
 
 
@@ -93,18 +101,29 @@ class DebugSession:
         self.logger = logging.getLogger(f"zuup.debug.{self.session_name}")
         self.active = True
 
-    def log_function_call(self, func_name: str, args: tuple, kwargs: dict,
-                         duration: float, result: Any = None, error: Exception = None) -> None:
+    def log_function_call(
+        self,
+        func_name: str,
+        args: tuple,
+        kwargs: dict,
+        duration: float,
+        result: Any = None,
+        error: Exception = None,
+    ) -> None:
         """Log a function call."""
         if not self.active:
             return
 
-        self.debug_info.add_function_call(func_name, args, kwargs, duration, result, error)
+        self.debug_info.add_function_call(
+            func_name, args, kwargs, duration, result, error
+        )
 
         if error:
-            self.logger.error(f"{func_name} failed after {duration*1000:.2f}ms: {error}")
+            self.logger.error(
+                f"{func_name} failed after {duration * 1000:.2f}ms: {error}"
+            )
         else:
-            self.logger.debug(f"{func_name} completed in {duration*1000:.2f}ms")
+            self.logger.debug(f"{func_name} completed in {duration * 1000:.2f}ms")
 
     def log_error(self, error: Exception, context: str = "") -> None:
         """Log an error."""
@@ -224,7 +243,9 @@ def debug_context(context_name: str):
     finally:
         if session:
             duration = time.time() - start_time
-            session.logger.debug(f"Exiting {context_name} after {duration*1000:.2f}ms")
+            session.logger.debug(
+                f"Exiting {context_name} after {duration * 1000:.2f}ms"
+            )
 
 
 class TaskDebugger:
@@ -239,12 +260,12 @@ class TaskDebugger:
     def log_event(self, event_type: str, data: dict[str, Any] = None) -> None:
         """Log a task event."""
         event = {
-            'timestamp': datetime.now().isoformat(),
-            'elapsed_seconds': time.time() - self.start_time,
-            'event_type': event_type,
-            'task_id': self.task.id,
-            'task_status': self.task.status.value,
-            'data': data or {}
+            "timestamp": datetime.now().isoformat(),
+            "elapsed_seconds": time.time() - self.start_time,
+            "event_type": event_type,
+            "task_id": self.task.id,
+            "task_status": self.task.status.value,
+            "data": data or {},
         }
 
         self.events.append(event)
@@ -252,37 +273,45 @@ class TaskDebugger:
 
     def log_progress_update(self, progress: ProgressInfo) -> None:
         """Log progress update."""
-        self.log_event('progress_update', {
-            'downloaded_bytes': progress.downloaded_bytes,
-            'total_bytes': progress.total_bytes,
-            'download_speed': progress.download_speed,
-            'progress_percentage': progress.progress_percentage,
-            'status': progress.status.value,
-        })
+        self.log_event(
+            "progress_update",
+            {
+                "downloaded_bytes": progress.downloaded_bytes,
+                "total_bytes": progress.total_bytes,
+                "download_speed": progress.download_speed,
+                "progress_percentage": progress.progress_percentage,
+                "status": progress.status.value,
+            },
+        )
 
     def log_error(self, error: Exception, context: str = "") -> None:
         """Log task error."""
-        self.log_event('error', {
-            'error_type': type(error).__name__,
-            'error_message': str(error),
-            'context': context,
-            'traceback': traceback.format_exception(type(error), error, error.__traceback__)
-        })
+        self.log_event(
+            "error",
+            {
+                "error_type": type(error).__name__,
+                "error_message": str(error),
+                "context": context,
+                "traceback": traceback.format_exception(
+                    type(error), error, error.__traceback__
+                ),
+            },
+        )
 
     def log_retry(self, attempt: int, reason: str = "") -> None:
         """Log retry attempt."""
-        self.log_event('retry', {
-            'attempt': attempt,
-            'reason': reason
-        })
+        self.log_event("retry", {"attempt": attempt, "reason": reason})
 
     def log_completion(self, final_status: TaskStatus) -> None:
         """Log task completion."""
-        self.log_event('completion', {
-            'final_status': final_status.value,
-            'total_duration': time.time() - self.start_time,
-            'final_size': self.task.progress.downloaded_bytes
-        })
+        self.log_event(
+            "completion",
+            {
+                "final_status": final_status.value,
+                "total_duration": time.time() - self.start_time,
+                "final_size": self.task.progress.downloaded_bytes,
+            },
+        )
 
     def save_debug_log(self, output_dir: Path) -> Path:
         """Save task debug log to file."""
@@ -290,18 +319,18 @@ class TaskDebugger:
         output_file.parent.mkdir(parents=True, exist_ok=True)
 
         debug_data = {
-            'task_info': {
-                'id': self.task.id,
-                'url': self.task.url,
-                'engine_type': self.task.engine_type.value,
-                'destination': str(self.task.destination),
-                'created_at': self.task.created_at.isoformat(),
+            "task_info": {
+                "id": self.task.id,
+                "url": self.task.url,
+                "engine_type": self.task.engine_type.value,
+                "destination": str(self.task.destination),
+                "created_at": self.task.created_at.isoformat(),
             },
-            'events': self.events,
-            'total_duration': time.time() - self.start_time,
+            "events": self.events,
+            "total_duration": time.time() - self.start_time,
         }
 
-        with open(output_file, 'w') as f:
+        with open(output_file, "w") as f:
             json.dump(debug_data, f, indent=2, default=str)
 
         self.logger.info(f"Task debug log saved to {output_file}")
@@ -320,21 +349,28 @@ class ErrorReporter:
         self.error_counts: dict[str, int] = {}
         self.recent_errors: list[dict[str, Any]] = []
 
-    def report_error(self, error: Exception, context: str = "",
-                    task_id: str = "", additional_data: dict[str, Any] = None) -> None:
+    def report_error(
+        self,
+        error: Exception,
+        context: str = "",
+        task_id: str = "",
+        additional_data: dict[str, Any] = None,
+    ) -> None:
         """Report an error with full context."""
         error_type = type(error).__name__
         self.error_counts[error_type] = self.error_counts.get(error_type, 0) + 1
 
         error_report = {
-            'timestamp': datetime.now().isoformat(),
-            'error_type': error_type,
-            'error_message': str(error),
-            'context': context,
-            'task_id': task_id,
-            'traceback': traceback.format_exception(type(error), error, error.__traceback__),
-            'additional_data': additional_data or {},
-            'system_info': self._get_system_info(),
+            "timestamp": datetime.now().isoformat(),
+            "error_type": error_type,
+            "error_message": str(error),
+            "context": context,
+            "task_id": task_id,
+            "traceback": traceback.format_exception(
+                type(error), error, error.__traceback__
+            ),
+            "additional_data": additional_data or {},
+            "system_info": self._get_system_info(),
         }
 
         self.recent_errors.append(error_report)
@@ -344,28 +380,35 @@ class ErrorReporter:
             self.recent_errors = self.recent_errors[-100:]
 
         # Save individual error report
-        error_file = self.output_dir / f"error_{int(time.time())}_{error_type.lower()}.json"
+        error_file = (
+            self.output_dir / f"error_{int(time.time())}_{error_type.lower()}.json"
+        )
         error_file.parent.mkdir(parents=True, exist_ok=True)
-        with open(error_file, 'w') as f:
+        with open(error_file, "w") as f:
             json.dump(error_report, f, indent=2, default=str)
 
-        self.logger.error(f"Error reported: {error_type} in {context} (saved to {error_file})")
+        self.logger.error(
+            f"Error reported: {error_type} in {context} (saved to {error_file})"
+        )
 
     def _get_system_info(self) -> dict[str, Any]:
         """Get current system information."""
         info = {
-            'python_version': sys.version,
-            'platform': sys.platform,
+            "python_version": sys.version,
+            "platform": sys.platform,
         }
 
         try:
             import psutil
-            info.update({
-                'cpu_count': psutil.cpu_count(),
-                'memory_total': psutil.virtual_memory().total,
-                'memory_available': psutil.virtual_memory().available,
-                'disk_free': psutil.disk_usage('/').free,
-            })
+
+            info.update(
+                {
+                    "cpu_count": psutil.cpu_count(),
+                    "memory_total": psutil.virtual_memory().total,
+                    "memory_available": psutil.virtual_memory().available,
+                    "disk_free": psutil.disk_usage("/").free,
+                }
+            )
         except ImportError:
             pass
 
@@ -374,14 +417,12 @@ class ErrorReporter:
     def generate_error_summary(self) -> dict[str, Any]:
         """Generate error summary report."""
         return {
-            'timestamp': datetime.now().isoformat(),
-            'error_counts': self.error_counts,
-            'total_errors': sum(self.error_counts.values()),
-            'recent_errors_count': len(self.recent_errors),
-            'most_common_errors': sorted(
-                self.error_counts.items(),
-                key=lambda x: x[1],
-                reverse=True
+            "timestamp": datetime.now().isoformat(),
+            "error_counts": self.error_counts,
+            "total_errors": sum(self.error_counts.values()),
+            "recent_errors_count": len(self.recent_errors),
+            "most_common_errors": sorted(
+                self.error_counts.items(), key=lambda x: x[1], reverse=True
             )[:10],
         }
 
@@ -390,7 +431,7 @@ class ErrorReporter:
         summary_file = self.output_dir / "error_summary.json"
         summary = self.generate_error_summary()
 
-        with open(summary_file, 'w') as f:
+        with open(summary_file, "w") as f:
             json.dump(summary, f, indent=2)
 
         self.logger.info(f"Error summary saved to {summary_file}")
@@ -408,8 +449,12 @@ def initialize_error_reporting(output_dir: Path) -> ErrorReporter:
     return _error_reporter
 
 
-def report_error(error: Exception, context: str = "",
-                task_id: str = "", additional_data: dict[str, Any] = None) -> None:
+def report_error(
+    error: Exception,
+    context: str = "",
+    task_id: str = "",
+    additional_data: dict[str, Any] = None,
+) -> None:
     """Report an error using the global error reporter."""
     if _error_reporter:
         _error_reporter.report_error(error, context, task_id, additional_data)
@@ -453,18 +498,17 @@ class PerformanceProfiler:
 
         times = self.profiles[operation_name]
         return {
-            'count': len(times),
-            'total_time': sum(times),
-            'average_time': sum(times) / len(times),
-            'min_time': min(times),
-            'max_time': max(times),
+            "count": len(times),
+            "total_time": sum(times),
+            "average_time": sum(times) / len(times),
+            "min_time": min(times),
+            "max_time": max(times),
         }
 
     def get_all_stats(self) -> dict[str, dict[str, float]]:
         """Get statistics for all operations."""
         return {
-            operation: self.get_stats(operation)
-            for operation in self.profiles.keys()
+            operation: self.get_stats(operation) for operation in self.profiles.keys()
         }
 
     def reset(self) -> None:

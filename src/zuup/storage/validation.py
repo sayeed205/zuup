@@ -9,13 +9,15 @@ from pydantic import BaseModel, ValidationError
 
 from .models import DownloadTask, GlobalConfig, ProgressInfo, ProxyConfig, TaskConfig
 
-T = TypeVar('T', bound=BaseModel)
+T = TypeVar("T", bound=BaseModel)
 
 
 class ValidationResult:
     """Result of a validation operation."""
 
-    def __init__(self, is_valid: bool, errors: list[str] | None = None, data: Any = None):
+    def __init__(
+        self, is_valid: bool, errors: list[str] | None = None, data: Any = None
+    ):
         self.is_valid = is_valid
         self.errors = errors or []
         self.data = data
@@ -38,11 +40,11 @@ class ModelValidator:
     def validate_model(model_class: type[T], data: dict[str, Any]) -> ValidationResult:
         """
         Validate data against a Pydantic model.
-        
+
         Args:
             model_class: The Pydantic model class to validate against
             data: Dictionary of data to validate
-            
+
         Returns:
             ValidationResult with validation status and any errors
         """
@@ -88,9 +90,7 @@ class ModelValidator:
 class URLValidator:
     """URL validation utilities."""
 
-    SUPPORTED_SCHEMES = {
-        "http", "https", "ftp", "ftps", "sftp", "magnet", "file"
-    }
+    SUPPORTED_SCHEMES = {"http", "https", "ftp", "ftps", "sftp", "magnet", "file"}
 
     @staticmethod
     def is_valid_url(url: str) -> bool:
@@ -128,8 +128,9 @@ class URLValidator:
     @staticmethod
     def is_torrent_url(url: str) -> bool:
         """Check if URL is a torrent magnet link or .torrent file (local or remote)."""
-        return (url.startswith("magnet:") or
-                (URLValidator.is_valid_url(url) and url.lower().endswith('.torrent')))
+        return url.startswith("magnet:") or (
+            URLValidator.is_valid_url(url) and url.lower().endswith(".torrent")
+        )
 
     @staticmethod
     def is_media_url(url: str) -> bool:
@@ -139,8 +140,13 @@ class URLValidator:
 
         # Common video/media domains (basic check)
         media_domains = {
-            "youtube.com", "youtu.be", "vimeo.com", "dailymotion.com",
-            "twitch.tv", "soundcloud.com", "bandcamp.com"
+            "youtube.com",
+            "youtu.be",
+            "vimeo.com",
+            "dailymotion.com",
+            "twitch.tv",
+            "soundcloud.com",
+            "bandcamp.com",
         }
 
         try:
@@ -204,6 +210,7 @@ class FileSystemValidator:
         """Get available disk space in bytes."""
         try:
             import shutil
+
             return shutil.disk_usage(Path(path)).free
         except Exception:
             return None
@@ -242,14 +249,16 @@ def validate_download_task_data(data: dict[str, Any]) -> ValidationResult:
     return ModelValidator.validate_download_task(data)
 
 
-def validate_config_data(data: dict[str, Any], config_type: str = "global") -> ValidationResult:
+def validate_config_data(
+    data: dict[str, Any], config_type: str = "global"
+) -> ValidationResult:
     """
     Validate configuration data.
-    
+
     Args:
         data: Configuration data to validate
         config_type: Type of config ("global", "task", "proxy")
-        
+
     Returns:
         ValidationResult with validation status
     """
@@ -261,7 +270,9 @@ def validate_config_data(data: dict[str, Any], config_type: str = "global") -> V
 
     validator = validators.get(config_type)
     if not validator:
-        return ValidationResult(is_valid=False, errors=[f"Unknown config type: {config_type}"])
+        return ValidationResult(
+            is_valid=False, errors=[f"Unknown config type: {config_type}"]
+        )
 
     return validator(data)
 
