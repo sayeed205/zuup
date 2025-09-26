@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """Manual test script for data models and validation."""
 
-import sys
 from pathlib import Path
-from datetime import datetime, timedelta
+import sys
 
 # Add src to path for testing
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
@@ -18,14 +17,10 @@ from zuup.storage.models import (
     TaskStatus,
 )
 from zuup.storage.validation import (
-    ModelValidator,
-    URLValidator,
-    FileSystemValidator,
-    ConfigValidator,
-    validate_download_task_data,
-    validate_config_data,
-    is_supported_url,
     get_engine_for_url,
+    is_supported_url,
+    validate_config_data,
+    validate_download_task_data,
 )
 
 

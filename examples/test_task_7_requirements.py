@@ -11,9 +11,8 @@ This script tests all the requirements for task 7:
 
 import asyncio
 import logging
-import sys
-import time
 from pathlib import Path
+import sys
 
 import httpx
 from rich.console import Console
@@ -176,8 +175,9 @@ def test_requirement_2_4():
         console.print("[green]✓ Core components use dependency injection[/green]")
 
         # Check that API server accepts dependencies
-        from zuup.api.server import APIServer
         import inspect
+
+        from zuup.api.server import APIServer
 
         sig = inspect.signature(APIServer.__init__)
         params = list(sig.parameters.keys())
@@ -217,8 +217,9 @@ def test_cli_interface():
 
     try:
         # Import CLI components
-        from zuup.main import cli
         import click.testing
+
+        from zuup.main import cli
 
         runner = click.testing.CliRunner()
 

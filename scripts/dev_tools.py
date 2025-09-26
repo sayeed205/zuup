@@ -6,14 +6,13 @@ This script provides various development utilities for code quality,
 testing, and project maintenance.
 """
 
+from pathlib import Path
 import subprocess
 import sys
-from pathlib import Path
-from typing import List, Optional
 
 
 def run_command(
-    cmd: List[str], description: str, check: bool = True, capture_output: bool = True
+    cmd: list[str], description: str, check: bool = True, capture_output: bool = True
 ) -> bool:
     """Run a command and return success status."""
     print(f"🔄 {description}...")

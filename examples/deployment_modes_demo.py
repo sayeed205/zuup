@@ -8,9 +8,8 @@ and interact with the API.
 
 import asyncio
 import logging
-import sys
-import time
 from pathlib import Path
+import sys
 
 import httpx
 from rich.console import Console

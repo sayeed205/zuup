@@ -6,13 +6,12 @@ This script tests that the development environment is properly configured
 and all tools are working correctly.
 """
 
+from pathlib import Path
 import subprocess
 import sys
-from pathlib import Path
-from typing import List, Tuple
 
 
-def run_test(cmd: List[str], description: str) -> Tuple[bool, str]:
+def run_test(cmd: list[str], description: str) -> tuple[bool, str]:
     """Run a test command and return success status and output."""
     try:
         result = subprocess.run(

@@ -52,13 +52,13 @@ class BandwidthManager:
 
         # Equal allocation among workers
         per_worker_limit = self.total_limit // len(workers)
-        
+
         allocations = {}
         for worker in workers:
             # Ensure minimum allocation of 1KB/s per worker
             allocation = max(per_worker_limit, 1024)
             allocations[worker.worker_id] = allocation
-            
+
         self.worker_allocations = allocations
         return allocations
 
@@ -71,7 +71,7 @@ class BandwidthManager:
         """
         self.worker_speeds = worker_speeds.copy()
         current_time = time.time()
-        
+
         # Update allocations every 5 seconds
         if current_time - self._last_update >= 5.0:
             self._rebalance_bandwidth()
@@ -84,7 +84,7 @@ class BandwidthManager:
 
         # Calculate total current usage
         total_usage = sum(self.worker_speeds.values())
-        
+
         if total_usage <= self.total_limit:
             # Under limit - allow workers to use more if needed
             return
@@ -131,19 +131,23 @@ class ConnectionManager:
         self.curl_share: pycurl.CurlShare | None = None
         self.active_workers: dict[str, CurlWorker] = {}
         self.bandwidth_manager = BandwidthManager(
-            config.download_speed_limit if hasattr(config, 'download_speed_limit') else None
+            config.download_speed_limit
+            if hasattr(config, "download_speed_limit")
+            else None
         )
-        
+
         # Connection management
         self.max_connections = config.max_connections
         self.current_connections = 0
         self._shutdown_requested = False
-        
+
         # Performance tracking
         self._worker_progress: dict[str, WorkerProgress] = {}
         self._last_progress_update = time.time()
-        
-        logger.info(f"Initialized ConnectionManager with max {self.max_connections} connections")
+
+        logger.info(
+            f"Initialized ConnectionManager with max {self.max_connections} connections"
+        )
 
     async def __aenter__(self) -> ConnectionManager:
         """Async context manager entry."""
@@ -159,16 +163,16 @@ class ConnectionManager:
         try:
             # Initialize CurlMulti for managing multiple transfers
             self.curl_multi = pycurl.CurlMulti()
-            
+
             # Configure multi handle options
             self.curl_multi.setopt(pycurl.M_MAXCONNECTS, self.max_connections)
-            
+
             # Initialize CurlShare for sharing data between handles
             self.curl_share = pycurl.CurlShare()
             self._setup_curl_share()
-            
+
             logger.debug("Initialized curl multi and share handles")
-            
+
         except Exception as e:
             logger.error(f"Failed to initialize ConnectionManager: {e}")
             raise
@@ -177,19 +181,21 @@ class ConnectionManager:
         """Configure shared data between curl handles."""
         if not self.curl_share:
             return
-            
+
         try:
             # Share cookies between handles
             self.curl_share.setopt(pycurl.SH_SHARE, pycurl.LOCK_DATA_COOKIE)
-            
+
             # Share DNS cache between handles
             self.curl_share.setopt(pycurl.SH_SHARE, pycurl.LOCK_DATA_DNS)
-            
+
             # Share SSL session cache between handles
             self.curl_share.setopt(pycurl.SH_SHARE, pycurl.LOCK_DATA_SSL_SESSION)
-            
-            logger.debug("Configured curl handle sharing for cookies, DNS, and SSL sessions")
-            
+
+            logger.debug(
+                "Configured curl handle sharing for cookies, DNS, and SSL sessions"
+            )
+
         except Exception as e:
             logger.warning(f"Failed to setup curl sharing: {e}")
 
@@ -211,33 +217,33 @@ class ConnectionManager:
                 f"Requested {len(segments)} segments but only {self.max_connections} "
                 f"connections available. Using first {self.max_connections} segments."
             )
-            segments = segments[:self.max_connections]
+            segments = segments[: self.max_connections]
 
         workers = []
-        
+
         try:
             for segment in segments:
                 # Create worker with shared curl handle
                 worker = CurlWorker(
-                    segment=segment,
-                    config=self.config,
-                    curl_share=self.curl_share
+                    segment=segment, config=self.config, curl_share=self.curl_share
                 )
-                
+
                 # Set progress callback
                 worker.set_progress_callback(self._on_worker_progress)
-                
+
                 workers.append(worker)
                 self.active_workers[worker.worker_id] = worker
-                
-                logger.debug(f"Created worker {worker.worker_id} for segment {segment.id}")
+
+                logger.debug(
+                    f"Created worker {worker.worker_id} for segment {segment.id}"
+                )
 
             # Allocate bandwidth among workers
             self._allocate_bandwidth(workers)
-            
+
             logger.info(f"Created {len(workers)} workers for parallel download")
             return workers
-            
+
         except Exception as e:
             # Cleanup any created workers on failure
             for worker in workers:
@@ -253,15 +259,19 @@ class ConnectionManager:
             workers: List of workers to allocate bandwidth for
         """
         allocations = self.bandwidth_manager.allocate_bandwidth(workers)
-        
+
         for worker in workers:
             limit = allocations.get(worker.worker_id, 0)
             if limit > 0:
-                logger.debug(f"Allocated {limit} bytes/sec to worker {worker.worker_id}")
+                logger.debug(
+                    f"Allocated {limit} bytes/sec to worker {worker.worker_id}"
+                )
             # Note: Actual bandwidth limiting would be implemented in the worker
             # using curl options like CURLOPT_MAX_RECV_SPEED_LARGE
 
-    async def monitor_workers(self, workers: list[CurlWorker]) -> AsyncIterator[dict[str, WorkerProgress]]:
+    async def monitor_workers(
+        self, workers: list[CurlWorker]
+    ) -> AsyncIterator[dict[str, WorkerProgress]]:
         """
         Monitor worker progress and yield updates.
 
@@ -275,7 +285,7 @@ class ConnectionManager:
             return
 
         logger.info(f"Starting monitoring of {len(workers)} workers")
-        
+
         # Start all worker downloads
         download_tasks = []
         for worker in workers:
@@ -284,11 +294,13 @@ class ConnectionManager:
 
         try:
             # Monitor progress while downloads are active
-            while not self._shutdown_requested and any(not task.done() for task in download_tasks):
+            while not self._shutdown_requested and any(
+                not task.done() for task in download_tasks
+            ):
                 # Collect current progress from all workers
                 current_progress = {}
                 worker_speeds = {}
-                
+
                 for worker in workers:
                     progress = worker.get_progress()
                     current_progress[worker.worker_id] = progress
@@ -296,28 +308,38 @@ class ConnectionManager:
 
                 # Update bandwidth allocation based on current speeds
                 self.bandwidth_manager.update_allocation(worker_speeds)
-                
+
                 # Yield progress update
                 yield current_progress
-                
+
                 # Wait before next update
                 await asyncio.sleep(1.0)
 
             # Wait for all downloads to complete
             if download_tasks:
                 results = await asyncio.gather(*download_tasks, return_exceptions=True)
-                
+
                 # Log results
                 for i, result in enumerate(results):
                     worker = workers[i]
                     if isinstance(result, Exception):
                         logger.error(f"Worker {worker.worker_id} failed: {result}")
                     else:
-                        success = result.get('success', False) if isinstance(result, dict) else False
+                        success = (
+                            result.get("success", False)
+                            if isinstance(result, dict)
+                            else False
+                        )
                         if success:
-                            logger.info(f"Worker {worker.worker_id} completed successfully")
+                            logger.info(
+                                f"Worker {worker.worker_id} completed successfully"
+                            )
                         else:
-                            error = result.get('error', 'Unknown error') if isinstance(result, dict) else str(result)
+                            error = (
+                                result.get("error", "Unknown error")
+                                if isinstance(result, dict)
+                                else str(result)
+                            )
                             logger.warning(f"Worker {worker.worker_id} failed: {error}")
 
         except Exception as e:
@@ -340,7 +362,7 @@ class ConnectionManager:
             progress: Worker progress information
         """
         self._worker_progress[progress.worker_id] = progress
-        
+
         # Log significant progress updates
         if progress.status in (WorkerStatus.COMPLETED, WorkerStatus.FAILED):
             logger.info(
@@ -356,7 +378,11 @@ class ConnectionManager:
             worker_ids: List of worker IDs to pause (None for all)
         """
         target_workers = (
-            [self.active_workers[wid] for wid in worker_ids if wid in self.active_workers]
+            [
+                self.active_workers[wid]
+                for wid in worker_ids
+                if wid in self.active_workers
+            ]
             if worker_ids
             else list(self.active_workers.values())
         )
@@ -375,7 +401,11 @@ class ConnectionManager:
             worker_ids: List of worker IDs to resume (None for all)
         """
         target_workers = (
-            [self.active_workers[wid] for wid in worker_ids if wid in self.active_workers]
+            [
+                self.active_workers[wid]
+                for wid in worker_ids
+                if wid in self.active_workers
+            ]
             if worker_ids
             else list(self.active_workers.values())
         )
@@ -394,7 +424,11 @@ class ConnectionManager:
             worker_ids: List of worker IDs to cancel (None for all)
         """
         target_workers = (
-            [self.active_workers[wid] for wid in worker_ids if wid in self.active_workers]
+            [
+                self.active_workers[wid]
+                for wid in worker_ids
+                if wid in self.active_workers
+            ]
             if worker_ids
             else list(self.active_workers.values())
         )
@@ -442,7 +476,7 @@ class ConnectionManager:
 
         old_max = self.max_connections
         self.max_connections = new_max
-        
+
         # Update curl multi handle if initialized
         if self.curl_multi:
             self.curl_multi.setopt(pycurl.M_MAXCONNECTS, new_max)
@@ -465,12 +499,12 @@ class ConnectionManager:
             Dictionary with connection statistics
         """
         active_count = len(self.active_workers)
-        
+
         # Calculate total speeds
         total_download_speed = sum(
             progress.download_speed for progress in self._worker_progress.values()
         )
-        
+
         # Count workers by status
         status_counts = {}
         for progress in self._worker_progress.values():
@@ -488,9 +522,9 @@ class ConnectionManager:
     async def cleanup(self) -> None:
         """Clean up resources and cancel active workers."""
         logger.info("Cleaning up ConnectionManager")
-        
+
         self._shutdown_requested = True
-        
+
         # Cancel all active workers
         if self.active_workers:
             await self.cancel_workers()
@@ -515,7 +549,7 @@ class ConnectionManager:
         # Clear tracking data
         self.active_workers.clear()
         self._worker_progress.clear()
-        
+
         logger.info("ConnectionManager cleanup completed")
 
     def __del__(self) -> None:

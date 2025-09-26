@@ -6,19 +6,19 @@ This script tests that all development tools work together correctly
 and can be used in a typical development workflow.
 """
 
-import subprocess
-import sys
-import tempfile
 from pathlib import Path
-from typing import List, Tuple
+import subprocess
+import tempfile
 
 
 def run_command(
-    cmd: List[str], description: str, timeout: int = 30
-) -> Tuple[bool, str, str]:
+    cmd: list[str], description: str, timeout: int = 30
+) -> tuple[bool, str, str]:
     """Run a command and return success status, stdout, and stderr."""
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        result = subprocess.run(
+            cmd, check=False, capture_output=True, text=True, timeout=timeout
+        )
         return result.returncode == 0, result.stdout, result.stderr
     except subprocess.TimeoutExpired:
         return False, "", "Command timed out"
@@ -69,13 +69,12 @@ def test_mypy_configuration() -> bool:
 
     if success:
         print("✅ mypy runs successfully on source code")
+    # Check if it's a configuration issue or just type errors
+    elif "error: Cannot find implementation" in stderr or "No module named" in stderr:
+        print(f"❌ mypy configuration issue: {stderr}")
+        return False
     else:
-        # Check if it's a configuration issue or just type errors
-        if "error: Cannot find implementation" in stderr or "No module named" in stderr:
-            print(f"❌ mypy configuration issue: {stderr}")
-            return False
-        else:
-            print("✅ mypy runs (found type issues, which is normal)")
+        print("✅ mypy runs (found type issues, which is normal)")
 
     # Test mypy configuration file
     mypy_config = Path("mypy.ini")
@@ -244,7 +243,7 @@ def test_example_configurations() -> bool:
 
                 with open(config_path) as f:
                     json.load(f)
-                print(f"   ✅ Valid JSON syntax")
+                print("   ✅ Valid JSON syntax")
             except Exception as e:
                 print(f"   ❌ JSON syntax error: {e}")
                 all_exist = False
@@ -277,14 +276,14 @@ def test_manual_test_scripts() -> bool:
 
             # Check if it's the current script (avoid infinite recursion)
             if "test_tooling_integration.py" in script_path:
-                print(f"   ✅ Script is executable (current script)")
+                print("   ✅ Script is executable (current script)")
             elif (
                 success
                 or "usage:" in stdout.lower()
                 or "manual test" in stdout.lower()
                 or "Testing" in stdout
             ):
-                print(f"   ✅ Script is executable")
+                print("   ✅ Script is executable")
             else:
                 print(f"   ❌ Script execution issue: {stderr}")
                 all_executable = False

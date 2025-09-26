@@ -6,8 +6,8 @@ import logging
 from pathlib import Path
 
 from zuup.core import TaskManager
-from zuup.storage import DatabaseManager, TaskConfig
 from zuup.engines.registry import initialize_default_engines
+from zuup.storage import DatabaseManager, TaskConfig
 
 
 async def test_task_management():

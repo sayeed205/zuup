@@ -6,10 +6,9 @@ This script tests various type safety scenarios to ensure the development
 environment properly catches type errors.
 """
 
+from pathlib import Path
 import subprocess
 import tempfile
-from pathlib import Path
-from typing import List, Tuple
 
 
 def create_test_file(content: str) -> Path:
@@ -19,13 +18,14 @@ def create_test_file(content: str) -> Path:
     return temp_file
 
 
-def run_mypy_test(content: str, description: str) -> Tuple[bool, str]:
+def run_mypy_test(content: str, description: str) -> tuple[bool, str]:
     """Run mypy on test content and return results."""
     test_file = create_test_file(content)
 
     try:
         result = subprocess.run(
             ["uv", "run", "mypy", str(test_file)],
+            check=False,
             capture_output=True,
             text=True,
             timeout=10,

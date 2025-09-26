@@ -3,20 +3,20 @@
 
 import asyncio
 import logging
-import sys
 from pathlib import Path
+import sys
 
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 from zuup.engines import (
     EngineRegistry,
-    get_registry,
-    initialize_default_engines,
     detect_engine_for_url,
     get_engine_for_url,
+    get_registry,
+    initialize_default_engines,
 )
-from zuup.storage.models import DownloadTask, EngineType, TaskStatus
+from zuup.storage.models import DownloadTask, EngineType
 
 # Configure logging
 logging.basicConfig(

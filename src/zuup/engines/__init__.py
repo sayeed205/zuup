@@ -28,6 +28,7 @@ from .registry import (
     get_registry,
     initialize_default_engines,
 )
+from .segment_merger import SegmentMerger
 from .torrent_engine import TorrentEngine
 
 __all__ = [
@@ -36,6 +37,7 @@ __all__ = [
     "FTPEngine",
     "HTTPEngine",
     "MediaEngine",
+    "SegmentMerger",
     "TorrentEngine",
     "detect_engine_for_url",
     "get_engine_for_url",

@@ -3,16 +3,14 @@
 
 import json
 import os
-import tempfile
 from pathlib import Path
+import tempfile
 
 from zuup.config import (
     ConfigManager,
     GlobalConfig,
-    TaskConfig,
     ProxyConfig,
-    get_default_global_config,
-    get_default_task_config,
+    TaskConfig,
 )
 
 

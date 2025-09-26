@@ -5,10 +5,9 @@ Development environment setup script.
 This script sets up the development environment for the Zuup download manager project.
 """
 
-import os
+from pathlib import Path
 import subprocess
 import sys
-from pathlib import Path
 
 
 def run_command(cmd: list[str], description: str, check: bool = True) -> bool:

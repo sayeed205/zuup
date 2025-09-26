@@ -3,45 +3,41 @@
 
 import asyncio
 import logging
-import time
-from datetime import datetime, timedelta
 from pathlib import Path
 import sys
 import tempfile
+import time
 
 # Add src to path for testing
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
+from zuup.storage.models import (
+    DownloadTask,
+    EngineType,
+    ProgressInfo,
+    TaskStatus,
+)
+from zuup.utils.debugging import (
+    TaskDebugger,
+    debug_context,
+    debug_trace,
+    end_debug_session,
+    get_profiler,
+    initialize_error_reporting,
+    report_error,
+    start_debug_session,
+)
 from zuup.utils.logging import (
-    setup_logging,
-    setup_debug_logging,
-    get_download_logger,
-    log_system_info,
     LogCapture,
-    StructuredFormatter,
+    get_download_logger,
+    setup_debug_logging,
+    setup_logging,
 )
 from zuup.utils.monitoring import (
     MetricsCollector,
     PerformanceMonitor,
-    initialize_monitoring,
     get_metrics_collector,
-)
-from zuup.utils.debugging import (
-    start_debug_session,
-    end_debug_session,
-    debug_trace,
-    debug_context,
-    TaskDebugger,
-    initialize_error_reporting,
-    report_error,
-    get_profiler,
-)
-from zuup.storage.models import (
-    DownloadTask,
-    ProgressInfo,
-    TaskStatus,
-    EngineType,
-    TaskConfig,
+    initialize_monitoring,
 )
 
 

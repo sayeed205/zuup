@@ -5,10 +5,10 @@ Build script for the Zuup download manager project.
 This script handles building, packaging, and distribution tasks.
 """
 
+from pathlib import Path
 import shutil
 import subprocess
 import sys
-from pathlib import Path
 
 
 def run_command(cmd: list[str], description: str, check: bool = True) -> bool:
@@ -113,9 +113,8 @@ def run_all_checks(fix_format: bool = False) -> bool:
     if fix_format:
         if not fix_formatting():
             success = False
-    else:
-        if not run_formatting_check():
-            success = False
+    elif not run_formatting_check():
+        success = False
 
     # Run linting
     if not run_linting():

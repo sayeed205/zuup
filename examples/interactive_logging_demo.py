@@ -3,34 +3,32 @@
 
 import asyncio
 import logging
-import random
-import time
-from datetime import datetime
 from pathlib import Path
+import random
 import sys
+import time
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from zuup.utils.logging import (
-    setup_logging,
-    setup_debug_logging,
-    get_download_logger,
-    log_system_info,
-)
-from zuup.utils.monitoring import (
-    initialize_monitoring,
-    PerformanceMonitor,
-    get_metrics_collector,
-)
+from zuup.storage.models import DownloadTask, EngineType, ProgressInfo, TaskStatus
 from zuup.utils.debugging import (
-    start_debug_session,
     end_debug_session,
+    get_profiler,
     initialize_error_reporting,
     report_error,
-    get_profiler,
+    start_debug_session,
 )
-from zuup.storage.models import DownloadTask, ProgressInfo, TaskStatus, EngineType
+from zuup.utils.logging import (
+    get_download_logger,
+    log_system_info,
+    setup_debug_logging,
+    setup_logging,
+)
+from zuup.utils.monitoring import (
+    PerformanceMonitor,
+    initialize_monitoring,
+)
 
 
 class InteractiveDemo:
@@ -388,7 +386,7 @@ class InteractiveDemo:
                 file_path = log_files[file_index]
                 print(f"\n--- Contents of {file_path.name} ---")
 
-                with open(file_path, "r") as f:
+                with open(file_path) as f:
                     lines = f.readlines()
 
                 # Show last 20 lines
