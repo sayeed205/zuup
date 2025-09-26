@@ -1,8 +1,7 @@
 """Download engine implementations."""
 
 from .base import BaseDownloadEngine
-from .ftp_engine import FTPEngine
-from .http_engine import HTTPEngine
+from .http_ftp_engine import HttpFtpEngine
 from .media_engine import MediaEngine
 from .pycurl_models import (
     AuthConfig,
@@ -41,9 +40,8 @@ __all__ = [
     "EngineRegistry",
     "ErrorAction",
     "ErrorCategory",
-    "FTPEngine",
-    "HTTPEngine",
     "HttpFtpConfig",
+    "HttpFtpEngine",
     "MediaEngine",
     "ProxyConfig",
     "ProxyType",

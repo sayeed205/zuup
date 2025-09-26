@@ -246,8 +246,7 @@ def get_registry() -> EngineRegistry:
 
 def initialize_default_engines() -> None:
     """Initialize the registry with default engines."""
-    from .ftp_engine import FTPEngine
-    from .http_engine import HTTPEngine
+    from .http_ftp_engine import HttpFtpEngine
     from .media_engine import MediaEngine
     from .torrent_engine import TorrentEngine
 
@@ -255,8 +254,10 @@ def initialize_default_engines() -> None:
 
     # Register default engines
     try:
-        registry.register_engine("http", HTTPEngine())
-        registry.register_engine("ftp", FTPEngine())
+        # Use the unified HttpFtpEngine for both HTTP and FTP protocols
+        http_ftp_engine = HttpFtpEngine()
+        registry.register_engine("http", http_ftp_engine)
+        registry.register_engine("ftp", http_ftp_engine)  # Same engine handles both
         registry.register_engine("torrent", TorrentEngine())
         registry.register_engine("media", MediaEngine())
         logger.info("Default engines initialized successfully")
