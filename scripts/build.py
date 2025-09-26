@@ -37,20 +37,20 @@ def clean_build() -> None:
 
     # Build and distribution directories
     build_dirs = ["build", "dist", "*.egg-info", "src/*.egg-info"]
-    
+
     # Cache directories
     cache_dirs = [
         ".mypy_cache",
-        ".ruff_cache", 
+        ".ruff_cache",
         ".pytest_cache",
         "__pycache__",
         "**/__pycache__",
         "**/*.pyc",
-        "**/*.pyo"
+        "**/*.pyo",
     ]
 
     all_patterns = build_dirs + cache_dirs
-    
+
     for pattern in all_patterns:
         for path in Path().glob(pattern):
             try:
@@ -67,45 +67,39 @@ def clean_build() -> None:
 def run_type_check() -> bool:
     """Run mypy type checking."""
     return run_command(
-        ["uv", "run", "mypy", "src/zuup/"], 
-        "Type checking with mypy",
-        check=False
+        ["uv", "run", "mypy", "src/zuup/"], "Type checking with mypy", check=False
     )
 
 
 def run_linting() -> bool:
     """Run ruff linting."""
     return run_command(
-        ["uv", "run", "ruff", "check", "src/"], 
-        "Linting with ruff",
-        check=False
+        ["uv", "run", "ruff", "check", "src/"], "Linting with ruff", check=False
     )
 
 
 def run_formatting_check() -> bool:
     """Check code formatting."""
     return run_command(
-        ["uv", "run", "ruff", "format", "--check", "src/"], 
+        ["uv", "run", "ruff", "format", "--check", "src/"],
         "Checking code formatting",
-        check=False
+        check=False,
     )
 
 
 def fix_formatting() -> bool:
     """Fix code formatting."""
     return run_command(
-        ["uv", "run", "ruff", "format", "src/"], 
-        "Fixing code formatting",
-        check=False
+        ["uv", "run", "ruff", "format", "src/"], "Fixing code formatting", check=False
     )
 
 
 def run_security_check() -> bool:
     """Run security checks with bandit."""
     return run_command(
-        ["uv", "run", "bandit", "-r", "src/", "-f", "text"], 
+        ["uv", "run", "bandit", "-r", "src/", "-f", "text"],
         "Running security checks",
-        check=False
+        check=False,
     )
 
 
@@ -114,7 +108,7 @@ def run_all_checks(fix_format: bool = False) -> bool:
     print("🔍 Running comprehensive code quality checks...\n")
 
     success = True
-    
+
     # Fix formatting if requested
     if fix_format:
         if not fix_formatting():
@@ -141,14 +135,16 @@ def build_package() -> bool:
 
 def install_dev_package() -> bool:
     """Install package in development mode."""
-    return run_command(["uv", "pip", "install", "-e", "."], "Installing in development mode")
+    return run_command(
+        ["uv", "pip", "install", "-e", "."], "Installing in development mode"
+    )
 
 
 def generate_requirements() -> bool:
     """Generate requirements.txt for deployment."""
     return run_command(
-        ["uv", "pip", "compile", "pyproject.toml", "-o", "requirements.txt"], 
-        "Generating requirements.txt"
+        ["uv", "pip", "compile", "pyproject.toml", "-o", "requirements.txt"],
+        "Generating requirements.txt",
     )
 
 
@@ -157,16 +153,26 @@ def main() -> None:
     import argparse
 
     parser = argparse.ArgumentParser(description="Build script for Zuup")
-    parser.add_argument("--clean", action="store_true", help="Clean build artifacts and caches")
+    parser.add_argument(
+        "--clean", action="store_true", help="Clean build artifacts and caches"
+    )
     parser.add_argument("--format", action="store_true", help="Fix code formatting")
     parser.add_argument("--check", action="store_true", help="Run code quality checks")
-    parser.add_argument("--type-check", action="store_true", help="Run type checking only")
+    parser.add_argument(
+        "--type-check", action="store_true", help="Run type checking only"
+    )
     parser.add_argument("--lint", action="store_true", help="Run linting only")
     parser.add_argument("--security", action="store_true", help="Run security checks")
     parser.add_argument("--build", action="store_true", help="Build package")
-    parser.add_argument("--install-dev", action="store_true", help="Install in development mode")
-    parser.add_argument("--requirements", action="store_true", help="Generate requirements.txt")
-    parser.add_argument("--all", action="store_true", help="Run all steps (clean, check, build)")
+    parser.add_argument(
+        "--install-dev", action="store_true", help="Install in development mode"
+    )
+    parser.add_argument(
+        "--requirements", action="store_true", help="Generate requirements.txt"
+    )
+    parser.add_argument(
+        "--all", action="store_true", help="Run all steps (clean, check, build)"
+    )
 
     args = parser.parse_args()
 
@@ -217,7 +223,7 @@ def main() -> None:
         if not build_package():
             success = False
 
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     if success:
         print("🎉 Build process completed successfully!")
     else:

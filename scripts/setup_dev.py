@@ -34,7 +34,7 @@ def run_command(cmd: list[str], description: str, check: bool = True) -> bool:
 def check_system_dependencies() -> bool:
     """Check if required system dependencies are installed."""
     print("🔍 Checking system dependencies...")
-    
+
     # Check uv
     try:
         subprocess.run(["uv", "--version"], check=True, capture_output=True)
@@ -43,53 +43,59 @@ def check_system_dependencies() -> bool:
         print("❌ uv is not installed. Please install it first:")
         print("   curl -LsSf https://astral.sh/uv/install.sh | sh")
         return False
-    
+
     # Check Python version
     if sys.version_info < (3, 10):
-        print(f"❌ Python 3.10+ required, found {sys.version_info.major}.{sys.version_info.minor}")
+        print(
+            f"❌ Python 3.10+ required, found {sys.version_info.major}.{sys.version_info.minor}"
+        )
         return False
     else:
-        print(f"✅ Python {sys.version_info.major}.{sys.version_info.minor} is compatible")
-    
+        print(
+            f"✅ Python {sys.version_info.major}.{sys.version_info.minor} is compatible"
+        )
+
     return True
 
 
 def setup_development_environment() -> bool:
     """Set up the development environment."""
     success = True
-    
+
     # Install dependencies
     if not run_command(["uv", "sync", "--dev"], "Installing dependencies"):
         return False
 
     # Create necessary directories
-    directories = [
-        "logs",
-        "downloads", 
-        "temp",
-        ".mypy_cache",
-        ".ruff_cache"
-    ]
-    
+    directories = ["logs", "downloads", "temp", ".mypy_cache", ".ruff_cache"]
+
     for directory in directories:
         Path(directory).mkdir(exist_ok=True)
     print("✅ Created necessary directories")
 
     # Run initial checks
     print("\n🔧 Running initial code quality checks...")
-    
+
     # Type checking
-    if not run_command(["uv", "run", "mypy", "src/zuup/"], "Running type check", check=False):
+    if not run_command(
+        ["uv", "run", "mypy", "src/zuup/"], "Running type check", check=False
+    ):
         print("⚠️  Type checking found issues (this is normal for initial setup)")
         success = False
 
     # Linting
-    if not run_command(["uv", "run", "ruff", "check", "src/"], "Running linter", check=False):
+    if not run_command(
+        ["uv", "run", "ruff", "check", "src/"], "Running linter", check=False
+    ):
         print("⚠️  Linting found issues (this is normal for initial setup)")
         success = False
 
     # Formatting check
-    if not run_command(["uv", "run", "ruff", "format", "--check", "src/"], "Checking code formatting", check=False):
+    if not run_command(
+        ["uv", "run", "ruff", "format", "--check", "src/"],
+        "Checking code formatting",
+        check=False,
+    ):
         print("⚠️  Code formatting issues found (this is normal for initial setup)")
         success = False
 
@@ -107,12 +113,12 @@ def main() -> None:
     # Setup development environment
     setup_success = setup_development_environment()
 
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     if setup_success:
         print("🎉 Development environment setup complete!")
     else:
         print("⚠️  Development environment setup completed with warnings")
-    
+
     print("\n📋 Available development commands:")
     print("  uv run zuup --help                    # Show CLI help")
     print("  uv run mypy src/zuup/                 # Run type checking")
@@ -120,7 +126,7 @@ def main() -> None:
     print("  uv run ruff format src/               # Format code")
     print("  uv run python -m zuup.main           # Run application")
     print("  uv run python examples/sample_downloads.py  # Run examples")
-    
+
     print("\n🛠️  Development workflow:")
     print("  1. Make code changes")
     print("  2. Run: uv run ruff format src/      # Format code")
