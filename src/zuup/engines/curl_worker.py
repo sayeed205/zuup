@@ -153,12 +153,27 @@ class CurlWorker:
 
         self.curl_handle = pycurl.Curl()
 
-        # Basic URL and range setup
+        # Basic URL setup
         self.curl_handle.setopt(pycurl.URL, self.segment.url.encode("utf-8"))
 
-        # Set range request for segment
-        range_header = f"{self.segment.start_byte}-{self.segment.end_byte}"
-        self.curl_handle.setopt(pycurl.RANGE, range_header.encode("utf-8"))
+        # Detect protocol and setup protocol-specific options
+        from urllib.parse import urlparse
+
+        parsed_url = urlparse(self.segment.url)
+        protocol = parsed_url.scheme.lower()
+
+        if protocol in ("ftp", "ftps"):
+            self._setup_ftp_options()
+        elif protocol == "sftp":
+            self._setup_sftp_options()
+        else:
+            # HTTP/HTTPS setup
+            self._setup_http_options()
+
+        # Set range request for segment (works for HTTP and FTP)
+        if protocol in ("http", "https", "ftp", "ftps"):
+            range_header = f"{self.segment.start_byte}-{self.segment.end_byte}"
+            self.curl_handle.setopt(pycurl.RANGE, range_header.encode("utf-8"))
 
         # Timeout settings
         self.curl_handle.setopt(pycurl.TIMEOUT, self.config.timeout)
@@ -168,26 +183,14 @@ class CurlWorker:
         self.curl_handle.setopt(pycurl.LOW_SPEED_LIMIT, self.config.low_speed_limit)
         self.curl_handle.setopt(pycurl.LOW_SPEED_TIME, self.config.low_speed_time)
 
-        # User agent
-        self.curl_handle.setopt(
-            pycurl.USERAGENT, self.config.user_agent.encode("utf-8")
-        )
-
-        # Follow redirects with enhanced configuration
-        if self.config.follow_redirects:
-            self.curl_handle.setopt(pycurl.FOLLOWLOCATION, 1)
-            self.curl_handle.setopt(pycurl.MAXREDIRS, self.config.max_redirects)
-            # Automatically referer on redirects
-            self.curl_handle.setopt(pycurl.AUTOREFERER, 1)
-            # Keep POST method on 301/302 redirects (default behavior)
-            # pycurl handles this automatically
+        # User agent (for HTTP/HTTPS)
+        if protocol in ("http", "https"):
+            self.curl_handle.setopt(
+                pycurl.USERAGENT, self.config.user_agent.encode("utf-8")
+            )
 
         # SSL/TLS settings
         self._setup_ssl_options()
-
-        # Setup HTTP/HTTPS specific features
-        self._setup_headers()
-        self._setup_cookies()
 
         # Authentication
         if self.config.auth.method.value != "none":
@@ -215,6 +218,93 @@ class CurlWorker:
         self._open_temp_file()
 
         logger.debug(f"Initialized curl handle for worker {self.worker_id}")
+
+    def _setup_http_options(self) -> None:
+        """Setup HTTP/HTTPS specific options."""
+        # Follow redirects with enhanced configuration
+        if self.config.follow_redirects:
+            self.curl_handle.setopt(pycurl.FOLLOWLOCATION, 1)
+            self.curl_handle.setopt(pycurl.MAXREDIRS, self.config.max_redirects)
+            # Automatically referer on redirects
+            self.curl_handle.setopt(pycurl.AUTOREFERER, 1)
+
+        # Setup HTTP/HTTPS specific features
+        self._setup_headers()
+        self._setup_cookies()
+
+    def _setup_ftp_options(self) -> None:
+        """Setup FTP/FTPS specific options."""
+        # FTP specific settings
+        if self.config.ftp_use_epsv:
+            self.curl_handle.setopt(pycurl.FTP_USE_EPSV, 1)
+        else:
+            self.curl_handle.setopt(pycurl.FTP_USE_EPSV, 0)
+
+        if self.config.ftp_use_eprt:
+            self.curl_handle.setopt(pycurl.FTP_USE_EPRT, 1)
+        else:
+            self.curl_handle.setopt(pycurl.FTP_USE_EPRT, 0)
+
+        # Create missing directories if configured
+        if self.config.ftp_create_missing_dirs:
+            self.curl_handle.setopt(pycurl.FTP_CREATE_MISSING_DIRS, 1)
+
+        # Skip PASV IP address for NAT/firewall issues
+        if self.config.ftp_skip_pasv_ip:
+            self.curl_handle.setopt(pycurl.FTP_SKIP_PASV_IP, 1)
+
+        # Use PRET command for some FTP servers that require it
+        if self.config.ftp_use_pret:
+            self.curl_handle.setopt(pycurl.FTP_USE_PRET, 1)
+
+        # Enable FTP resume support
+        self.curl_handle.setopt(pycurl.FTP_RESPONSE_TIMEOUT, self.config.timeout)
+
+        # Set transfer mode to binary (important for file integrity)
+        self.curl_handle.setopt(pycurl.TRANSFERTEXT, 0)
+
+        # Set FTP file method for better compatibility
+        self.curl_handle.setopt(pycurl.FTPMETHOD, pycurl.FTPMETHOD_SINGLECWD)
+
+        logger.debug(f"Configured FTP options for worker {self.worker_id}")
+
+    def _setup_sftp_options(self) -> None:
+        """Setup SFTP specific options."""
+        ssh_config = self.config.ssh
+
+        # SSH host key verification
+        if ssh_config.known_hosts_path and ssh_config.known_hosts_path.exists():
+            self.curl_handle.setopt(
+                pycurl.SSH_KNOWNHOSTS, str(ssh_config.known_hosts_path)
+            )
+        else:
+            # Disable host key verification if no known_hosts file
+            # WARNING: This is insecure and should only be used for development
+            self.curl_handle.setopt(pycurl.SSH_KNOWNHOSTS, "")
+
+        # SSH key-based authentication
+        if ssh_config.private_key_path and ssh_config.private_key_path.exists():
+            self.curl_handle.setopt(
+                pycurl.SSH_PRIVATE_KEYFILE, str(ssh_config.private_key_path)
+            )
+
+            if ssh_config.public_key_path and ssh_config.public_key_path.exists():
+                self.curl_handle.setopt(
+                    pycurl.SSH_PUBLIC_KEYFILE, str(ssh_config.public_key_path)
+                )
+
+            # Set passphrase if provided
+            if ssh_config.passphrase:
+                self.curl_handle.setopt(
+                    pycurl.KEYPASSWD, ssh_config.passphrase.encode("utf-8")
+                )
+
+        # SFTP specific settings
+        # Enable compression for SFTP
+        if self.config.enable_compression:
+            self.curl_handle.setopt(pycurl.SSH_COMPRESSION, 1)
+
+        logger.debug(f"Configured SFTP options for worker {self.worker_id}")
 
     def _setup_headers(self) -> None:
         """Setup custom headers for curl handle."""
@@ -248,23 +338,66 @@ class CurlWorker:
         """Setup authentication for curl handle."""
         auth = self.config.auth
 
-        if auth.method.value == "basic":
-            self.curl_handle.setopt(pycurl.HTTPAUTH, pycurl.HTTPAUTH_BASIC)
-        elif auth.method.value == "digest":
-            self.curl_handle.setopt(pycurl.HTTPAUTH, pycurl.HTTPAUTH_DIGEST)
-        elif auth.method.value == "bearer":
-            # Bearer token is handled in _setup_headers()
-            pass
-        elif auth.method.value == "ntlm":
-            self.curl_handle.setopt(pycurl.HTTPAUTH, pycurl.HTTPAUTH_NTLM)
-        elif auth.method.value == "negotiate":
-            self.curl_handle.setopt(pycurl.HTTPAUTH, pycurl.HTTPAUTH_GSSNEGOTIATE)
-        elif auth.method.value == "auto":
-            self.curl_handle.setopt(pycurl.HTTPAUTH, pycurl.HTTPAUTH_ANY)
+        # Detect protocol for authentication setup
+        from urllib.parse import urlparse
 
-        # Set username and password for non-bearer authentication
-        if auth.username and auth.password and auth.method.value != "bearer":
-            self.curl_handle.setopt(pycurl.USERPWD, f"{auth.username}:{auth.password}")
+        parsed_url = urlparse(self.segment.url)
+        protocol = parsed_url.scheme.lower()
+
+        if protocol in ("http", "https"):
+            # HTTP authentication methods
+            if auth.method.value == "basic":
+                self.curl_handle.setopt(pycurl.HTTPAUTH, pycurl.HTTPAUTH_BASIC)
+            elif auth.method.value == "digest":
+                self.curl_handle.setopt(pycurl.HTTPAUTH, pycurl.HTTPAUTH_DIGEST)
+            elif auth.method.value == "bearer":
+                # Bearer token is handled in _setup_headers()
+                pass
+            elif auth.method.value == "ntlm":
+                self.curl_handle.setopt(pycurl.HTTPAUTH, pycurl.HTTPAUTH_NTLM)
+            elif auth.method.value == "negotiate":
+                self.curl_handle.setopt(pycurl.HTTPAUTH, pycurl.HTTPAUTH_GSSNEGOTIATE)
+            elif auth.method.value == "auto":
+                self.curl_handle.setopt(pycurl.HTTPAUTH, pycurl.HTTPAUTH_ANY)
+
+            # Set username and password for non-bearer authentication
+            if auth.username and auth.password and auth.method.value != "bearer":
+                self.curl_handle.setopt(
+                    pycurl.USERPWD, f"{auth.username}:{auth.password}"
+                )
+
+        elif protocol in ("ftp", "ftps"):
+            # FTP authentication - always uses username/password
+            if auth.username and auth.password:
+                self.curl_handle.setopt(
+                    pycurl.USERPWD, f"{auth.username}:{auth.password}"
+                )
+            elif auth.username:
+                # Anonymous FTP with custom username
+                self.curl_handle.setopt(pycurl.USERPWD, f"{auth.username}:")
+            else:
+                # Anonymous FTP - curl handles this automatically
+                pass
+
+        elif protocol == "sftp":
+            # SFTP authentication - can use password or key-based
+            if auth.username:
+                if auth.password and not self.config.ssh.private_key_path:
+                    # Password-based authentication (only if no SSH key is configured)
+                    self.curl_handle.setopt(
+                        pycurl.USERPWD, f"{auth.username}:{auth.password}"
+                    )
+                else:
+                    # Key-based authentication or username-only (keys configured in _setup_sftp_options)
+                    self.curl_handle.setopt(
+                        pycurl.USERNAME, auth.username.encode("utf-8")
+                    )
+
+            # SSH key authentication is handled in _setup_sftp_options()
+
+        logger.debug(
+            f"Configured {protocol} authentication for worker {self.worker_id}"
+        )
 
     def _setup_proxy(self) -> None:
         """Setup proxy configuration for curl handle."""

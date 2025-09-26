@@ -319,6 +319,9 @@ class HttpFtpConfig(BaseModel):
     ftp_use_epsv: bool = True
     ftp_use_eprt: bool = True
     ftp_create_missing_dirs: bool = False
+    ftp_skip_pasv_ip: bool = False  # Skip PASV IP address for NAT/firewall issues
+    ftp_use_pret: bool = False  # Use PRET command for some FTP servers
+    ftp_alternative_to_user: str = "anonymous"  # Alternative username for anonymous FTP
 
     # Performance settings
     buffer_size: int = 16384  # 16KB

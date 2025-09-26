@@ -7,9 +7,10 @@ from collections.abc import AsyncIterator
 import logging
 import math
 from pathlib import Path
+import re
 import time
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 import pycurl
 
@@ -827,6 +828,441 @@ class HttpFtpEngine(BaseDownloadEngine):
             self._update_progress(task_id, progress)
 
         # Cleanup will be handled by the download context manager
+
+    async def list_ftp_directory(self, url: str) -> list[dict[str, Any]]:
+        """
+        List files in an FTP directory for batch downloads.
+
+        Args:
+            url: FTP directory URL to list
+
+        Returns:
+            List of file information dictionaries
+
+        Raises:
+            NetworkError: If directory listing fails
+            ValidationError: If URL is not FTP
+        """
+        parsed = urlparse(url)
+        if parsed.scheme.lower() not in ("ftp", "ftps"):
+            raise ValidationError(f"URL is not FTP/FTPS: {url}")
+
+        logger.info(f"Listing FTP directory: {url}")
+
+        curl_handle = None
+        try:
+            curl_handle = pycurl.Curl()
+
+            # Configure for directory listing
+            curl_handle.setopt(pycurl.URL, url.encode("utf-8"))
+            curl_handle.setopt(pycurl.FTPLISTONLY, 1)  # List filenames only
+            curl_handle.setopt(pycurl.TIMEOUT, self.config.connect_timeout)
+
+            # SSL/TLS settings
+            self._setup_curl_ssl_options(curl_handle)
+
+            # Authentication
+            if self.config.auth.method.value != "none":
+                self._setup_curl_auth(curl_handle)
+
+            # FTP specific settings
+            if self.config.ftp_use_epsv:
+                curl_handle.setopt(pycurl.FTP_USE_EPSV, 1)
+            else:
+                curl_handle.setopt(pycurl.FTP_USE_EPSV, 0)
+
+            if self.config.ftp_use_eprt:
+                curl_handle.setopt(pycurl.FTP_USE_EPRT, 1)
+            else:
+                curl_handle.setopt(pycurl.FTP_USE_EPRT, 0)
+
+            # Proxy settings
+            self._setup_curl_proxy(curl_handle)
+
+            # Capture directory listing output
+            listing_data = []
+
+            def write_callback(data: bytes) -> int:
+                listing_data.append(data.decode("utf-8", errors="ignore"))
+                return len(data)
+
+            curl_handle.setopt(pycurl.WRITEFUNCTION, write_callback)
+
+            # Perform directory listing
+            await asyncio.get_event_loop().run_in_executor(None, curl_handle.perform)
+
+            # Get response information
+            response_code = curl_handle.getinfo(pycurl.RESPONSE_CODE)
+
+            if response_code not in (200, 226, 250):  # FTP success codes
+                error_msg = f"FTP directory listing failed with code {response_code}"
+                raise NetworkError(error_msg)
+
+            # Parse directory listing
+            files = []
+            listing_text = "".join(listing_data).strip()
+
+            if listing_text:
+                for line in listing_text.split("\n"):
+                    line = line.strip()
+                    if line and not line.startswith(
+                        "."
+                    ):  # Skip hidden files and empty lines
+                        # Create file URL by joining with directory URL
+                        file_url = urljoin(url.rstrip("/") + "/", line)
+                        files.append(
+                            {
+                                "name": line,
+                                "url": file_url,
+                                "type": "file",  # Assume file for now
+                                "size": None,  # Size not available in simple listing
+                            }
+                        )
+
+            logger.info(f"Found {len(files)} files in FTP directory")
+            return files
+
+        except pycurl.error as e:
+            raise NetworkError(f"Failed to list FTP directory: {e}") from e
+        except Exception as e:
+            raise NetworkError(f"Unexpected error listing FTP directory: {e}") from e
+        finally:
+            if curl_handle:
+                curl_handle.close()
+
+    async def list_ftp_directory_detailed(self, url: str) -> list[dict[str, Any]]:
+        """
+        List files in an FTP directory with detailed information.
+
+        Args:
+            url: FTP directory URL to list
+
+        Returns:
+            List of detailed file information dictionaries
+
+        Raises:
+            NetworkError: If directory listing fails
+            ValidationError: If URL is not FTP
+        """
+        parsed = urlparse(url)
+        if parsed.scheme.lower() not in ("ftp", "ftps"):
+            raise ValidationError(f"URL is not FTP/FTPS: {url}")
+
+        logger.info(f"Listing FTP directory with details: {url}")
+
+        curl_handle = None
+        try:
+            curl_handle = pycurl.Curl()
+
+            # Configure for detailed directory listing
+            curl_handle.setopt(pycurl.URL, url.encode("utf-8"))
+            # Don't use FTPLISTONLY for detailed listing
+            curl_handle.setopt(pycurl.TIMEOUT, self.config.connect_timeout)
+
+            # SSL/TLS settings
+            self._setup_curl_ssl_options(curl_handle)
+
+            # Authentication
+            if self.config.auth.method.value != "none":
+                self._setup_curl_auth(curl_handle)
+
+            # FTP specific settings
+            if self.config.ftp_use_epsv:
+                curl_handle.setopt(pycurl.FTP_USE_EPSV, 1)
+            else:
+                curl_handle.setopt(pycurl.FTP_USE_EPSV, 0)
+
+            if self.config.ftp_use_eprt:
+                curl_handle.setopt(pycurl.FTP_USE_EPRT, 1)
+            else:
+                curl_handle.setopt(pycurl.FTP_USE_EPRT, 0)
+
+            # Proxy settings
+            self._setup_curl_proxy(curl_handle)
+
+            # Capture directory listing output
+            listing_data = []
+
+            def write_callback(data: bytes) -> int:
+                listing_data.append(data.decode("utf-8", errors="ignore"))
+                return len(data)
+
+            curl_handle.setopt(pycurl.WRITEFUNCTION, write_callback)
+
+            # Perform directory listing
+            await asyncio.get_event_loop().run_in_executor(None, curl_handle.perform)
+
+            # Get response information
+            response_code = curl_handle.getinfo(pycurl.RESPONSE_CODE)
+
+            if response_code not in (200, 226, 250):  # FTP success codes
+                error_msg = f"FTP directory listing failed with code {response_code}"
+                raise NetworkError(error_msg)
+
+            # Parse detailed directory listing
+            files = []
+            listing_text = "".join(listing_data).strip()
+
+            if listing_text:
+                files = self._parse_ftp_listing(listing_text, url)
+
+            logger.info(f"Found {len(files)} items in FTP directory")
+            return files
+
+        except pycurl.error as e:
+            raise NetworkError(f"Failed to list FTP directory: {e}") from e
+        except Exception as e:
+            raise NetworkError(f"Unexpected error listing FTP directory: {e}") from e
+        finally:
+            if curl_handle:
+                curl_handle.close()
+
+    def _parse_ftp_listing(
+        self, listing_text: str, base_url: str
+    ) -> list[dict[str, Any]]:
+        """
+        Parse FTP directory listing text into structured data.
+
+        Args:
+            listing_text: Raw FTP listing text
+            base_url: Base URL for constructing file URLs
+
+        Returns:
+            List of parsed file information
+        """
+        files = []
+
+        for line in listing_text.split("\n"):
+            line = line.strip()
+            if not line or line.startswith("total"):
+                continue
+
+            # Try to parse Unix-style listing (most common)
+            # Format: drwxrwxrwx 1 owner group size date time name
+            unix_pattern = r"^([d-])([rwx-]{9})\s+\d+\s+\S+\s+\S+\s+(\d+)\s+(\S+\s+\S+\s+\S+)\s+(.+)$"
+            match = re.match(unix_pattern, line)
+
+            if match:
+                file_type = "directory" if match.group(1) == "d" else "file"
+                permissions = match.group(2)
+                size = int(match.group(3)) if match.group(3).isdigit() else None
+                date_str = match.group(4)
+                name = match.group(5)
+
+                # Skip current and parent directory entries
+                if name in (".", ".."):
+                    continue
+
+                # Create file URL
+                file_url = urljoin(base_url.rstrip("/") + "/", name)
+
+                files.append(
+                    {
+                        "name": name,
+                        "url": file_url,
+                        "type": file_type,
+                        "size": size,
+                        "permissions": permissions,
+                        "date": date_str,
+                    }
+                )
+            else:
+                # Try DOS-style listing
+                # Format: MM-DD-YY HH:MM[AP]M <DIR> name
+                # Format: MM-DD-YY HH:MM[AP]M size name
+                dos_pattern = r"^(\d{2}-\d{2}-\d{2})\s+(\d{1,2}:\d{2}[AP]M)\s+(?:(<DIR>)|(\d+))\s+(.+)$"
+                dos_match = re.match(dos_pattern, line)
+
+                if dos_match:
+                    date = dos_match.group(1)
+                    time = dos_match.group(2)
+                    is_dir = dos_match.group(3) == "<DIR>"
+                    size = int(dos_match.group(4)) if dos_match.group(4) else None
+                    name = dos_match.group(5)
+
+                    file_type = "directory" if is_dir else "file"
+                    file_url = urljoin(base_url.rstrip("/") + "/", name)
+
+                    files.append(
+                        {
+                            "name": name,
+                            "url": file_url,
+                            "type": file_type,
+                            "size": size,
+                            "date": f"{date} {time}",
+                        }
+                    )
+                # Fallback: treat as simple filename
+                elif line and not line.startswith("."):
+                    file_url = urljoin(base_url.rstrip("/") + "/", line)
+                    files.append(
+                        {
+                            "name": line,
+                            "url": file_url,
+                            "type": "file",
+                            "size": None,
+                        }
+                    )
+
+        return files
+
+    async def create_batch_download_tasks(
+        self, directory_url: str, file_filter: str | None = None
+    ) -> list[DownloadTask]:
+        """
+        Create download tasks for all files in an FTP directory.
+
+        Args:
+            directory_url: FTP directory URL
+            file_filter: Optional regex pattern to filter files
+
+        Returns:
+            List of download tasks for files in the directory
+
+        Raises:
+            NetworkError: If directory listing fails
+            ValidationError: If URL is invalid
+        """
+        logger.info(f"Creating batch download tasks for directory: {directory_url}")
+
+        # List directory contents
+        files = await self.list_ftp_directory_detailed(directory_url)
+
+        # Filter files only (not directories)
+        file_items = [f for f in files if f["type"] == "file"]
+
+        # Apply file filter if provided
+        if file_filter:
+            try:
+                pattern = re.compile(file_filter, re.IGNORECASE)
+                file_items = [f for f in file_items if pattern.search(f["name"])]
+            except re.error as e:
+                raise ValidationError(f"Invalid file filter regex: {e}")
+
+        # Create download tasks
+        tasks = []
+        for file_info in file_items:
+            from cuid import cuid
+
+            task = DownloadTask(
+                id=cuid(),
+                url=file_info["url"],
+                filename=file_info["name"],
+                file_size=file_info.get("size"),
+                destination=Path.cwd()
+                / file_info["name"],  # Default to current directory
+                status=TaskStatus.PENDING,
+            )
+            tasks.append(task)
+
+        logger.info(f"Created {len(tasks)} download tasks from directory listing")
+        return tasks
+
+    async def is_ftp_directory(self, url: str) -> bool:
+        """
+        Check if an FTP URL points to a directory.
+
+        Args:
+            url: FTP URL to check
+
+        Returns:
+            True if URL is a directory, False if it's a file
+
+        Raises:
+            NetworkError: If unable to determine URL type
+            ValidationError: If URL is not FTP
+        """
+        parsed = urlparse(url)
+        if parsed.scheme.lower() not in ("ftp", "ftps"):
+            raise ValidationError(f"URL is not FTP/FTPS: {url}")
+
+        logger.debug(f"Checking if FTP URL is directory: {url}")
+
+        curl_handle = None
+        try:
+            curl_handle = pycurl.Curl()
+
+            # Configure for HEAD-like request to check if it's a directory
+            curl_handle.setopt(pycurl.URL, url.encode("utf-8"))
+            curl_handle.setopt(pycurl.NOBODY, 1)  # Don't download body
+            curl_handle.setopt(pycurl.TIMEOUT, self.config.connect_timeout)
+
+            # SSL/TLS settings
+            self._setup_curl_ssl_options(curl_handle)
+
+            # Authentication
+            if self.config.auth.method.value != "none":
+                self._setup_curl_auth(curl_handle)
+
+            # FTP specific settings
+            if self.config.ftp_use_epsv:
+                curl_handle.setopt(pycurl.FTP_USE_EPSV, 1)
+            else:
+                curl_handle.setopt(pycurl.FTP_USE_EPSV, 0)
+
+            # Proxy settings
+            self._setup_curl_proxy(curl_handle)
+
+            # Perform request
+            try:
+                await asyncio.get_event_loop().run_in_executor(
+                    None, curl_handle.perform
+                )
+
+                # If we get here without error, it's likely a file
+                response_code = curl_handle.getinfo(pycurl.RESPONSE_CODE)
+
+                if response_code in (200, 213, 226):  # File exists
+                    return False
+                elif response_code in (550,):  # Not a file, might be directory
+                    return True
+                else:
+                    # Try as directory by appending / and doing a list
+                    return await self._try_directory_listing(url)
+
+            except pycurl.error as e:
+                # If HEAD fails, try directory listing
+                if e.args[0] in (
+                    pycurl.E_FTP_WEIRD_SERVER_REPLY,
+                    pycurl.E_REMOTE_FILE_NOT_FOUND,
+                ):
+                    return await self._try_directory_listing(url)
+                else:
+                    raise NetworkError(f"Failed to check FTP URL type: {e}") from e
+
+        except Exception as e:
+            if not isinstance(e, (NetworkError, ValidationError)):
+                raise NetworkError(
+                    f"Unexpected error checking FTP URL type: {e}"
+                ) from e
+            raise
+        finally:
+            if curl_handle:
+                curl_handle.close()
+
+    async def _try_directory_listing(self, url: str) -> bool:
+        """
+        Try to perform a directory listing to determine if URL is a directory.
+
+        Args:
+            url: URL to test
+
+        Returns:
+            True if directory listing succeeds, False otherwise
+        """
+        try:
+            # Ensure URL ends with / for directory listing
+            test_url = url.rstrip("/") + "/"
+
+            # Try a simple directory listing
+            files = await self.list_ftp_directory(test_url)
+
+            # If we got results, it's a directory
+            return True
+
+        except Exception:
+            # If directory listing fails, assume it's a file
+            return False
 
     def get_progress(self, task_id: str) -> ProgressInfo:
         """

@@ -280,11 +280,17 @@ class ErrorHandler:
             pycurl.E_HTTP_RETURNED_ERROR: "Server returned an error",
             pycurl.E_LOGIN_DENIED: "Login credentials were rejected",
             pycurl.E_REMOTE_ACCESS_DENIED: "Access denied by server",
+            pycurl.E_FTP_ACCESS_DENIED: "FTP access denied by server",
             pycurl.E_SSL_CONNECT_ERROR: "SSL connection failed",
             pycurl.E_SSL_PEER_CERTIFICATE: "SSL certificate verification failed",
             pycurl.E_WRITE_ERROR: "Could not write to file",
             pycurl.E_PARTIAL_FILE: "Incomplete file received",
             pycurl.E_TOO_MANY_REDIRECTS: "Too many redirects",
+            pycurl.E_SSH: "SSH/SFTP authentication or connection failed",
+            pycurl.E_FTP_WEIRD_SERVER_REPLY: "FTP server returned unexpected response",
+            pycurl.E_FTP_COULDNT_STOR_FILE: "Could not store file on FTP server",
+            pycurl.E_FTP_COULDNT_USE_REST: "FTP server does not support resume",
+            pycurl.E_REMOTE_FILE_NOT_FOUND: "File not found on server",
         }
 
         if error.curl_code in specific_messages:
@@ -604,6 +610,12 @@ def categorize_curl_error(curl_code: int) -> tuple[ErrorCategory, ErrorAction]:
     auth_errors = {
         pycurl.E_LOGIN_DENIED,
         pycurl.E_REMOTE_ACCESS_DENIED,
+        pycurl.E_FTP_ACCESS_DENIED,
+    }
+
+    # SSH/SFTP errors - some retryable, some not
+    ssh_errors = {
+        pycurl.E_SSH,  # Generic SSH error (code 79)
     }
 
     # SSL errors - not retryable
@@ -629,6 +641,11 @@ def categorize_curl_error(curl_code: int) -> tuple[ErrorCategory, ErrorAction]:
         else:
             return ErrorCategory.PROTOCOL, ErrorAction.RETRY
     elif curl_code in auth_errors:
+        return ErrorCategory.AUTHENTICATION, ErrorAction.FAIL_DOWNLOAD
+    elif curl_code in ssh_errors:
+        # Handle SSH/SFTP errors - E_SSH is generic and could be auth or network related
+        # Since we can't distinguish the specific SSH error type, treat as authentication failure
+        # which is more likely to be the correct action (fail rather than retry indefinitely)
         return ErrorCategory.AUTHENTICATION, ErrorAction.FAIL_DOWNLOAD
     elif curl_code in ssl_errors:
         return ErrorCategory.PROTOCOL, ErrorAction.FAIL_DOWNLOAD
