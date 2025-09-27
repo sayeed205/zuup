@@ -298,9 +298,10 @@ class HttpFtpEngine(BaseDownloadEngine):
             curl_handle.setopt(pycurl.HTTPAUTH, pycurl.HTTPAUTH_DIGEST)
         elif auth.method.value == "bearer":
             # Bearer token authentication via Authorization header
-            if auth.token:
+            token = auth.get_token()
+            if token:
                 headers = self.config.custom_headers.copy()
-                headers["Authorization"] = f"Bearer {auth.token}"
+                headers["Authorization"] = f"Bearer {token}"
                 header_list = [f"{k}: {v}" for k, v in headers.items()]
                 curl_handle.setopt(pycurl.HTTPHEADER, header_list)
         elif auth.method.value == "ntlm":
@@ -310,8 +311,12 @@ class HttpFtpEngine(BaseDownloadEngine):
         elif auth.method.value == "auto":
             curl_handle.setopt(pycurl.HTTPAUTH, pycurl.HTTPAUTH_ANY)
 
-        if auth.username and auth.password:
-            curl_handle.setopt(pycurl.USERPWD, f"{auth.username}:{auth.password}")
+        # Use secure credential retrieval
+        username = auth.get_username()
+        password = auth.get_password()
+        
+        if username and password:
+            curl_handle.setopt(pycurl.USERPWD, f"{username}:{password}")
 
     def _setup_curl_cookies(self, curl_handle: pycurl.Curl) -> None:
         """Setup cookies for curl handle."""
@@ -363,10 +368,11 @@ class HttpFtpEngine(BaseDownloadEngine):
         # Add bearer token if using bearer authentication
         if (
             self.config.auth.method.value == "bearer"
-            and self.config.auth.token
             and "Authorization" not in self.config.custom_headers
         ):
-            headers.append(f"Authorization: Bearer {self.config.auth.token}")
+            token = self.config.auth.get_token()
+            if token:
+                headers.append(f"Authorization: Bearer {token}")
 
         if headers:
             curl_handle.setopt(pycurl.HTTPHEADER, headers)
@@ -374,29 +380,112 @@ class HttpFtpEngine(BaseDownloadEngine):
     def _setup_curl_ssl_options(self, curl_handle: pycurl.Curl) -> None:
         """Setup SSL/TLS options for curl handle."""
         # Basic SSL verification
-        if self.config.verify_ssl:
+        if self.config.verify_ssl and not self.config.ssl_development_mode:
             curl_handle.setopt(pycurl.SSL_VERIFYPEER, 1)
             curl_handle.setopt(pycurl.SSL_VERIFYHOST, 2)
         else:
             curl_handle.setopt(pycurl.SSL_VERIFYPEER, 0)
             curl_handle.setopt(pycurl.SSL_VERIFYHOST, 0)
+            
+            # Log warning for development mode
+            if self.config.ssl_development_mode:
+                logger.warning("SSL verification disabled for development mode - NOT SECURE")
+
+        # SSL/TLS version specification
+        if self.config.ssl_version:
+            ssl_version_map = {
+                "TLSv1": pycurl.SSLVERSION_TLSv1,
+                "TLSv1.0": pycurl.SSLVERSION_TLSv1_0,
+                "TLSv1.1": pycurl.SSLVERSION_TLSv1_1,
+                "TLSv1.2": pycurl.SSLVERSION_TLSv1_2,
+                "TLSv1.3": pycurl.SSLVERSION_TLSv1_3,
+                "SSLv2": pycurl.SSLVERSION_SSLv2,
+                "SSLv3": pycurl.SSLVERSION_SSLv3,
+            }
+            if self.config.ssl_version in ssl_version_map:
+                curl_handle.setopt(pycurl.SSLVERSION, ssl_version_map[self.config.ssl_version])
 
         # Custom CA certificate bundle
         if self.config.ca_cert_path and self.config.ca_cert_path.exists():
             curl_handle.setopt(pycurl.CAINFO, str(self.config.ca_cert_path))
 
+        # CA certificate directory
+        if self.config.ssl_ca_cert_dir and self.config.ssl_ca_cert_dir.exists():
+            curl_handle.setopt(pycurl.CAPATH, str(self.config.ssl_ca_cert_dir))
+
+        # Certificate Revocation List
+        if self.config.ssl_crl_file and self.config.ssl_crl_file.exists():
+            curl_handle.setopt(pycurl.CRLFILE, str(self.config.ssl_crl_file))
+
         # Client certificate authentication
         if self.config.client_cert_path and self.config.client_cert_path.exists():
             curl_handle.setopt(pycurl.SSLCERT, str(self.config.client_cert_path))
+            curl_handle.setopt(pycurl.SSLCERTTYPE, self.config.ssl_cert_type.encode("utf-8"))
 
         if self.config.client_key_path and self.config.client_key_path.exists():
             curl_handle.setopt(pycurl.SSLKEY, str(self.config.client_key_path))
+            curl_handle.setopt(pycurl.SSLKEYTYPE, self.config.ssl_key_type.encode("utf-8"))
+            
+            # Private key password
+            if self.config.ssl_key_password:
+                curl_handle.setopt(pycurl.KEYPASSWD, self.config.ssl_key_password.encode("utf-8"))
 
         # SSL cipher list
         if self.config.ssl_cipher_list:
             curl_handle.setopt(
                 pycurl.SSL_CIPHER_LIST, self.config.ssl_cipher_list.encode("utf-8")
             )
+
+        # Public key pinning
+        if self.config.ssl_pinned_public_key:
+            # Format the pinned key for curl
+            pinned_key = self.config.ssl_pinned_public_key
+            if not pinned_key.startswith("sha256//"):
+                pinned_key = f"sha256//{pinned_key}"
+            curl_handle.setopt(pycurl.PINNEDPUBLICKEY, pinned_key.encode("utf-8"))
+
+        # OCSP stapling verification
+        if self.config.ssl_verify_status:
+            curl_handle.setopt(pycurl.SSL_VERIFYSTATUS, 1)
+
+        # SSL session ID caching
+        if self.config.ssl_session_id_cache:
+            curl_handle.setopt(pycurl.SSL_SESSIONID_CACHE, 1)
+        else:
+            curl_handle.setopt(pycurl.SSL_SESSIONID_CACHE, 0)
+
+        # SSL False Start (performance optimization)
+        if self.config.ssl_falsestart:
+            curl_handle.setopt(pycurl.SSL_FALSESTART, 1)
+
+        # ALPN (Application-Layer Protocol Negotiation)
+        if self.config.ssl_enable_alpn:
+            curl_handle.setopt(pycurl.SSL_ENABLE_ALPN, 1)
+        else:
+            curl_handle.setopt(pycurl.SSL_ENABLE_ALPN, 0)
+
+        # NPN (Next Protocol Negotiation) - deprecated but still supported
+        if self.config.ssl_enable_npn:
+            curl_handle.setopt(pycurl.SSL_ENABLE_NPN, 1)
+        else:
+            curl_handle.setopt(pycurl.SSL_ENABLE_NPN, 0)
+
+        # SSL debug level
+        if self.config.ssl_debug_level > 0:
+            curl_handle.setopt(pycurl.VERBOSE, 1)
+            # Note: More detailed SSL debugging would require custom debug callback
+
+        # Additional SSL options
+        for ssl_option in self.config.ssl_options:
+            # Parse and apply additional SSL options
+            # Format: "OPTION_NAME:value" or just "OPTION_NAME" for boolean flags
+            if ":" in ssl_option:
+                option_name, option_value = ssl_option.split(":", 1)
+                # This would require mapping option names to pycurl constants
+                # For now, we'll log the option for debugging
+                logger.debug(f"SSL option requested: {option_name}={option_value}")
+            else:
+                logger.debug(f"SSL flag requested: {ssl_option}")
 
         # Enable compression if configured
         if self.config.enable_compression:

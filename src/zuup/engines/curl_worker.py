@@ -317,10 +317,11 @@ class CurlWorker:
         # Add bearer token if using bearer authentication and not already in headers
         if (
             self.config.auth.method.value == "bearer"
-            and self.config.auth.token
             and not any(h.lower().startswith("authorization:") for h in headers)
         ):
-            headers.append(f"Authorization: Bearer {self.config.auth.token}")
+            token = self.config.auth.get_token()
+            if token:
+                headers.append(f"Authorization: Bearer {token}")
 
         if headers:
             self.curl_handle.setopt(pycurl.HTTPHEADER, headers)
@@ -360,38 +361,39 @@ class CurlWorker:
             elif auth.method.value == "auto":
                 self.curl_handle.setopt(pycurl.HTTPAUTH, pycurl.HTTPAUTH_ANY)
 
-            # Set username and password for non-bearer authentication
-            if auth.username and auth.password and auth.method.value != "bearer":
-                self.curl_handle.setopt(
-                    pycurl.USERPWD, f"{auth.username}:{auth.password}"
-                )
+            # Set username and password for non-bearer authentication using secure retrieval
+            username = auth.get_username()
+            password = auth.get_password()
+            
+            if username and password and auth.method.value != "bearer":
+                self.curl_handle.setopt(pycurl.USERPWD, f"{username}:{password}")
 
         elif protocol in ("ftp", "ftps"):
             # FTP authentication - always uses username/password
-            if auth.username and auth.password:
-                self.curl_handle.setopt(
-                    pycurl.USERPWD, f"{auth.username}:{auth.password}"
-                )
-            elif auth.username:
+            username = auth.get_username()
+            password = auth.get_password()
+            
+            if username and password:
+                self.curl_handle.setopt(pycurl.USERPWD, f"{username}:{password}")
+            elif username:
                 # Anonymous FTP with custom username
-                self.curl_handle.setopt(pycurl.USERPWD, f"{auth.username}:")
+                self.curl_handle.setopt(pycurl.USERPWD, f"{username}:")
             else:
                 # Anonymous FTP - curl handles this automatically
                 pass
 
         elif protocol == "sftp":
             # SFTP authentication - can use password or key-based
-            if auth.username:
-                if auth.password and not self.config.ssh.private_key_path:
+            username = auth.get_username()
+            password = auth.get_password()
+            
+            if username:
+                if password and not self.config.ssh.private_key_path:
                     # Password-based authentication (only if no SSH key is configured)
-                    self.curl_handle.setopt(
-                        pycurl.USERPWD, f"{auth.username}:{auth.password}"
-                    )
+                    self.curl_handle.setopt(pycurl.USERPWD, f"{username}:{password}")
                 else:
                     # Key-based authentication or username-only (keys configured in _setup_sftp_options)
-                    self.curl_handle.setopt(
-                        pycurl.USERNAME, auth.username.encode("utf-8")
-                    )
+                    self.curl_handle.setopt(pycurl.USERNAME, username.encode("utf-8"))
 
             # SSH key authentication is handled in _setup_sftp_options()
 
@@ -434,29 +436,100 @@ class CurlWorker:
     def _setup_ssl_options(self) -> None:
         """Setup SSL/TLS options for curl handle."""
         # Basic SSL verification
-        if self.config.verify_ssl:
+        if self.config.verify_ssl and not self.config.ssl_development_mode:
             self.curl_handle.setopt(pycurl.SSL_VERIFYPEER, 1)
             self.curl_handle.setopt(pycurl.SSL_VERIFYHOST, 2)
         else:
             self.curl_handle.setopt(pycurl.SSL_VERIFYPEER, 0)
             self.curl_handle.setopt(pycurl.SSL_VERIFYHOST, 0)
+            
+            # Log warning for development mode
+            if self.config.ssl_development_mode:
+                logger.warning(f"Worker {self.worker_id}: SSL verification disabled for development mode - NOT SECURE")
+
+        # SSL/TLS version specification
+        if self.config.ssl_version:
+            ssl_version_map = {
+                "TLSv1": pycurl.SSLVERSION_TLSv1,
+                "TLSv1.0": pycurl.SSLVERSION_TLSv1_0,
+                "TLSv1.1": pycurl.SSLVERSION_TLSv1_1,
+                "TLSv1.2": pycurl.SSLVERSION_TLSv1_2,
+                "TLSv1.3": pycurl.SSLVERSION_TLSv1_3,
+                "SSLv2": pycurl.SSLVERSION_SSLv2,
+                "SSLv3": pycurl.SSLVERSION_SSLv3,
+            }
+            if self.config.ssl_version in ssl_version_map:
+                self.curl_handle.setopt(pycurl.SSLVERSION, ssl_version_map[self.config.ssl_version])
 
         # Custom CA certificate bundle
         if self.config.ca_cert_path and self.config.ca_cert_path.exists():
             self.curl_handle.setopt(pycurl.CAINFO, str(self.config.ca_cert_path))
 
+        # CA certificate directory
+        if self.config.ssl_ca_cert_dir and self.config.ssl_ca_cert_dir.exists():
+            self.curl_handle.setopt(pycurl.CAPATH, str(self.config.ssl_ca_cert_dir))
+
+        # Certificate Revocation List
+        if self.config.ssl_crl_file and self.config.ssl_crl_file.exists():
+            self.curl_handle.setopt(pycurl.CRLFILE, str(self.config.ssl_crl_file))
+
         # Client certificate authentication
         if self.config.client_cert_path and self.config.client_cert_path.exists():
             self.curl_handle.setopt(pycurl.SSLCERT, str(self.config.client_cert_path))
+            self.curl_handle.setopt(pycurl.SSLCERTTYPE, self.config.ssl_cert_type.encode("utf-8"))
 
         if self.config.client_key_path and self.config.client_key_path.exists():
             self.curl_handle.setopt(pycurl.SSLKEY, str(self.config.client_key_path))
+            self.curl_handle.setopt(pycurl.SSLKEYTYPE, self.config.ssl_key_type.encode("utf-8"))
+            
+            # Private key password
+            if self.config.ssl_key_password:
+                self.curl_handle.setopt(pycurl.KEYPASSWD, self.config.ssl_key_password.encode("utf-8"))
 
         # SSL cipher list
         if self.config.ssl_cipher_list:
             self.curl_handle.setopt(
                 pycurl.SSL_CIPHER_LIST, self.config.ssl_cipher_list.encode("utf-8")
             )
+
+        # Public key pinning
+        if self.config.ssl_pinned_public_key:
+            # Format the pinned key for curl
+            pinned_key = self.config.ssl_pinned_public_key
+            if not pinned_key.startswith("sha256//"):
+                pinned_key = f"sha256//{pinned_key}"
+            self.curl_handle.setopt(pycurl.PINNEDPUBLICKEY, pinned_key.encode("utf-8"))
+
+        # OCSP stapling verification
+        if self.config.ssl_verify_status:
+            self.curl_handle.setopt(pycurl.SSL_VERIFYSTATUS, 1)
+
+        # SSL session ID caching
+        if self.config.ssl_session_id_cache:
+            self.curl_handle.setopt(pycurl.SSL_SESSIONID_CACHE, 1)
+        else:
+            self.curl_handle.setopt(pycurl.SSL_SESSIONID_CACHE, 0)
+
+        # SSL False Start (performance optimization)
+        if self.config.ssl_falsestart:
+            self.curl_handle.setopt(pycurl.SSL_FALSESTART, 1)
+
+        # ALPN (Application-Layer Protocol Negotiation)
+        if self.config.ssl_enable_alpn:
+            self.curl_handle.setopt(pycurl.SSL_ENABLE_ALPN, 1)
+        else:
+            self.curl_handle.setopt(pycurl.SSL_ENABLE_ALPN, 0)
+
+        # NPN (Next Protocol Negotiation) - deprecated but still supported
+        if self.config.ssl_enable_npn:
+            self.curl_handle.setopt(pycurl.SSL_ENABLE_NPN, 1)
+        else:
+            self.curl_handle.setopt(pycurl.SSL_ENABLE_NPN, 0)
+
+        # SSL debug level
+        if self.config.ssl_debug_level > 0:
+            self.curl_handle.setopt(pycurl.VERBOSE, 1)
+            # Note: More detailed SSL debugging would require custom debug callback
 
         # Enable compression if configured
         if self.config.enable_compression:
