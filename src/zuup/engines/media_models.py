@@ -335,6 +335,197 @@ class AuthMethod(Enum):
     OAUTH = "oauth"
 
 
+class ProxyType(Enum):
+    """Proxy type enumeration."""
+    
+    HTTP = "http"
+    HTTPS = "https"
+    SOCKS4 = "socks4"
+    SOCKS5 = "socks5"
+
+
+class ProxyConfig(BaseModel):
+    """Advanced proxy configuration for geo-bypass and network routing."""
+    
+    # Basic proxy settings
+    proxy_url: str | None = None
+    proxy_type: ProxyType = ProxyType.HTTP
+    
+    # Proxy authentication
+    proxy_username: str | None = None
+    proxy_password: str | None = None
+    
+    # Proxy rotation and fallback
+    proxy_list: list[str] = Field(default_factory=list)
+    enable_proxy_rotation: bool = False
+    proxy_rotation_interval: int = 10  # requests before rotation
+    
+    # Proxy testing and validation
+    test_proxy_connectivity: bool = True
+    proxy_timeout: float = 10.0
+    
+    # Geo-bypass specific settings
+    geo_bypass_proxy: str | None = None  # Specific proxy for geo-blocked content
+    auto_detect_geo_blocking: bool = True
+
+    @field_validator("proxy_rotation_interval")
+    @classmethod
+    def validate_rotation_interval(cls, v: int) -> int:
+        """Validate rotation interval is positive."""
+        if v <= 0:
+            raise ValueError("Proxy rotation interval must be positive")
+        return v
+
+    @field_validator("proxy_timeout")
+    @classmethod
+    def validate_proxy_timeout(cls, v: float) -> float:
+        """Validate proxy timeout is positive."""
+        if v <= 0:
+            raise ValueError("Proxy timeout must be positive")
+        return v
+
+    @model_validator(mode="after")
+    def validate_proxy_config(self) -> "ProxyConfig":
+        """Validate proxy configuration consistency."""
+        # If proxy rotation is enabled, ensure proxy list is provided
+        if self.enable_proxy_rotation and not self.proxy_list:
+            raise ValueError("Proxy list required when proxy rotation is enabled")
+        
+        # If proxy authentication is provided, ensure proxy URL is set
+        if (self.proxy_username or self.proxy_password) and not self.proxy_url:
+            raise ValueError("Proxy URL required when proxy authentication is provided")
+        
+        return self
+
+
+class NetworkConfig(BaseModel):
+    """Advanced network configuration for timeouts, retries, and headers."""
+    
+    # Timeout settings
+    socket_timeout: int = 30
+    read_timeout: int = 60
+    connect_timeout: int = 30
+    
+    # Retry configuration
+    retries: int = 10
+    fragment_retries: int = 10
+    retry_sleep: float = 1.0
+    max_retry_sleep: float = 60.0
+    retry_backoff_factor: float = 2.0
+    
+    # Rate limiting and delays
+    sleep_interval: float = 0.0
+    max_sleep_interval: float = 5.0
+    sleep_interval_subtitles: float = 0.0
+    
+    # User agent and headers
+    user_agent: str | None = None
+    custom_headers: dict[str, str] = Field(default_factory=dict)
+    referer: str | None = None
+    
+    # Platform-specific user agents
+    platform_user_agents: dict[str, str] = Field(default_factory=dict)
+    rotate_user_agents: bool = False
+    
+    # Connection settings
+    prefer_ipv4: bool = False
+    prefer_ipv6: bool = False
+    source_address: str | None = None
+    
+    # SSL/TLS settings
+    no_check_certificate: bool = False
+    client_certificate: str | None = None
+    client_certificate_key: str | None = None
+    client_certificate_password: str | None = None
+
+    @field_validator("socket_timeout", "read_timeout", "connect_timeout", "retries", "fragment_retries")
+    @classmethod
+    def validate_positive_ints(cls, v: int) -> int:
+        """Validate positive integer values."""
+        if v <= 0:
+            raise ValueError("Value must be positive")
+        return v
+
+    @field_validator("retry_sleep", "max_retry_sleep", "sleep_interval", "max_sleep_interval", 
+                    "sleep_interval_subtitles", "retry_backoff_factor")
+    @classmethod
+    def validate_non_negative_floats(cls, v: float) -> float:
+        """Validate non-negative float values."""
+        if v < 0:
+            raise ValueError("Value must be non-negative")
+        return v
+
+    @model_validator(mode="after")
+    def validate_network_config(self) -> "NetworkConfig":
+        """Validate network configuration consistency."""
+        # Validate retry sleep ranges
+        if self.retry_sleep > self.max_retry_sleep:
+            raise ValueError("Retry sleep cannot exceed max retry sleep")
+        
+        if self.sleep_interval > self.max_sleep_interval:
+            raise ValueError("Sleep interval cannot exceed max sleep interval")
+        
+        # Validate backoff factor
+        if self.retry_backoff_factor <= 1.0:
+            raise ValueError("Retry backoff factor must be greater than 1.0")
+        
+        # Validate IP preference consistency
+        if self.prefer_ipv4 and self.prefer_ipv6:
+            raise ValueError("Cannot prefer both IPv4 and IPv6")
+        
+        return self
+
+
+class GeoBypassConfig(BaseModel):
+    """Geo-bypass configuration with country selection and automatic detection."""
+    
+    # Basic geo-bypass settings
+    geo_bypass: bool = False
+    geo_bypass_country: str | None = None
+    geo_bypass_ip_block: str | None = None
+    
+    # Advanced geo-bypass features
+    auto_detect_geo_blocking: bool = True
+    geo_bypass_fallback_countries: list[str] = Field(default_factory=list)
+    
+    # Country-specific settings
+    preferred_countries: list[str] = Field(default_factory=list)
+    blocked_countries: list[str] = Field(default_factory=list)
+    
+    # Geo-bypass testing
+    test_geo_bypass: bool = True
+    geo_bypass_timeout: float = 15.0
+
+    @field_validator("geo_bypass_country")
+    @classmethod
+    def validate_country_code(cls, v: str | None) -> str | None:
+        """Validate country code format."""
+        if v is not None:
+            if len(v) != 2 or not v.isalpha():
+                raise ValueError("Country code must be a 2-letter ISO code")
+            return v.upper()
+        return v
+
+    @field_validator("geo_bypass_fallback_countries", "preferred_countries", "blocked_countries")
+    @classmethod
+    def validate_country_lists(cls, v: list[str]) -> list[str]:
+        """Validate country code lists."""
+        validated = []
+        for country in v:
+            if len(country) != 2 or not country.isalpha():
+                raise ValueError(f"Invalid country code: {country}. Must be 2-letter ISO code")
+            validated.append(country.upper())
+        return validated
+
+    @field_validator("geo_bypass_timeout")
+    @classmethod
+    def validate_timeout(cls, v: float) -> float:
+        """Validate timeout is positive."""
+        if v <= 0:
+            raise ValueError("Geo-bypass timeout must be positive")
+        return v
+
+
 class AuthConfig(BaseModel):
     """Authentication configuration for media downloads."""
 
@@ -490,16 +681,21 @@ class MediaConfig(BaseModel):
     # Authentication
     auth_config: AuthConfig = Field(default_factory=AuthConfig)
 
-    # Network settings
+    # Advanced network configuration
+    network_config: NetworkConfig = Field(default_factory=NetworkConfig)
+    proxy_config: ProxyConfig = Field(default_factory=ProxyConfig)
+    geo_bypass_config: GeoBypassConfig = Field(default_factory=GeoBypassConfig)
+
+    # Legacy network settings (for backward compatibility)
     proxy: str | None = None
     socket_timeout: int = 30
     retries: int = 10
     fragment_retries: int = 10
+    geo_bypass: bool = False
+    geo_bypass_country: str | None = None
 
     # Extractor options
     extractor_args: dict[str, dict[str, Any]] = Field(default_factory=dict)
-    geo_bypass: bool = False
-    geo_bypass_country: str | None = None
 
     # Concurrent downloads
     concurrent_downloads: int = 1
@@ -583,7 +779,45 @@ class MediaConfig(BaseModel):
             except Exception as e:
                 raise ValueError(f"Invalid download archive path: {e}") from e
 
+        # Handle backward compatibility for legacy network settings
+        self._sync_legacy_network_settings()
+
         return self
+
+    def _sync_legacy_network_settings(self) -> None:
+        """Synchronize legacy network settings with new configuration objects."""
+        # Sync proxy settings
+        if self.proxy and not self.proxy_config.proxy_url:
+            self.proxy_config.proxy_url = self.proxy
+        elif self.proxy_config.proxy_url and not self.proxy:
+            self.proxy = self.proxy_config.proxy_url
+
+        # Sync network timeouts and retries
+        if self.socket_timeout != 30:  # Non-default value
+            self.network_config.socket_timeout = self.socket_timeout
+        elif self.network_config.socket_timeout != 30:
+            self.socket_timeout = self.network_config.socket_timeout
+
+        if self.retries != 10:  # Non-default value
+            self.network_config.retries = self.retries
+        elif self.network_config.retries != 10:
+            self.retries = self.network_config.retries
+
+        if self.fragment_retries != 10:  # Non-default value
+            self.network_config.fragment_retries = self.fragment_retries
+        elif self.network_config.fragment_retries != 10:
+            self.fragment_retries = self.network_config.fragment_retries
+
+        # Sync geo-bypass settings
+        if self.geo_bypass:
+            self.geo_bypass_config.geo_bypass = self.geo_bypass
+        elif self.geo_bypass_config.geo_bypass:
+            self.geo_bypass = self.geo_bypass_config.geo_bypass
+
+        if self.geo_bypass_country:
+            self.geo_bypass_config.geo_bypass_country = self.geo_bypass_country
+        elif self.geo_bypass_config.geo_bypass_country:
+            self.geo_bypass_country = self.geo_bypass_config.geo_bypass_country
 
 
 class BatchDownloadConfig(BaseModel):

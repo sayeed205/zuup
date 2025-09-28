@@ -5,7 +5,7 @@ import logging
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
 
-import yt_dlp
+import yt_dlp  # type: ignore[import-untyped]
 
 from .media_models import (
     ChapterInfo,
@@ -16,6 +16,7 @@ from .media_models import (
     SubtitleInfo,
 )
 from .format_selector import FormatSelector, QualityTier
+from .network_manager import NetworkManager
 
 logger = logging.getLogger(__name__)
 
@@ -31,13 +32,23 @@ class FormatExtractor:
             config: Media configuration for extraction
         """
         self.config = config
-        self._yt_dlp_opts = self._create_yt_dlp_options()
         self.format_selector = FormatSelector()
-        logger.info("FormatExtractor initialized with advanced format selection")
+        
+        # Initialize network manager for advanced proxy and geo-bypass support
+        self.network_manager = NetworkManager(
+            network_config=config.network_config,
+            proxy_config=config.proxy_config,
+            geo_bypass_config=config.geo_bypass_config,
+        )
+        
+        logger.info("FormatExtractor initialized with advanced format selection and network management")
 
-    def _create_yt_dlp_options(self) -> Dict[str, Any]:
+    def _create_yt_dlp_options(self, url: str) -> Dict[str, Any]:
         """
-        Create yt-dlp options from configuration.
+        Create yt-dlp options from configuration with advanced network support.
+
+        Args:
+            url: URL being processed (for platform-specific settings)
 
         Returns:
             Dictionary of yt-dlp options
@@ -52,21 +63,17 @@ class FormatExtractor:
             "writeinfojson": False,
             "writedescription": False,
             
-            # Network settings
-            "socket_timeout": self.config.socket_timeout,
-            "retries": self.config.retries,
-            "fragment_retries": self.config.fragment_retries,
-            
-            # Proxy settings
-            "proxy": self.config.proxy,
-            
-            # Geo-bypass settings
-            "geo_bypass": self.config.geo_bypass,
-            "geo_bypass_country": self.config.geo_bypass_country,
-            
             # Extractor arguments
             "extractor_args": self.config.extractor_args,
         }
+
+        # Add advanced network configuration
+        network_opts = self.network_manager.create_yt_dlp_options(url)
+        opts.update(network_opts)
+
+        # Add platform-specific optimizations
+        platform_opts = self.network_manager.get_platform_specific_options(url)
+        opts.update(platform_opts)
 
         # Add authentication if configured
         if self.config.auth_config.username:
@@ -122,7 +129,7 @@ class FormatExtractor:
 
     def _extract_info_sync(self, url: str) -> Dict[str, Any]:
         """
-        Synchronous yt-dlp info extraction.
+        Synchronous yt-dlp info extraction with advanced network support.
 
         Args:
             url: URL to extract information from
@@ -130,8 +137,12 @@ class FormatExtractor:
         Returns:
             Raw yt-dlp info dictionary
         """
-        with yt_dlp.YoutubeDL(self._yt_dlp_opts) as ydl:
-            return ydl.extract_info(url, download=False)
+        # Create URL-specific options
+        yt_dlp_opts = self._create_yt_dlp_options(url)
+        
+        with yt_dlp.YoutubeDL(yt_dlp_opts) as ydl:
+            result: Dict[str, Any] = ydl.extract_info(url, download=False)
+            return result
 
     def _parse_info_dict(self, info_dict: Dict[str, Any]) -> MediaInfo:
         """
@@ -370,13 +381,19 @@ class FormatExtractor:
         if preferences.max_height:
             filtered = [
                 f for f in filtered 
-                if not f.resolution or self._get_height_from_resolution(f.resolution) <= preferences.max_height
+                if not f.resolution or (
+                    (height := self._get_height_from_resolution(f.resolution)) is not None and
+                    height <= preferences.max_height
+                )
             ]
 
         if preferences.max_width:
             filtered = [
                 f for f in filtered 
-                if not f.resolution or self._get_width_from_resolution(f.resolution) <= preferences.max_width
+                if not f.resolution or (
+                    (width := self._get_width_from_resolution(f.resolution)) is not None and
+                    width <= preferences.max_width
+                )
             ]
 
         # Filter by preferred codecs
@@ -427,7 +444,7 @@ class FormatExtractor:
             Best format based on quality and preferences
         """
         # Sort formats by quality metrics
-        def format_score(fmt: MediaFormat) -> tuple:
+        def format_score(fmt: MediaFormat) -> tuple[int, float, int, float, float]:
             """Calculate format score for sorting."""
             # Primary: explicit preference value (higher is better)
             preference_score = fmt.preference or 0
@@ -443,18 +460,18 @@ class FormatExtractor:
                     resolution_score = height
             
             # Quaternary: bitrate (higher is better)
-            bitrate_score = 0
+            bitrate_score = 0.0
             if fmt.vbr:
                 bitrate_score += fmt.vbr
             if fmt.abr:
                 bitrate_score += fmt.abr
             
             # Quinary: filesize (smaller is better for tie-breaking)
-            filesize_score = 0
+            filesize_score = 0.0
             if fmt.filesize:
-                filesize_score = -fmt.filesize  # Negative for reverse sorting
+                filesize_score = -float(fmt.filesize)  # Negative for reverse sorting
             elif fmt.filesize_approx:
-                filesize_score = -fmt.filesize_approx
+                filesize_score = -float(fmt.filesize_approx)
 
             return (preference_score, quality_score, resolution_score, bitrate_score, filesize_score)
 
@@ -545,7 +562,7 @@ class FormatExtractor:
             logger.error(f"Failed to get quality alternatives: {e}")
             return []
 
-    def analyze_available_formats(self, formats: List[MediaFormat]) -> Dict[str, any]:
+    def analyze_available_formats(self, formats: List[MediaFormat]) -> Dict[str, Any]:
         """
         Analyze format distribution for debugging and optimization.
 
@@ -825,7 +842,7 @@ class FormatExtractor:
         formats: List[MediaFormat],
         preferences: Optional[FormatPreferences] = None,
         available_bandwidth: Optional[float] = None,
-        device_capabilities: Optional[Dict[str, any]] = None
+        device_capabilities: Optional[Dict[str, Any]] = None
     ) -> MediaFormat:
         """
         Select format using adaptive quality selection based on available formats and conditions.
@@ -864,7 +881,7 @@ class FormatExtractor:
         self, 
         selected_format: MediaFormat, 
         target_preferences: Optional[FormatPreferences] = None
-    ) -> Dict[str, any]:
+    ) -> Dict[str, Any]:
         """
         Determine what format conversion is needed for the selected format.
 
