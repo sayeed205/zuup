@@ -25,12 +25,8 @@ from pydantic import BaseModel, Field, ValidationError, field_validator
 from ..storage.models import GlobalConfig, TaskConfig
 from ..storage.models import ProxyConfig as CoreProxyConfig
 from .media_models import (
-    AuthConfig,
     AuthMethod,
-    FormatPreferences,
-    GeoBypassConfig,
     MediaConfig,
-    NetworkConfig,
     ProxyConfig,
     ProxyType,
 )
@@ -79,13 +75,25 @@ class FormatSelectorValidator:
     # Common format selector patterns
     VALID_PATTERNS = {
         # Quality-based selectors
-        "best", "worst", "bestvideo", "worstvideo", "bestaudio", "worstaudio",
+        "best",
+        "worst",
+        "bestvideo",
+        "worstvideo",
+        "bestaudio",
+        "worstaudio",
         # Resolution-based
-        "best[height<=720]", "best[height<=1080]", "best[height<=1440]", "best[height<=2160]",
+        "best[height<=720]",
+        "best[height<=1080]",
+        "best[height<=1440]",
+        "best[height<=2160]",
         # Codec-based
-        "best[vcodec^=avc1]", "best[acodec^=mp4a]", "best[vcodec!=none]",
+        "best[vcodec^=avc1]",
+        "best[acodec^=mp4a]",
+        "best[vcodec!=none]",
         # Container-based
-        "best[ext=mp4]", "best[ext=webm]", "best[ext=mkv]",
+        "best[ext=mp4]",
+        "best[ext=webm]",
+        "best[ext=mkv]",
         # Combined selectors
         "bestvideo[height<=1080]+bestaudio/best[height<=1080]",
         "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
@@ -112,8 +120,10 @@ class FormatSelectorValidator:
 
         # Check for selectors that start with [ (should have a base selector first)
         if selector.startswith("["):
-            errors.append("Format selector should not start with brackets - use a base selector like 'best[...]'")
-        
+            errors.append(
+                "Format selector should not start with brackets - use a base selector like 'best[...]'"
+            )
+
         # Check for selectors that end with ] but have no opening bracket
         if selector.endswith("]") and "[" not in selector:
             errors.append("Format selector ends with ] but has no opening bracket")
@@ -131,14 +141,31 @@ class FormatSelectorValidator:
 
         # Validate field names in conditions
         valid_fields = {
-            "ext", "acodec", "vcodec", "container", "protocol", "format_id",
-            "height", "width", "tbr", "abr", "vbr", "asr", "fps", "filesize",
-            "filesize_approx", "quality", "format_note", "language", "preference"
+            "ext",
+            "acodec",
+            "vcodec",
+            "container",
+            "protocol",
+            "format_id",
+            "height",
+            "width",
+            "tbr",
+            "abr",
+            "vbr",
+            "asr",
+            "fps",
+            "filesize",
+            "filesize_approx",
+            "quality",
+            "format_note",
+            "language",
+            "preference",
         }
 
         # Extract field names from conditions (simplified parsing)
         import re
-        field_pattern = r'\[([a-zA-Z_]+)(?:[<>=!^$*]|!=)'
+
+        field_pattern = r"\[([a-zA-Z_]+)(?:[<>=!^$*]|!=)"
         fields_used = re.findall(field_pattern, selector)
 
         for field in fields_used:
@@ -154,41 +181,32 @@ class ExtractorConfigValidator:
     # Known extractor options for popular sites
     EXTRACTOR_OPTIONS = {
         "youtube": {
-            "skip_dash_manifest", "player_skip_js", "include_ads", "max_comments",
-            "comment_sort", "max_comment_replies", "player_client", "innertube_host",
-            "innertube_key", "player_skip_js", "skip_hls_native"
+            "skip_dash_manifest",
+            "player_skip_js",
+            "include_ads",
+            "max_comments",
+            "comment_sort",
+            "max_comment_replies",
+            "player_client",
+            "innertube_host",
+            "innertube_key",
+            "skip_hls_native",
         },
-        "twitch": {
-            "api_base", "client_id", "token", "disable_ads"
-        },
-        "twitter": {
-            "api_base", "guest_token", "syndication_api"
-        },
-        "tiktok": {
-            "api_base", "app_version", "manifest_app_version"
-        },
-        "instagram": {
-            "api_base", "include_stories", "include_highlights"
-        },
-        "facebook": {
-            "api_base", "include_stories"
-        },
-        "vimeo": {
-            "api_base", "player_url"
-        },
-        "dailymotion": {
-            "family_filter", "geo_bypass_country"
-        },
-        "soundcloud": {
-            "client_id", "api_base"
-        },
-        "spotify": {
-            "client_id", "client_secret"
-        }
+        "twitch": {"api_base", "client_id", "token", "disable_ads"},
+        "twitter": {"api_base", "guest_token", "syndication_api"},
+        "tiktok": {"api_base", "app_version", "manifest_app_version"},
+        "instagram": {"api_base", "include_stories", "include_highlights"},
+        "facebook": {"api_base", "include_stories"},
+        "vimeo": {"api_base", "player_url"},
+        "dailymotion": {"family_filter", "geo_bypass_country"},
+        "soundcloud": {"client_id", "api_base"},
+        "spotify": {"client_id", "client_secret"},
     }
 
     @classmethod
-    def validate_extractor_args(cls, extractor_args: dict[str, dict[str, Any]]) -> tuple[bool, list[str]]:
+    def validate_extractor_args(
+        cls, extractor_args: dict[str, dict[str, Any]]
+    ) -> tuple[bool, list[str]]:
         """
         Validate extractor-specific arguments.
 
@@ -296,9 +314,7 @@ class MediaConfigurationMapper:
             elif global_config.proxy_settings.https_proxy:
                 config.proxy = global_config.proxy_settings.https_proxy
 
-    def _apply_task_config(
-        self, config: MediaConfig, task_config: TaskConfig
-    ) -> None:
+    def _apply_task_config(self, config: MediaConfig, task_config: TaskConfig) -> None:
         """Apply task-specific configuration settings to MediaConfig."""
         # Timeout settings
         if task_config.timeout > 0:
@@ -379,7 +395,7 @@ class MediaConfigurationMapper:
             config.extractor_args["youtube"] = {}
 
         youtube_args = config.extractor_args["youtube"]
-        
+
         # Skip DASH manifest for faster extraction
         if "skip_dash_manifest" not in youtube_args:
             youtube_args["skip_dash_manifest"] = True
@@ -513,7 +529,10 @@ class MediaConfigurationMapper:
             errors.extend([f"Format selector: {err}" for err in format_errors])
 
         # Check for conflicting format preferences
-        if config.format_preferences.audio_only and config.format_preferences.video_only:
+        if (
+            config.format_preferences.audio_only
+            and config.format_preferences.video_only
+        ):
             errors.append("Cannot specify both audio_only and video_only")
 
         # Validate audio quality setting
@@ -521,16 +540,39 @@ class MediaConfigurationMapper:
             try:
                 int(config.audio_quality)
             except ValueError:
-                valid_qualities = {"best", "worst", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9"}
+                valid_qualities = {
+                    "best",
+                    "worst",
+                    "0",
+                    "1",
+                    "2",
+                    "3",
+                    "4",
+                    "5",
+                    "6",
+                    "7",
+                    "8",
+                    "9",
+                }
                 if config.audio_quality not in valid_qualities:
                     errors.append(f"Invalid audio quality: {config.audio_quality}")
 
         # Check for reasonable quality limits
-        if config.format_preferences.max_height and config.format_preferences.max_height > 4320:
-            warnings.append("Very high resolution limit (>4K) may not be available for most content")
+        if (
+            config.format_preferences.max_height
+            and config.format_preferences.max_height > 4320
+        ):
+            warnings.append(
+                "Very high resolution limit (>4K) may not be available for most content"
+            )
 
-        if config.format_preferences.max_video_bitrate and config.format_preferences.max_video_bitrate > 50000:
-            warnings.append("Very high video bitrate limit may not be available for most content")
+        if (
+            config.format_preferences.max_video_bitrate
+            and config.format_preferences.max_video_bitrate > 50000
+        ):
+            warnings.append(
+                "Very high video bitrate limit may not be available for most content"
+            )
 
     def _validate_output_settings(
         self, config: MediaConfig, errors: list[str], warnings: list[str]
@@ -540,15 +582,22 @@ class MediaConfigurationMapper:
         try:
             config.output_directory.mkdir(parents=True, exist_ok=True)
             if not config.output_directory.is_dir():
-                errors.append(f"Output directory is not a directory: {config.output_directory}")
+                errors.append(
+                    f"Output directory is not a directory: {config.output_directory}"
+                )
         except Exception as e:
             errors.append(f"Cannot create output directory: {e}")
 
         # Validate output template
         if not config.output_template:
             errors.append("Output template cannot be empty")
-        elif "%(title)s" not in config.output_template and "%(id)s" not in config.output_template:
-            warnings.append("Output template should include %(title)s or %(id)s for unique filenames")
+        elif (
+            "%(title)s" not in config.output_template
+            and "%(id)s" not in config.output_template
+        ):
+            warnings.append(
+                "Output template should include %(title)s or %(id)s for unique filenames"
+            )
 
         # Check download archive path
         if config.download_archive:
@@ -569,23 +618,33 @@ class MediaConfigurationMapper:
         if config.socket_timeout <= 0:
             errors.append("Socket timeout must be positive")
 
-        if config.network_config.connect_timeout >= config.network_config.socket_timeout:
+        if (
+            config.network_config.connect_timeout
+            >= config.network_config.socket_timeout
+        ):
             warnings.append("Connect timeout should be less than socket timeout")
 
         # Check retry settings
         if config.retries > 20:
-            warnings.append("Very high retry count may cause long delays on persistent failures")
+            warnings.append(
+                "Very high retry count may cause long delays on persistent failures"
+            )
 
         if config.network_config.retry_backoff_factor > 5.0:
-            warnings.append("Very high retry backoff factor may cause extremely long delays")
+            warnings.append(
+                "Very high retry backoff factor may cause extremely long delays"
+            )
 
         # Check sleep intervals
         if config.network_config.sleep_interval > 10.0:
-            warnings.append("Very high sleep interval will significantly slow downloads")
+            warnings.append(
+                "Very high sleep interval will significantly slow downloads"
+            )
 
         # Validate proxy settings
         if config.proxy_config.proxy_url:
             from urllib.parse import urlparse
+
             try:
                 parsed = urlparse(config.proxy_config.proxy_url)
                 if not parsed.scheme or not parsed.netloc:
@@ -599,17 +658,26 @@ class MediaConfigurationMapper:
         """Validate authentication settings."""
         if config.auth_config.method == AuthMethod.USERNAME_PASSWORD:
             if not config.auth_config.username or not config.auth_config.password:
-                errors.append("Username and password required for username_password auth")
+                errors.append(
+                    "Username and password required for username_password auth"
+                )
 
         elif config.auth_config.method == AuthMethod.COOKIES:
             if not config.auth_config.cookies_file:
                 errors.append("Cookies file required for cookies auth")
             elif not config.auth_config.cookies_file.exists():
-                warnings.append(f"Cookies file does not exist: {config.auth_config.cookies_file}")
+                warnings.append(
+                    f"Cookies file does not exist: {config.auth_config.cookies_file}"
+                )
 
         elif config.auth_config.method == AuthMethod.NETRC:
-            if config.auth_config.netrc_file and not config.auth_config.netrc_file.exists():
-                warnings.append(f"Netrc file does not exist: {config.auth_config.netrc_file}")
+            if (
+                config.auth_config.netrc_file
+                and not config.auth_config.netrc_file.exists()
+            ):
+                warnings.append(
+                    f"Netrc file does not exist: {config.auth_config.netrc_file}"
+                )
 
     def _validate_extractor_settings(
         self, config: MediaConfig, errors: list[str], warnings: list[str]
@@ -633,15 +701,21 @@ class MediaConfigurationMapper:
         """Validate performance-related settings."""
         # Check concurrent downloads
         if config.concurrent_downloads > 10:
-            warnings.append("Very high concurrent downloads may overwhelm servers or cause rate limiting")
+            warnings.append(
+                "Very high concurrent downloads may overwhelm servers or cause rate limiting"
+            )
 
         # Check delay settings
         if config.delay_between_downloads > 60.0:
-            warnings.append("Very high delay between downloads will significantly slow batch operations")
+            warnings.append(
+                "Very high delay between downloads will significantly slow batch operations"
+            )
 
         # Check download limits
         if config.max_downloads and config.max_downloads > 10000:
-            warnings.append("Very high download limit may cause extremely long operations")
+            warnings.append(
+                "Very high download limit may cause extremely long operations"
+            )
 
     def get_profile(self, name: str) -> MediaConfigProfile:
         """
@@ -743,7 +817,9 @@ class MediaConfigurationMapper:
         mobile_config.format_preferences.max_height = 480
         mobile_config.format_preferences.preferred_containers = ["mp4"]
         mobile_config.format_preferences.prefer_hardware_decodable = True
-        mobile_config.network_config.sleep_interval = 1.0  # Be gentle on mobile networks
+        mobile_config.network_config.sleep_interval = (
+            1.0  # Be gentle on mobile networks
+        )
 
         profiles["mobile"] = MediaConfigProfile(
             name="mobile",
@@ -764,7 +840,9 @@ class MediaConfigurationMapper:
             delay_between_downloads=1.0,
             ignore_errors=True,
         )
-        playlist_config.download_archive = Path.home() / "Downloads" / ".download_archive"
+        playlist_config.download_archive = (
+            Path.home() / "Downloads" / ".download_archive"
+        )
 
         profiles["playlist"] = MediaConfigProfile(
             name="playlist",
@@ -786,7 +864,9 @@ class MediaConfigurationMapper:
             delay_between_downloads=2.0,
             ignore_errors=True,
         )
-        archive_config.download_archive = Path.home() / "Downloads" / "Archive" / ".archive"
+        archive_config.download_archive = (
+            Path.home() / "Downloads" / "Archive" / ".archive"
+        )
 
         profiles["archive"] = MediaConfigProfile(
             name="archive",
@@ -927,7 +1007,9 @@ class MediaConfigurationManager:
             MediaConfigurationError: If configuration is invalid
         """
         # Create cache key
-        cache_key = self._create_cache_key(task_config, global_config, profile_name, url)
+        cache_key = self._create_cache_key(
+            task_config, global_config, profile_name, url
+        )
 
         # Check cache
         with self._cache_lock:
@@ -935,7 +1017,9 @@ class MediaConfigurationManager:
                 return self._config_cache[cache_key].model_copy()
 
         # Map configuration
-        config = self.mapper.map_task_config(task_config, global_config, profile_name, url)
+        config = self.mapper.map_task_config(
+            task_config, global_config, profile_name, url
+        )
 
         # Validate if requested
         if validate:
@@ -1155,10 +1239,9 @@ class MediaConfigurationManager:
                 return f"bestvideo{conditions}/bestvideo"
             else:
                 return f"bestvideo{conditions}+bestaudio/best{conditions}/best"
+        elif requirements.get("audio_only"):
+            return "bestaudio/best"
+        elif requirements.get("video_only"):
+            return "bestvideo/best"
         else:
-            if requirements.get("audio_only"):
-                return "bestaudio/best"
-            elif requirements.get("video_only"):
-                return "bestvideo/best"
-            else:
-                return "best"
+            return "best"
