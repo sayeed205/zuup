@@ -13,10 +13,14 @@ import yt_dlp  # type: ignore[import-untyped]
 from ..storage.models import ProgressInfo, TaskStatus
 from .auth_error_handler import AuthenticationErrorHandler
 from .cookie_manager import AuthenticationError, AuthenticationManager
+from .format_selector import FormatSelector
+from .quality_controller import QualityController
 from .media_models import (
     DownloadProgress,
     DownloadStatus,
+    FormatPreferences,
     MediaConfig,
+    MediaFormat,
     MediaInfo,
 )
 
@@ -47,6 +51,13 @@ class MediaDownloader:
         cookies_file = config.auth_config.cookies_file
         self.auth_manager = AuthenticationManager(cookies_file)
         self.auth_error_handler = AuthenticationErrorHandler(self.auth_manager)
+        
+        # Initialize quality control components
+        self.format_selector = FormatSelector()
+        self.quality_controller = QualityController(self.format_selector)
+        
+        # Track progress history for quality adaptation
+        self._progress_history: dict[str, list[DownloadProgress]] = {}
         
         self._yt_dlp_opts = self._create_yt_dlp_options()
         logger.info("MediaDownloader initialized with authentication support")
@@ -283,7 +294,7 @@ class MediaDownloader:
         format_spec: str | None = None
     ) -> AsyncIterator[DownloadProgress]:
         """
-        Download media with real-time progress tracking.
+        Download media with real-time progress tracking and adaptive quality control.
 
         Args:
             info: Media information from extraction
@@ -300,6 +311,19 @@ class MediaDownloader:
 
         # Set initial state
         self._download_states[task_id] = DownloadStatus.DOWNLOADING
+        self._progress_history[task_id] = []
+
+        # Select optimal starting format if not specified
+        current_format = None
+        if not format_spec and info.formats:
+            try:
+                current_format = self.quality_controller.get_optimal_starting_quality(
+                    info.formats, self.config.format_preferences
+                )
+                format_spec = current_format.format_id
+                logger.info(f"Selected optimal starting format: {format_spec}")
+            except Exception as e:
+                logger.warning(f"Failed to select optimal starting format: {e}")
 
         try:
             # Create task-specific options
@@ -316,8 +340,8 @@ class MediaDownloader:
             )
             self._download_tasks[task_id] = download_task
 
-            # Yield progress updates
-            async for progress in self._stream_progress(task_id):
+            # Yield progress updates with quality adaptation
+            async for progress in self._stream_progress_with_adaptation(task_id, info, current_format):
                 yield progress
 
                 # Check if download is complete or failed
@@ -360,6 +384,8 @@ class MediaDownloader:
         finally:
             # Cleanup
             self._cleanup_task(task_id)
+            # Clean up quality controller data
+            self.quality_controller.cleanup_download_data(task_id)
 
     async def _download_with_yt_dlp(
         self,
@@ -397,6 +423,142 @@ class MediaDownloader:
         # Run in thread pool to avoid blocking
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(None, download_sync)
+
+    async def _stream_progress_with_adaptation(
+        self, 
+        task_id: str, 
+        info: MediaInfo, 
+        current_format: MediaFormat | None
+    ) -> AsyncIterator[DownloadProgress]:
+        """
+        Stream progress updates with adaptive quality control.
+
+        Args:
+            task_id: Task identifier
+            info: Media information with available formats
+            current_format: Currently selected format
+
+        Yields:
+            DownloadProgress updates
+        """
+        last_progress = None
+        adaptation_check_counter = 0
+        
+        while True:
+            try:
+                # Wait for progress update with timeout
+                progress = await asyncio.wait_for(
+                    self.progress_queue.get(),
+                    timeout=1.0
+                )
+
+                # Store progress in history for analysis
+                self._progress_history[task_id].append(progress)
+                
+                # Check for quality adaptation every 10 progress updates
+                adaptation_check_counter += 1
+                if (adaptation_check_counter >= 10 and 
+                    current_format and 
+                    info.formats and 
+                    self.config.format_preferences.adaptive_quality):
+                    
+                    should_adapt, trigger = self.quality_controller.should_adapt_quality(
+                        task_id, progress, current_format, info.formats
+                    )
+                    
+                    if should_adapt and trigger:
+                        logger.info(f"Quality adaptation triggered for {task_id}: {trigger.value}")
+                        
+                        # Get new format
+                        new_format = self.quality_controller.adapt_quality(
+                            task_id, current_format, info.formats, 
+                            self.config.format_preferences, trigger
+                        )
+                        
+                        if new_format and new_format.format_id != current_format.format_id:
+                            logger.info(f"Adapting quality from {current_format.format_id} "
+                                       f"to {new_format.format_id} for {task_id}")
+                            
+                            # Cancel current download
+                            if task_id in self._download_tasks:
+                                self._download_tasks[task_id].cancel()
+                            
+                            # Start new download with adapted format
+                            await self._restart_download_with_new_format(
+                                task_id, info.webpage_url, new_format.format_id
+                            )
+                            
+                            current_format = new_format
+                    
+                    adaptation_check_counter = 0
+
+                # Only yield if progress has changed significantly
+                if self._should_yield_progress(progress, last_progress):
+                    yield progress
+                    last_progress = progress
+
+                # Check for completion
+                if progress.status in (DownloadStatus.FINISHED, DownloadStatus.ERROR):
+                    # Analyze performance for future optimizations
+                    if self._progress_history[task_id]:
+                        self.quality_controller.analyze_download_performance(
+                            task_id, self._progress_history[task_id]
+                        )
+                    break
+
+            except asyncio.TimeoutError:
+                # Check if task is still active
+                current_state = self._download_states.get(task_id)
+                if current_state in (DownloadStatus.FINISHED, DownloadStatus.ERROR, DownloadStatus.CANCELLED):
+                    # Create final progress update
+                    final_progress = DownloadProgress(
+                        status=current_state,
+                        downloaded_bytes=last_progress.downloaded_bytes if last_progress else 0,
+                        total_bytes=last_progress.total_bytes if last_progress else None,
+                        download_speed=0.0,
+                        filename=last_progress.filename if last_progress else None,
+                    )
+                    yield final_progress
+                    break
+
+                # Continue waiting for progress
+                continue
+
+    async def _restart_download_with_new_format(
+        self, 
+        task_id: str, 
+        url: str, 
+        format_spec: str
+    ) -> None:
+        """
+        Restart download with a new format specification.
+        
+        Args:
+            task_id: Task identifier
+            url: URL to download
+            format_spec: New format specification
+        """
+        logger.info(f"Restarting download {task_id} with format {format_spec}")
+        
+        try:
+            # Create new options with adapted format
+            opts = self._yt_dlp_opts.copy()
+            opts["format"] = format_spec
+            
+            # Set up authentication for this URL
+            opts = await self._setup_authentication_for_url(url, opts)
+            
+            # Create new download task
+            download_task = asyncio.create_task(
+                self._download_with_yt_dlp(url, opts, task_id)
+            )
+            self._download_tasks[task_id] = download_task
+            
+            logger.info(f"Download restarted successfully for {task_id}")
+            
+        except Exception as e:
+            logger.error(f"Failed to restart download {task_id} with new format: {e}")
+            self._download_states[task_id] = DownloadStatus.ERROR
 
     async def _stream_progress(self, task_id: str) -> AsyncIterator[DownloadProgress]:
         """
@@ -631,6 +793,127 @@ class MediaDownloader:
             Dictionary of yt-dlp options
         """
         return self._yt_dlp_opts.copy()
+
+    async def download_audio_only(
+        self,
+        info: MediaInfo,
+        task_id: str,
+        target_bitrate: int | None = None
+    ) -> AsyncIterator[DownloadProgress]:
+        """
+        Download audio-only format with quality optimization.
+
+        Args:
+            info: Media information from extraction
+            task_id: Unique task identifier
+            target_bitrate: Target audio bitrate in kbps
+
+        Yields:
+            DownloadProgress updates
+
+        Raises:
+            RuntimeError: If download fails
+            ValueError: If no audio formats available
+        """
+        logger.info(f"Starting audio-only download for task {task_id}: {info.title}")
+
+        if not info.formats:
+            raise ValueError("No formats available for audio extraction")
+
+        # Select optimal audio format
+        try:
+            from .format_extractor import FormatExtractor
+            extractor = FormatExtractor(self.config)
+            
+            audio_format = extractor.select_audio_only_format(
+                info.formats, self.config.format_preferences, target_bitrate
+            )
+            
+            logger.info(f"Selected audio format: {audio_format.format_id} "
+                       f"({audio_format.ext}, {audio_format.abr or 'unknown'} kbps)")
+            
+        except Exception as e:
+            logger.error(f"Failed to select audio format: {e}")
+            raise ValueError(f"No suitable audio format found: {e}") from e
+
+        # Configure for audio extraction
+        opts = self._yt_dlp_opts.copy()
+        opts["format"] = audio_format.format_id
+        
+        # Force audio extraction post-processing
+        opts["postprocessors"] = [{
+            "key": "FFmpegExtractAudio",
+            "preferredcodec": self.config.audio_format or "mp3",
+            "preferredquality": str(target_bitrate) if target_bitrate else self.config.audio_quality,
+        }]
+
+        # Use regular download method with audio-specific options
+        self._yt_dlp_opts_backup = self._yt_dlp_opts.copy()
+        self._yt_dlp_opts = opts
+        
+        try:
+            async for progress in self.download_media(info, task_id):
+                yield progress
+        finally:
+            # Restore original options
+            self._yt_dlp_opts = self._yt_dlp_opts_backup
+
+    def get_recommended_audio_bitrate(
+        self,
+        formats: list[MediaFormat],
+        preferences: FormatPreferences | None = None
+    ) -> int:
+        """
+        Get recommended audio bitrate based on available formats.
+
+        Args:
+            formats: Available formats
+            preferences: User preferences
+
+        Returns:
+            Recommended bitrate in kbps
+        """
+        prefs = preferences or self.config.format_preferences
+        
+        # If user specified target bitrate, use it
+        if prefs.target_audio_bitrate:
+            return prefs.target_audio_bitrate
+        
+        # Find audio formats and their bitrates
+        audio_bitrates = []
+        for fmt in formats:
+            if fmt.abr and (fmt.vcodec in (None, "none") or fmt.acodec):
+                audio_bitrates.append(fmt.abr)
+        
+        if not audio_bitrates:
+            return 192  # Default fallback
+        
+        # Recommend based on available quality
+        max_bitrate = max(audio_bitrates)
+        
+        if max_bitrate >= 320:
+            return 320  # High quality
+        elif max_bitrate >= 256:
+            return 256  # Good quality
+        elif max_bitrate >= 192:
+            return 192  # Standard quality
+        else:
+            return int(max_bitrate)  # Use best available
+
+    def analyze_format_quality_distribution(
+        self,
+        formats: list[MediaFormat]
+    ) -> dict[str, any]:
+        """
+        Analyze quality distribution of available formats.
+
+        Args:
+            formats: List of formats to analyze
+
+        Returns:
+            Analysis dictionary with quality metrics
+        """
+        return self.format_selector.analyze_format_distribution(formats)
 
     async def cleanup(self) -> None:
         """Clean up downloader resources and cancel active downloads."""

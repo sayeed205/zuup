@@ -15,6 +15,7 @@ from .media_models import (
     MediaInfo,
     SubtitleInfo,
 )
+from .format_selector import FormatSelector, QualityTier
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +32,8 @@ class FormatExtractor:
         """
         self.config = config
         self._yt_dlp_opts = self._create_yt_dlp_options()
-        logger.info("FormatExtractor initialized")
+        self.format_selector = FormatSelector()
+        logger.info("FormatExtractor initialized with advanced format selection")
 
     def _create_yt_dlp_options(self) -> Dict[str, Any]:
         """
@@ -300,7 +302,7 @@ class FormatExtractor:
         preferences: Optional[FormatPreferences] = None
     ) -> MediaFormat:
         """
-        Select the best format based on preferences.
+        Select the best format using advanced quality control.
 
         Args:
             formats: List of available formats
@@ -318,20 +320,28 @@ class FormatExtractor:
         # Use provided preferences or fall back to config preferences
         prefs = preferences or self.config.format_preferences
         
-        logger.info(f"Selecting format from {len(formats)} available formats")
+        logger.info(f"Selecting format from {len(formats)} available formats using advanced selection")
 
-        # Filter formats based on preferences
-        filtered_formats = self._filter_formats(formats, prefs)
-        
-        if not filtered_formats:
-            logger.warning("No formats match preferences, falling back to all formats")
-            filtered_formats = formats
-
-        # Select best format from filtered list
-        selected_format = self._select_best_format(filtered_formats, prefs)
-        
-        logger.info(f"Selected format: {selected_format.format_id} ({selected_format.ext})")
-        return selected_format
+        # Use advanced format selector
+        try:
+            # Convert target quality string to enum if specified
+            target_quality = None
+            if prefs.target_quality:
+                target_quality = QualityTier(prefs.target_quality)
+            
+            selected_format = self.format_selector.select_optimal_format(
+                formats=formats,
+                preferences=prefs,
+                target_quality=target_quality,
+                adaptive=prefs.adaptive_quality
+            )
+            
+            logger.info(f"Selected format: {selected_format.format_id} ({selected_format.ext})")
+            return selected_format
+            
+        except Exception as e:
+            logger.warning(f"Advanced format selection failed: {e}, falling back to basic selection")
+            return self._fallback_format_selection(formats, prefs)
 
     def _filter_formats(
         self, 
@@ -452,6 +462,214 @@ class FormatExtractor:
         sorted_formats = sorted(formats, key=format_score, reverse=True)
         
         return sorted_formats[0]
+
+    def select_audio_only_format(
+        self,
+        formats: List[MediaFormat],
+        preferences: Optional[FormatPreferences] = None,
+        target_bitrate: Optional[int] = None,
+        allow_conversion: bool = True
+    ) -> MediaFormat:
+        """
+        Select optimal audio-only format with advanced quality control and conversion support.
+
+        Args:
+            formats: List of available formats
+            preferences: Format selection preferences (uses config if None)
+            target_bitrate: Target audio bitrate in kbps
+            allow_conversion: Allow selection of video formats for audio extraction
+
+        Returns:
+            Selected audio MediaFormat
+
+        Raises:
+            ValueError: If no suitable audio format found
+        """
+        if not formats:
+            raise ValueError("No formats available for audio selection")
+
+        prefs = preferences or self.config.format_preferences
+        
+        # Use target bitrate from preferences if not specified
+        if target_bitrate is None:
+            target_bitrate = prefs.target_audio_bitrate
+        
+        logger.info(f"Selecting audio-only format from {len(formats)} available formats")
+
+        try:
+            selected_format = self.format_selector.select_audio_only_format(
+                formats=formats,
+                preferences=prefs,
+                target_bitrate=target_bitrate,
+                allow_conversion=allow_conversion
+            )
+            
+            logger.info(f"Selected audio format: {selected_format.format_id} "
+                       f"({selected_format.ext}, {selected_format.abr or 'unknown'} kbps)")
+            return selected_format
+            
+        except Exception as e:
+            logger.warning(f"Advanced audio selection failed: {e}, falling back to basic selection")
+            return self._fallback_audio_selection(formats, prefs)
+
+    def get_quality_alternatives(
+        self,
+        formats: List[MediaFormat],
+        current_format: MediaFormat,
+        direction: str = "lower"
+    ) -> List[MediaFormat]:
+        """
+        Get quality alternatives for adaptive selection.
+
+        Args:
+            formats: List of available formats
+            current_format: Current format to find alternatives for
+            direction: "lower" or "higher" quality
+
+        Returns:
+            List of alternative formats ordered by preference
+        """
+        logger.info(f"Finding {direction} quality alternatives for {current_format.format_id}")
+        
+        try:
+            alternatives = self.format_selector.get_quality_alternatives(
+                formats=formats,
+                current_format=current_format,
+                direction=direction
+            )
+            
+            logger.info(f"Found {len(alternatives)} {direction} quality alternatives")
+            return alternatives
+            
+        except Exception as e:
+            logger.error(f"Failed to get quality alternatives: {e}")
+            return []
+
+    def analyze_available_formats(self, formats: List[MediaFormat]) -> Dict[str, any]:
+        """
+        Analyze format distribution for debugging and optimization.
+
+        Args:
+            formats: List of formats to analyze
+
+        Returns:
+            Analysis dictionary with format distribution information
+        """
+        return self.format_selector.analyze_format_distribution(formats)
+
+    def select_format_with_fallback(
+        self,
+        formats: List[MediaFormat],
+        preferences: Optional[FormatPreferences] = None,
+        max_attempts: int = 3
+    ) -> MediaFormat:
+        """
+        Select format with automatic quality fallback on failure.
+
+        Args:
+            formats: List of available formats
+            preferences: Format selection preferences
+            max_attempts: Maximum fallback attempts
+
+        Returns:
+            Selected format with fallback applied if needed
+
+        Raises:
+            ValueError: If no suitable format found after all attempts
+        """
+        prefs = preferences or self.config.format_preferences
+        
+        if not prefs.quality_fallback:
+            return self.select_format(formats, preferences)
+        
+        logger.info("Selecting format with quality fallback enabled")
+        
+        # Try original selection first
+        try:
+            return self.select_format(formats, preferences)
+        except Exception as e:
+            logger.warning(f"Primary format selection failed: {e}")
+        
+        # Try with progressively lower quality targets
+        quality_fallback_order = [
+            QualityTier.HIGH,
+            QualityTier.MEDIUM,
+            QualityTier.LOW,
+            QualityTier.VERY_LOW
+        ]
+        
+        for attempt, fallback_quality in enumerate(quality_fallback_order):
+            if attempt >= max_attempts - 1:
+                break
+                
+            try:
+                logger.info(f"Attempting fallback with {fallback_quality.value} quality")
+                
+                # Create modified preferences with lower quality target
+                fallback_prefs = prefs.model_copy()
+                fallback_prefs.target_quality = fallback_quality.value
+                
+                return self.format_selector.select_optimal_format(
+                    formats=formats,
+                    preferences=fallback_prefs,
+                    target_quality=fallback_quality,
+                    adaptive=True
+                )
+                
+            except Exception as e:
+                logger.warning(f"Fallback attempt {attempt + 1} failed: {e}")
+                continue
+        
+        # Final fallback to basic selection
+        logger.warning("All quality fallbacks failed, using basic selection")
+        return self._fallback_format_selection(formats, prefs)
+
+    def _fallback_format_selection(
+        self,
+        formats: List[MediaFormat],
+        preferences: FormatPreferences
+    ) -> MediaFormat:
+        """Fallback to basic format selection when advanced selection fails."""
+        logger.info("Using fallback format selection")
+        
+        # Filter formats based on basic preferences
+        filtered_formats = self._filter_formats(formats, preferences)
+        
+        if not filtered_formats:
+            logger.warning("No formats match preferences, using all formats")
+            filtered_formats = formats
+
+        # Select best format from filtered list using basic scoring
+        selected_format = self._select_best_format(filtered_formats, preferences)
+        
+        return selected_format
+
+    def _fallback_audio_selection(
+        self,
+        formats: List[MediaFormat],
+        preferences: FormatPreferences
+    ) -> MediaFormat:
+        """Fallback to basic audio format selection."""
+        logger.info("Using fallback audio format selection")
+        
+        # Filter to audio formats
+        audio_formats = [
+            fmt for fmt in formats
+            if fmt.acodec is not None and fmt.acodec != "none"
+        ]
+        
+        if not audio_formats:
+            raise ValueError("No audio formats available")
+        
+        # Prefer audio-only formats
+        audio_only = [fmt for fmt in audio_formats if fmt.vcodec in (None, "none")]
+        if audio_only:
+            audio_formats = audio_only
+        
+        # Sort by audio bitrate (higher is better)
+        audio_formats.sort(key=lambda x: x.abr or 0, reverse=True)
+        
+        return audio_formats[0]
 
     def _get_height_from_resolution(self, resolution: str) -> Optional[int]:
         """
@@ -601,6 +819,140 @@ class FormatExtractor:
         except Exception:
             # If any error occurs, assume not supported
             return False
+
+    def select_adaptive_quality_format(
+        self,
+        formats: List[MediaFormat],
+        preferences: Optional[FormatPreferences] = None,
+        available_bandwidth: Optional[float] = None,
+        device_capabilities: Optional[Dict[str, any]] = None
+    ) -> MediaFormat:
+        """
+        Select format using adaptive quality selection based on available formats and conditions.
+
+        Args:
+            formats: List of available formats
+            preferences: Format selection preferences (uses config if None)
+            available_bandwidth: Available bandwidth in bytes/second
+            device_capabilities: Device capability constraints
+
+        Returns:
+            Adaptively selected optimal format
+
+        Raises:
+            ValueError: If no suitable format found
+        """
+        if not formats:
+            raise ValueError("No formats available for adaptive selection")
+
+        prefs = preferences or self.config.format_preferences
+        
+        logger.info("Performing adaptive quality format selection")
+
+        try:
+            return self.format_selector.select_adaptive_quality_format(
+                formats=formats,
+                preferences=prefs,
+                available_bandwidth=available_bandwidth,
+                device_capabilities=device_capabilities
+            )
+        except Exception as e:
+            logger.warning(f"Adaptive quality selection failed: {e}, falling back to standard selection")
+            return self.select_format(formats, preferences)
+
+    def get_format_conversion_requirements(
+        self, 
+        selected_format: MediaFormat, 
+        target_preferences: Optional[FormatPreferences] = None
+    ) -> Dict[str, any]:
+        """
+        Determine what format conversion is needed for the selected format.
+
+        Args:
+            selected_format: The selected format
+            target_preferences: Target format preferences (uses config if None)
+
+        Returns:
+            Dictionary describing conversion requirements
+        """
+        prefs = target_preferences or self.config.format_preferences
+        
+        return self.format_selector.get_format_conversion_requirements(
+            selected_format, prefs
+        )
+
+    def select_format_for_bandwidth(
+        self,
+        formats: List[MediaFormat],
+        available_bandwidth: float,
+        preferences: Optional[FormatPreferences] = None
+    ) -> MediaFormat:
+        """
+        Select optimal format based on available bandwidth.
+
+        Args:
+            formats: List of available formats
+            available_bandwidth: Available bandwidth in bytes/second
+            preferences: Format selection preferences (uses config if None)
+
+        Returns:
+            Bandwidth-optimized format selection
+
+        Raises:
+            ValueError: If no suitable format found
+        """
+        if not formats:
+            raise ValueError("No formats available for bandwidth-based selection")
+
+        prefs = preferences or self.config.format_preferences
+        
+        logger.info(f"Selecting format for bandwidth: {available_bandwidth:.0f} B/s")
+
+        # Use the enhanced format selector with connection speed
+        try:
+            return self.format_selector.select_optimal_format(
+                formats=formats,
+                preferences=prefs,
+                target_quality=None,  # Let it auto-determine
+                adaptive=True,
+                connection_speed=available_bandwidth
+            )
+        except Exception as e:
+            logger.warning(f"Bandwidth-based selection failed: {e}, falling back to standard selection")
+            return self.select_format(formats, preferences)
+
+    def get_quality_alternatives_for_format(
+        self,
+        formats: List[MediaFormat],
+        current_format: MediaFormat,
+        direction: str = "lower"
+    ) -> List[MediaFormat]:
+        """
+        Get quality alternatives for adaptive selection during downloads.
+
+        Args:
+            formats: List of available formats
+            current_format: Current format to find alternatives for
+            direction: "lower" or "higher" quality
+
+        Returns:
+            List of alternative formats ordered by preference
+        """
+        logger.info(f"Finding {direction} quality alternatives for format {current_format.format_id}")
+        
+        try:
+            alternatives = self.format_selector.get_quality_alternatives(
+                formats=formats,
+                current_format=current_format,
+                direction=direction
+            )
+            
+            logger.info(f"Found {len(alternatives)} {direction} quality alternatives")
+            return alternatives
+            
+        except Exception as e:
+            logger.error(f"Failed to get quality alternatives: {e}")
+            return []
 
     def get_supported_sites(self) -> List[str]:
         """

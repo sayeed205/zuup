@@ -365,8 +365,9 @@ class AuthConfig(BaseModel):
 
 
 class FormatPreferences(BaseModel):
-    """Format selection preferences."""
+    """Advanced format selection preferences with quality control."""
 
+    # Basic preferences
     prefer_free_formats: bool = False
     max_height: int | None = None
     max_width: int | None = None
@@ -374,6 +375,31 @@ class FormatPreferences(BaseModel):
     preferred_containers: list[str] = Field(default_factory=list)
     audio_only: bool = False
     video_only: bool = False
+    
+    # Advanced quality control
+    target_quality: str | None = None  # "ultra_high", "high", "medium", "low", "very_low"
+    adaptive_quality: bool = True
+    quality_fallback: bool = True
+    
+    # Bitrate preferences
+    max_video_bitrate: int | None = None  # kbps
+    min_video_bitrate: int | None = None  # kbps
+    max_audio_bitrate: int | None = None  # kbps
+    min_audio_bitrate: int | None = None  # kbps
+    target_audio_bitrate: int | None = None  # kbps for audio-only
+    
+    # Frame rate preferences
+    max_fps: float | None = None
+    min_fps: float | None = None
+    prefer_60fps: bool = False
+    
+    # Codec-specific preferences
+    prefer_hardware_decodable: bool = True
+    avoid_experimental_codecs: bool = True
+    
+    # Format conversion preferences
+    allow_format_conversion: bool = True
+    prefer_native_formats: bool = True
 
     @field_validator("max_height", "max_width")
     @classmethod
@@ -383,11 +409,53 @@ class FormatPreferences(BaseModel):
             raise ValueError("Dimensions must be positive")
         return v
 
+    @field_validator("target_quality")
+    @classmethod
+    def validate_target_quality(cls, v: str | None) -> str | None:
+        """Validate target quality value."""
+        if v is not None:
+            valid_qualities = {"ultra_high", "high", "medium", "low", "very_low"}
+            if v not in valid_qualities:
+                raise ValueError(f"Invalid target quality: {v}. Must be one of {valid_qualities}")
+        return v
+
+    @field_validator("max_video_bitrate", "min_video_bitrate", "max_audio_bitrate", 
+                    "min_audio_bitrate", "target_audio_bitrate")
+    @classmethod
+    def validate_bitrates(cls, v: int | None) -> int | None:
+        """Validate bitrate values are positive."""
+        if v is not None and v <= 0:
+            raise ValueError("Bitrate values must be positive")
+        return v
+
+    @field_validator("max_fps", "min_fps")
+    @classmethod
+    def validate_fps(cls, v: float | None) -> float | None:
+        """Validate FPS values are positive."""
+        if v is not None and v <= 0:
+            raise ValueError("FPS values must be positive")
+        return v
+
     @model_validator(mode="after")
     def validate_format_preferences(self) -> "FormatPreferences":
         """Validate format preferences consistency."""
         if self.audio_only and self.video_only:
             raise ValueError("Cannot specify both audio_only and video_only")
+        
+        # Validate bitrate ranges
+        if (self.min_video_bitrate is not None and self.max_video_bitrate is not None and
+            self.min_video_bitrate > self.max_video_bitrate):
+            raise ValueError("Min video bitrate cannot exceed max video bitrate")
+        
+        if (self.min_audio_bitrate is not None and self.max_audio_bitrate is not None and
+            self.min_audio_bitrate > self.max_audio_bitrate):
+            raise ValueError("Min audio bitrate cannot exceed max audio bitrate")
+        
+        # Validate FPS ranges
+        if (self.min_fps is not None and self.max_fps is not None and
+            self.min_fps > self.max_fps):
+            raise ValueError("Min FPS cannot exceed max FPS")
+        
         return self
 
 
