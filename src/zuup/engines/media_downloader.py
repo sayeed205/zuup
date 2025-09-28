@@ -6,10 +6,13 @@ import contextlib
 from datetime import timedelta
 import logging
 from typing import Any
+from urllib.parse import urlparse
 
 import yt_dlp  # type: ignore[import-untyped]
 
 from ..storage.models import ProgressInfo, TaskStatus
+from .auth_error_handler import AuthenticationErrorHandler
+from .cookie_manager import AuthenticationError, AuthenticationManager
 from .media_models import (
     DownloadProgress,
     DownloadStatus,
@@ -39,8 +42,14 @@ class MediaDownloader:
         self.progress_queue: asyncio.Queue[DownloadProgress] = asyncio.Queue()
         self._download_states: dict[str, DownloadStatus] = {}
         self._download_tasks: dict[str, asyncio.Task[None]] = {}
+        
+        # Initialize authentication components
+        cookies_file = config.auth_config.cookies_file
+        self.auth_manager = AuthenticationManager(cookies_file)
+        self.auth_error_handler = AuthenticationErrorHandler(self.auth_manager)
+        
         self._yt_dlp_opts = self._create_yt_dlp_options()
-        logger.info("MediaDownloader initialized")
+        logger.info("MediaDownloader initialized with authentication support")
 
     def _create_yt_dlp_options(self) -> dict[str, Any]:
         """
@@ -95,16 +104,8 @@ class MediaDownloader:
             "no_warnings": False,
         }
 
-        # Add authentication if configured
-        if self.config.auth_config.username:
-            opts["username"] = self.config.auth_config.username
-        if self.config.auth_config.password:
-            opts["password"] = self.config.auth_config.password
-        if self.config.auth_config.cookies_file:
-            opts["cookiefile"] = str(self.config.auth_config.cookies_file)
-        if self.config.auth_config.netrc_file:
-            opts["usenetrc"] = True
-            opts["netrc_location"] = str(self.config.auth_config.netrc_file)
+        # Authentication will be set up dynamically per URL
+        # This allows for URL-specific authentication and error handling
 
         # Audio extraction settings
         if self.config.extract_audio:
@@ -116,6 +117,101 @@ class MediaDownloader:
             }]
 
         return opts
+    
+    async def _setup_authentication_for_url(self, url: str, opts: dict[str, Any]) -> dict[str, Any]:
+        """
+        Set up authentication for a specific URL.
+        
+        Args:
+            url: URL being accessed
+            opts: Current yt-dlp options
+            
+        Returns:
+            Updated options with authentication
+        """
+        try:
+            # Convert auth config to dictionary format
+            auth_dict = {
+                "method": self.config.auth_config.method.value,
+                "username": self.config.auth_config.username,
+                "password": self.config.auth_config.password,
+                "cookies_file": str(self.config.auth_config.cookies_file) if self.config.auth_config.cookies_file else None,
+                "netrc_file": str(self.config.auth_config.netrc_file) if self.config.auth_config.netrc_file else None,
+                "oauth_token": self.config.auth_config.oauth_token
+            }
+            
+            # Set up authentication
+            auth_opts = await self.auth_manager.setup_authentication(auth_dict, url)
+            opts.update(auth_opts)
+            
+            logger.debug(f"Authentication configured for {urlparse(url).netloc}")
+            
+        except AuthenticationError as e:
+            logger.warning(f"Authentication setup failed for {url}: {e}")
+            # Continue without authentication - some sites may work without it
+        except Exception as e:
+            logger.error(f"Unexpected error setting up authentication for {url}: {e}")
+        
+        return opts
+    
+    async def _is_authentication_error(self, error: Exception) -> bool:
+        """
+        Check if an error is authentication-related.
+        
+        Args:
+            error: Exception to check
+            
+        Returns:
+            True if error is authentication-related
+        """
+        error_message = str(error).lower()
+        auth_keywords = [
+            "login", "password", "authentication", "unauthorized", "forbidden",
+            "cookie", "session", "token", "captcha", "verify", "sign in",
+            "403", "401", "please log in", "access denied"
+        ]
+        
+        return any(keyword in error_message for keyword in auth_keywords)
+    
+    async def _handle_authentication_error(
+        self, 
+        error: Exception, 
+        url: str, 
+        current_opts: dict[str, Any]
+    ) -> dict[str, Any] | None:
+        """
+        Handle authentication error and attempt recovery.
+        
+        Args:
+            error: Authentication error
+            url: URL that failed
+            current_opts: Current yt-dlp options
+            
+        Returns:
+            Updated options for retry, or None if recovery failed
+        """
+        try:
+            # Use authentication error handler
+            action = await self.auth_error_handler.handle_auth_error(
+                error, self.config.auth_config, url
+            )
+            
+            # Execute recovery action
+            recovery_opts = await self.auth_error_handler.execute_recovery_action(
+                action, self.config.auth_config, url
+            )
+            
+            if recovery_opts:
+                # Merge with current options
+                updated_opts = current_opts.copy()
+                updated_opts.update(recovery_opts)
+                return updated_opts
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"Authentication error handling failed: {e}")
+            return None
 
     def _progress_hook(self, d: dict[str, Any]) -> None:
         """
@@ -210,6 +306,9 @@ class MediaDownloader:
             opts = self._yt_dlp_opts.copy()
             if format_spec:
                 opts["format"] = format_spec
+            
+            # Set up authentication for this URL
+            opts = await self._setup_authentication_for_url(info.webpage_url, opts)
 
             # Create download task
             download_task = asyncio.create_task(
@@ -237,6 +336,24 @@ class MediaDownloader:
             self._download_states[task_id] = DownloadStatus.CANCELLED
             raise
         except Exception as e:
+            # Check if this is an authentication error
+            if await self._is_authentication_error(e):
+                logger.info(f"Authentication error detected for task {task_id}, attempting recovery")
+                try:
+                    # Attempt to handle authentication error
+                    recovered_opts = await self._handle_authentication_error(e, info.webpage_url, opts)
+                    if recovered_opts:
+                        # Retry download with recovered authentication
+                        logger.info(f"Retrying download with recovered authentication for task {task_id}")
+                        download_task = asyncio.create_task(
+                            self._download_with_yt_dlp(info.webpage_url, recovered_opts, task_id)
+                        )
+                        self._download_tasks[task_id] = download_task
+                        await download_task
+                        return  # Success after recovery
+                except Exception as recovery_error:
+                    logger.error(f"Authentication recovery failed for task {task_id}: {recovery_error}")
+            
             logger.error(f"Download failed for task {task_id}: {e}")
             self._download_states[task_id] = DownloadStatus.ERROR
             raise RuntimeError(f"Media download failed: {e}") from e
@@ -536,6 +653,12 @@ class MediaDownloader:
                 self.progress_queue.get_nowait()
             except asyncio.QueueEmpty:
                 break
+        
+        # Clean up authentication resources
+        try:
+            await self.auth_error_handler.cleanup()
+        except Exception as e:
+            logger.error(f"Error cleaning up authentication resources: {e}")
 
         logger.info("MediaDownloader cleanup completed")
 
