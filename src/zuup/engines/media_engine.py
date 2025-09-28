@@ -1,5 +1,6 @@
 """Media download engine using yt-dlp."""
 
+import asyncio
 from collections.abc import AsyncIterator
 import logging
 from pathlib import Path
@@ -9,6 +10,7 @@ from ..storage.models import DownloadTask, ProgressInfo, TaskStatus
 from .base import BaseDownloadEngine
 from .format_extractor import FormatExtractor
 from .media_downloader import MediaDownloader
+from .media_error_handler import MediaErrorHandler, ExtractionError, DownloadError, ProcessingError
 from .media_models import BatchDownloadConfig, BatchProgress, MediaConfig, MediaInfo
 from .playlist_manager import PlaylistManager
 
@@ -32,8 +34,18 @@ class MediaEngine(BaseDownloadEngine):
         self.extractor = FormatExtractor(config)
         self.downloader = MediaDownloader(config)
         self.playlist_manager = PlaylistManager(config)
+        
+        # Initialize error handler with configuration
+        self.error_handler = MediaErrorHandler(
+            max_retry_attempts=config.retries,
+            base_retry_delay=1.0,
+            max_retry_delay=60.0,
+            backoff_factor=2.0,
+            enable_fallback_extractors=True,
+            enable_format_alternatives=True,
+        )
 
-        logger.info("MediaEngine initialized")
+        logger.info("MediaEngine initialized with error handling")
 
     async def download(self, task: DownloadTask) -> AsyncIterator[ProgressInfo]:
         """
@@ -52,9 +64,8 @@ class MediaEngine(BaseDownloadEngine):
             self._validate_task(task)
             self._register_task_start(task.id)
 
-            # Extract media information to determine if it's a playlist
-            logger.info(f"Extracting media info for {task.url}")
-            media_info = await self.extractor.extract_info(task.url)
+            # Extract media information with error handling
+            media_info = await self._extract_with_retry(task.url)
 
             # Check if this is a playlist or single video
             if media_info.is_playlist or self._is_playlist_url(task.url):
@@ -156,7 +167,7 @@ class MediaEngine(BaseDownloadEngine):
 
     async def _download_single_video(self, task: DownloadTask, media_info: MediaInfo) -> AsyncIterator[ProgressInfo]:
         """
-        Download a single video.
+        Download a single video with error handling.
 
         Args:
             task: Download task
@@ -165,12 +176,9 @@ class MediaEngine(BaseDownloadEngine):
         Yields:
             Progress information updates
         """
-        # Start download with progress tracking
-        async for progress in self.downloader.download_media(media_info, task.id):
-            # Convert to ProgressInfo and update internal tracking
-            progress_info = self.downloader.convert_to_progress_info(progress)
-            self._update_progress(task.id, progress_info)
-            yield progress_info
+        # Use error handling download method
+        async for progress in self._download_with_error_handling(task, media_info):
+            yield progress
 
     async def _download_playlist(self, task: DownloadTask) -> AsyncIterator[ProgressInfo]:
         """
@@ -261,6 +269,169 @@ class MediaEngine(BaseDownloadEngine):
             status=status,
             error_message=None,
         )
+
+    async def _extract_with_retry(self, url: str, max_attempts: int = 3) -> MediaInfo:
+        """
+        Extract media information with retry logic and error handling.
+        
+        Args:
+            url: URL to extract information from
+            max_attempts: Maximum number of extraction attempts
+            
+        Returns:
+            Extracted media information
+            
+        Raises:
+            ExtractionError: If extraction fails after all retries
+        """
+        last_error = None
+        
+        for attempt in range(max_attempts):
+            try:
+                logger.info(f"Extracting media info for {url} (attempt {attempt + 1})")
+                return await self.extractor.extract_info(url)
+                
+            except Exception as e:
+                extraction_error = ExtractionError(
+                    message=str(e),
+                    error_code=getattr(e, 'code', None),
+                    extractor=getattr(e, 'extractor', None)
+                )
+                
+                # Handle the error and determine action
+                action = await self.error_handler.handle_extraction_error(
+                    extraction_error, url, attempt
+                )
+                
+                last_error = extraction_error
+                
+                # Check if we should retry
+                if not self.error_handler.should_retry_extraction(extraction_error, attempt):
+                    logger.error(f"Extraction failed permanently for {url}: {e}")
+                    break
+                
+                # Handle different actions
+                if action.name.startswith("RETRY"):
+                    if action.name == "RETRY_WITH_FALLBACK":
+                        # Try fallback extractor
+                        fallback = self.error_handler.get_fallback_extractor(url)
+                        if fallback:
+                            logger.info(f"Trying fallback extractor {fallback} for {url}")
+                            # Note: Actual fallback implementation would require 
+                            # modifying the extractor to use specific extractors
+                    
+                    # Calculate delay for retry
+                    if action.name == "RETRY_WITH_DELAY":
+                        # Use a default category for delay calculation
+                        from .media_error_handler import MediaErrorCategory
+                        delay = await self.error_handler.calculate_retry_delay(
+                            attempt, MediaErrorCategory.EXTRACTION
+                        )
+                        logger.info(f"Retrying extraction after {delay:.1f}s delay")
+                        await asyncio.sleep(delay)
+                
+                elif action.name == "FAIL_DOWNLOAD":
+                    logger.error(f"Extraction failed permanently for {url}: {e}")
+                    break
+        
+        # If we get here, all attempts failed
+        if last_error:
+            raise last_error
+        else:
+            raise ExtractionError(f"Failed to extract information from {url}")
+
+    async def _download_with_error_handling(
+        self, 
+        task: DownloadTask, 
+        media_info: MediaInfo
+    ) -> AsyncIterator[ProgressInfo]:
+        """
+        Download with comprehensive error handling and format alternatives.
+        
+        Args:
+            task: Download task
+            media_info: Media information
+            
+        Yields:
+            Progress information updates
+        """
+        max_attempts = 3
+        last_error = None
+        
+        for attempt in range(max_attempts):
+            try:
+                # Start download with progress tracking
+                async for progress in self.downloader.download_media(media_info, task.id):
+                    # Convert to ProgressInfo and update internal tracking
+                    progress_info = self.downloader.convert_to_progress_info(progress)
+                    self._update_progress(task.id, progress_info)
+                    yield progress_info
+                
+                # If we get here, download succeeded
+                return
+                
+            except Exception as e:
+                download_error = DownloadError(
+                    message=str(e),
+                    error_code=getattr(e, 'code', None),
+                    format_id=getattr(e, 'format_id', None)
+                )
+                
+                # Handle the error and determine action
+                action = await self.error_handler.handle_download_error(
+                    download_error, media_info, attempt
+                )
+                
+                last_error = download_error
+                
+                # Handle different actions
+                if action.name == "USE_ALTERNATIVE_FORMAT":
+                    # Get current format and suggest alternatives
+                    current_formats = media_info.formats
+                    if current_formats:
+                        failed_format = current_formats[0]  # Assume first format was tried
+                        alternatives = self.error_handler.suggest_format_alternatives(
+                            failed_format, current_formats
+                        )
+                        
+                        if alternatives:
+                            logger.info(f"Trying alternative format: {alternatives[0].format_id}")
+                            # Update media_info with alternative format
+                            media_info.formats = alternatives
+                            continue
+                
+                elif action.name == "REDUCE_QUALITY":
+                    # Try to find lower quality formats
+                    current_formats = media_info.formats
+                    lower_quality_formats = [
+                        fmt for fmt in current_formats 
+                        if fmt.quality and fmt.quality < (current_formats[0].quality or 100)
+                    ]
+                    
+                    if lower_quality_formats:
+                        logger.info(f"Trying lower quality format: {lower_quality_formats[0].format_id}")
+                        media_info.formats = lower_quality_formats
+                        continue
+                
+                elif action.name.startswith("RETRY"):
+                    if action.name == "RETRY_WITH_DELAY":
+                        from .media_error_handler import MediaErrorCategory
+                        delay = await self.error_handler.calculate_retry_delay(
+                            attempt, MediaErrorCategory.NETWORK
+                        )
+                        logger.info(f"Retrying download after {delay:.1f}s delay")
+                        await asyncio.sleep(delay)
+                    continue
+                
+                elif action.name in ["FAIL_DOWNLOAD", "SKIP_ITEM"]:
+                    logger.error(f"Download failed permanently: {e}")
+                    break
+        
+        # If we get here, all attempts failed
+        if last_error:
+            raise last_error
+        else:
+            raise DownloadError(f"Failed to download {media_info.title}")
 
     async def cleanup(self) -> None:
         """Clean up engine resources."""
