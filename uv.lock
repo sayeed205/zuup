@@ -1497,6 +1497,7 @@ dependencies = [
     { name = "rich" },
     { name = "sqlalchemy" },
     { name = "uvicorn" },
+    { name = "watchdog" },
     { name = "yt-dlp" },
 ]
 
@@ -1543,6 +1544,7 @@ requires-dist = [
     { name = "types-paramiko", marker = "extra == 'dev'" },
     { name = "types-requests", marker = "extra == 'dev'" },
     { name = "uvicorn", specifier = ">=0.20.0" },
+    { name = "watchdog", specifier = ">=3.0.0" },
     { name = "yt-dlp", specifier = ">=2025.9.23" },
 ]
 provides-extras = ["dev"]
