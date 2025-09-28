@@ -6,7 +6,8 @@ import asyncio
 from collections.abc import Callable
 import logging
 import time
-from typing import Any
+from typing import Any, Optional
+from pathlib import Path
 
 import pycurl
 
@@ -19,6 +20,7 @@ from .pycurl_models import (
     WorkerProgress,
     WorkerStatus,
 )
+from .pycurl_logging import CurlLogger, LogLevel, setup_curl_logging
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +33,8 @@ class CurlWorker:
         segment: DownloadSegment,
         config: HttpFtpConfig,
         curl_share: pycurl.CurlShare | None = None,
+        log_level: LogLevel = LogLevel.BASIC,
+        log_dir: Optional[Path] = None,
     ) -> None:
         """
         Initialize CurlWorker.
@@ -39,6 +43,8 @@ class CurlWorker:
             segment: Download segment to handle
             config: Configuration for the worker
             curl_share: Shared curl handle for cookies, DNS cache, etc.
+            log_level: Logging verbosity level
+            log_dir: Optional directory for debug logs
         """
         self.segment = segment
         self.config = config
@@ -65,13 +71,40 @@ class CurlWorker:
         self._last_reported_bytes = 0
         self._speed_samples: list[tuple[float, int]] = []  # (timestamp, bytes)
 
+        # Initialize comprehensive logging
+        self.curl_logger = setup_curl_logging(
+            task_id=segment.task_id,
+            worker_id=self.worker_id,
+            log_level=log_level,
+            log_dir=log_dir,
+        )
+
         logger.debug(
-            f"Initialized CurlWorker {self.worker_id} for segment {segment.id}"
+            f"Initialized CurlWorker {self.worker_id} for segment {segment.id} with log level {log_level.value}"
         )
 
     def set_progress_callback(self, callback: Callable[[WorkerProgress], None]) -> None:
         """Set callback function for progress updates."""
         self._progress_callback = callback
+
+    def set_log_level(self, level: LogLevel) -> None:
+        """Update logging level for this worker."""
+        self.curl_logger.set_log_level(level)
+
+    def get_debug_summary(self) -> dict[str, Any]:
+        """Get debug summary for troubleshooting."""
+        return self.curl_logger.get_debug_summary()
+
+    def get_performance_metrics(self) -> dict[str, Any]:
+        """Get performance metrics if available."""
+        return self.curl_logger.metrics.to_dict()
+
+    def generate_debug_curl_command(self) -> str:
+        """Generate equivalent curl command for debugging."""
+        from .pycurl_logging import CurlDebugUtilities
+        return CurlDebugUtilities.generate_curl_command(
+            self.segment.url, self.config, self.segment
+        )
 
     async def download_segment(self) -> SegmentResult:
         """
@@ -115,6 +148,10 @@ class CurlWorker:
                 if retry_count < max_retries and not self._cancelled:
                     retry_count += 1
                     delay = self._calculate_retry_delay(retry_count)
+                    
+                    # Log retry attempt
+                    self.curl_logger.log_retry_attempt(retry_count, delay, error)
+                    
                     logger.info(
                         f"Retrying segment {self.segment.id} in {delay:.1f} seconds (attempt {retry_count + 1}/{max_retries + 1})"
                     )
@@ -152,6 +189,9 @@ class CurlWorker:
             self._cleanup_curl()
 
         self.curl_handle = pycurl.Curl()
+
+        # Log connection attempt
+        self.curl_logger.log_connection_attempt(self.segment.url, self.segment)
 
         # Basic URL setup
         self.curl_handle.setopt(pycurl.URL, self.segment.url.encode("utf-8"))
@@ -214,8 +254,17 @@ class CurlWorker:
         self.curl_handle.setopt(pycurl.PROGRESSFUNCTION, self._progress_callback_curl)
         self.curl_handle.setopt(pycurl.NOPROGRESS, 0)  # Enable progress callback
 
+        # Setup debug callback for detailed logging
+        if self.curl_logger.log_level in (LogLevel.VERBOSE, LogLevel.DEBUG):
+            debug_callback = self.curl_logger.create_debug_callback()
+            self.curl_handle.setopt(pycurl.DEBUGFUNCTION, debug_callback)
+            self.curl_handle.setopt(pycurl.VERBOSE, 1)
+
         # Open temp file for writing
         self._open_temp_file()
+
+        # Initialize performance metrics
+        self.curl_logger.metrics.start_time = time.time()
 
         logger.debug(f"Initialized curl handle for worker {self.worker_id}")
 
@@ -660,6 +709,9 @@ class CurlWorker:
                 error=self.error_message,
             )
 
+            # Log progress update
+            self.curl_logger.log_progress_update(progress)
+
             try:
                 self._progress_callback(progress)
             except Exception as e:
@@ -693,10 +745,18 @@ class CurlWorker:
             response_code = self.curl_handle.getinfo(pycurl.RESPONSE_CODE)
             effective_url = self.curl_handle.getinfo(pycurl.EFFECTIVE_URL)
 
+            # Log connection success and collect metrics
+            self.curl_logger.log_connection_success(self.curl_handle)
+            metrics = self.curl_logger.collect_performance_metrics(self.curl_handle)
+
             if response_code in (200, 206):  # OK or Partial Content
                 self.status = WorkerStatus.COMPLETED
                 self.segment.status = SegmentStatus.COMPLETED
                 self.segment.downloaded_bytes = self.downloaded_bytes
+
+                # Log successful completion
+                duration = time.time() - self.start_time
+                self.curl_logger.log_completion(True, self.downloaded_bytes, duration)
 
                 # Final progress report
                 self._report_progress()
@@ -708,6 +768,7 @@ class CurlWorker:
                     effective_url=effective_url.decode("utf-8")
                     if effective_url
                     else None,
+                    performance_metrics=metrics.to_dict(),
                 )
             else:
                 error_msg = self._get_http_error_message(response_code)
@@ -733,11 +794,21 @@ class CurlWorker:
                 },
             )
 
+            # Log connection failure with diagnostic information
+            self.curl_logger.log_connection_failure(curl_error, e.args[0])
+            
+            # Log failed completion
+            duration = time.time() - self.start_time
+            self.curl_logger.log_completion(False, self.downloaded_bytes, duration)
+
             self.status = WorkerStatus.FAILED
             self.error_message = curl_error.curl_message
 
             return self._create_result(
-                success=False, error=curl_error.curl_message, curl_error=curl_error
+                success=False, 
+                error=curl_error.curl_message, 
+                curl_error=curl_error,
+                debug_summary=self.curl_logger.get_debug_summary(),
             )
 
         except Exception as e:

@@ -6,7 +6,8 @@ import asyncio
 from collections.abc import AsyncIterator
 import logging
 import time
-from typing import Any
+from typing import Any, Optional
+from pathlib import Path
 
 import pycurl
 
@@ -17,6 +18,7 @@ from .pycurl_models import (
     WorkerProgress,
     WorkerStatus,
 )
+from .pycurl_logging import LogLevel
 
 logger = logging.getLogger(__name__)
 
@@ -199,12 +201,19 @@ class ConnectionManager:
         except Exception as e:
             logger.warning(f"Failed to setup curl sharing: {e}")
 
-    async def create_workers(self, segments: list[DownloadSegment]) -> list[CurlWorker]:
+    async def create_workers(
+        self, 
+        segments: list[DownloadSegment], 
+        log_level: LogLevel = LogLevel.BASIC,
+        log_dir: Optional[Path] = None,
+    ) -> list[CurlWorker]:
         """
         Create workers for downloading segments.
 
         Args:
             segments: List of download segments
+            log_level: Logging verbosity level for workers
+            log_dir: Optional directory for debug logs
 
         Returns:
             List of created workers
@@ -223,9 +232,13 @@ class ConnectionManager:
 
         try:
             for segment in segments:
-                # Create worker with shared curl handle
+                # Create worker with shared curl handle and logging configuration
                 worker = CurlWorker(
-                    segment=segment, config=self.config, curl_share=self.curl_share
+                    segment=segment, 
+                    config=self.config, 
+                    curl_share=self.curl_share,
+                    log_level=log_level,
+                    log_dir=log_dir,
                 )
 
                 # Set progress callback
@@ -235,13 +248,13 @@ class ConnectionManager:
                 self.active_workers[worker.worker_id] = worker
 
                 logger.debug(
-                    f"Created worker {worker.worker_id} for segment {segment.id}"
+                    f"Created worker {worker.worker_id} for segment {segment.id} with log level {log_level.value}"
                 )
 
             # Allocate bandwidth among workers
             self._allocate_bandwidth(workers)
 
-            logger.info(f"Created {len(workers)} workers for parallel download")
+            logger.info(f"Created {len(workers)} workers for parallel download with {log_level.value} logging")
             return workers
 
         except Exception as e:
@@ -556,3 +569,217 @@ class ConnectionManager:
         """Cleanup when manager is destroyed."""
         if self.curl_multi or self.curl_share or self.active_workers:
             logger.warning("ConnectionManager destroyed without proper cleanup")
+    def set_worker_log_level(self, log_level: LogLevel, worker_ids: Optional[list[str]] = None) -> None:
+        """
+        Set logging level for specified workers or all workers.
+        
+        Args:
+            log_level: New logging level
+            worker_ids: Optional list of worker IDs (None for all workers)
+        """
+        target_workers = []
+        
+        if worker_ids:
+            target_workers = [
+                worker for worker_id, worker in self.active_workers.items()
+                if worker_id in worker_ids
+            ]
+        else:
+            target_workers = list(self.active_workers.values())
+        
+        for worker in target_workers:
+            worker.set_log_level(log_level)
+        
+        logger.info(f"Updated log level to {log_level.value} for {len(target_workers)} workers")
+    
+    def get_debug_summary(self) -> dict[str, Any]:
+        """
+        Get comprehensive debug summary from all workers.
+        
+        Returns:
+            Debug summary with worker information
+        """
+        summary = {
+            "connection_manager": {
+                "active_workers": len(self.active_workers),
+                "max_connections": self.max_connections,
+                "bandwidth_limit": self.bandwidth_manager.total_limit,
+                "connection_stats": self.get_connection_stats(),
+            },
+            "workers": {},
+            "aggregated_stats": {
+                "total_errors": 0,
+                "total_retries": 0,
+                "total_connection_attempts": 0,
+                "successful_connections": 0,
+                "failed_connections": 0,
+            }
+        }
+        
+        for worker_id, worker in self.active_workers.items():
+            worker_debug = worker.get_debug_summary()
+            summary["workers"][worker_id] = worker_debug
+            
+            # Aggregate statistics
+            summary["aggregated_stats"]["total_errors"] += worker_debug.get("error_count", 0)
+            summary["aggregated_stats"]["total_retries"] += worker_debug.get("retry_count", 0)
+            
+            conn_stats = worker_debug.get("connection_stats", {})
+            summary["aggregated_stats"]["total_connection_attempts"] += conn_stats.get("attempts", 0)
+            summary["aggregated_stats"]["successful_connections"] += conn_stats.get("successful", 0)
+            summary["aggregated_stats"]["failed_connections"] += conn_stats.get("failed", 0)
+        
+        return summary
+    
+    def get_performance_metrics(self) -> dict[str, Any]:
+        """
+        Get performance metrics from all workers.
+        
+        Returns:
+            Performance metrics summary
+        """
+        metrics = {
+            "workers": {},
+            "aggregated": {
+                "total_downloaded": 0,
+                "average_speed": 0.0,
+                "total_duration": 0.0,
+                "efficiency_scores": [],
+            }
+        }
+        
+        total_speed = 0.0
+        worker_count = 0
+        
+        for worker_id, worker in self.active_workers.items():
+            worker_metrics = worker.get_performance_metrics()
+            metrics["workers"][worker_id] = worker_metrics
+            
+            # Aggregate metrics
+            transfer_info = worker_metrics.get("transfer", {})
+            timing_info = worker_metrics.get("timing", {})
+            
+            metrics["aggregated"]["total_downloaded"] += transfer_info.get("downloaded_bytes", 0)
+            
+            if transfer_info.get("download_speed", 0) > 0:
+                total_speed += transfer_info["download_speed"]
+                worker_count += 1
+            
+            if timing_info.get("duration", 0) > 0:
+                metrics["aggregated"]["total_duration"] = max(
+                    metrics["aggregated"]["total_duration"],
+                    timing_info["duration"]
+                )
+            
+            if transfer_info.get("efficiency", 0) > 0:
+                metrics["aggregated"]["efficiency_scores"].append(transfer_info["efficiency"])
+        
+        # Calculate averages
+        if worker_count > 0:
+            metrics["aggregated"]["average_speed"] = total_speed / worker_count
+        
+        if metrics["aggregated"]["efficiency_scores"]:
+            metrics["aggregated"]["average_efficiency"] = (
+                sum(metrics["aggregated"]["efficiency_scores"]) / 
+                len(metrics["aggregated"]["efficiency_scores"])
+            )
+        
+        return metrics
+    
+    def generate_debug_commands(self) -> dict[str, str]:
+        """
+        Generate equivalent curl commands for all workers for debugging.
+        
+        Returns:
+            Dictionary mapping worker IDs to curl commands
+        """
+        commands = {}
+        
+        for worker_id, worker in self.active_workers.items():
+            try:
+                commands[worker_id] = worker.generate_debug_curl_command()
+            except Exception as e:
+                commands[worker_id] = f"Error generating command: {e}"
+        
+        return commands
+    
+    def diagnose_connection_issues(self) -> dict[str, Any]:
+        """
+        Diagnose connection issues across all workers.
+        
+        Returns:
+            Diagnosis information with suggestions
+        """
+        from .pycurl_logging import CurlDebugUtilities
+        
+        diagnosis = {
+            "overall_health": "healthy",
+            "issues_found": [],
+            "worker_diagnoses": {},
+            "recommendations": [],
+        }
+        
+        failed_workers = 0
+        total_workers = len(self.active_workers)
+        
+        for worker_id, worker in self.active_workers.items():
+            worker_debug = worker.get_debug_summary()
+            
+            # Check for worker issues
+            if worker_debug.get("error_count", 0) > 0:
+                failed_workers += 1
+                
+                # Get last error for diagnosis
+                last_error = worker_debug.get("last_error")
+                if last_error:
+                    # Try to extract curl code if available
+                    curl_code = None
+                    if "curl code" in last_error.lower():
+                        try:
+                            # Extract curl code from error message
+                            import re
+                            match = re.search(r'curl code (\d+)', last_error.lower())
+                            if match:
+                                curl_code = int(match.group(1))
+                        except:
+                            pass
+                    
+                    if curl_code:
+                        worker_diagnosis = CurlDebugUtilities.diagnose_connection_error(
+                            curl_code, worker.segment.url
+                        )
+                        diagnosis["worker_diagnoses"][worker_id] = worker_diagnosis
+        
+        # Determine overall health
+        failure_rate = failed_workers / total_workers if total_workers > 0 else 0
+        
+        if failure_rate == 0:
+            diagnosis["overall_health"] = "healthy"
+        elif failure_rate < 0.25:
+            diagnosis["overall_health"] = "minor_issues"
+            diagnosis["issues_found"].append(f"{failed_workers}/{total_workers} workers have errors")
+        elif failure_rate < 0.75:
+            diagnosis["overall_health"] = "degraded"
+            diagnosis["issues_found"].append(f"High failure rate: {failed_workers}/{total_workers} workers failing")
+        else:
+            diagnosis["overall_health"] = "critical"
+            diagnosis["issues_found"].append(f"Critical failure rate: {failed_workers}/{total_workers} workers failing")
+        
+        # Generate recommendations
+        if failure_rate > 0:
+            diagnosis["recommendations"].extend([
+                "Check network connectivity",
+                "Verify server availability",
+                "Review authentication credentials",
+                "Consider reducing concurrent connections",
+                "Check firewall and proxy settings",
+            ])
+        
+        if failure_rate > 0.5:
+            diagnosis["recommendations"].extend([
+                "Consider switching to single-connection mode",
+                "Increase timeout values",
+                "Check for server-side rate limiting",
+            ])
+        
+        return diagnosis

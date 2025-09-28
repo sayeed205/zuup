@@ -9,12 +9,13 @@ import math
 from pathlib import Path
 import re
 import time
-from typing import Any
+from typing import Any, Optional
 from urllib.parse import urljoin, urlparse
 
 import pycurl
 
 from ..storage.models import DownloadTask, ProgressInfo, TaskStatus, TaskConfig, GlobalConfig
+from ..utils.logging import get_download_logger, EngineType
 from .base import BaseDownloadEngine, DownloadError, NetworkError, ValidationError
 from .connection_manager import ConnectionManager
 from .pycurl_models import (
@@ -27,6 +28,7 @@ from .pycurl_models import (
 )
 from .segment_merger import SegmentMerger
 from .config_integration import ConfigurationManager, ConfigurationError
+from .pycurl_logging import LogLevel, CurlDebugUtilities
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +40,9 @@ class HttpFtpEngine(BaseDownloadEngine):
         self, 
         config: HttpFtpConfig | None = None,
         global_config: GlobalConfig | None = None,
-        config_manager: ConfigurationManager | None = None
+        config_manager: ConfigurationManager | None = None,
+        log_level: LogLevel = LogLevel.BASIC,
+        log_dir: Optional[Path] = None,
     ) -> None:
         """
         Initialize HttpFtpEngine.
@@ -47,6 +51,8 @@ class HttpFtpEngine(BaseDownloadEngine):
             config: Direct configuration for HTTP/FTP downloads (optional)
             global_config: Global application configuration (optional)
             config_manager: Configuration manager for advanced config handling (optional)
+            log_level: Default logging level for workers
+            log_dir: Optional directory for debug logs
         """
         super().__init__()
         
@@ -55,12 +61,17 @@ class HttpFtpEngine(BaseDownloadEngine):
         self._global_config = global_config
         self._base_config = config or HttpFtpConfig()
 
+        # Logging configuration
+        self._log_level = log_level
+        self._log_dir = log_dir
+
         # Active downloads tracking
         self._active_downloads: dict[str, dict[str, Any]] = {}
         self._download_locks: dict[str, asyncio.Lock] = {}
 
         logger.info(
-            f"Initialized HttpFtpEngine with max {self._base_config.max_connections} connections"
+            f"Initialized HttpFtpEngine with max {self._base_config.max_connections} connections "
+            f"and {log_level.value} logging"
         )
     
     def _get_effective_config(self, task: DownloadTask) -> HttpFtpConfig:
@@ -739,8 +750,12 @@ class HttpFtpEngine(BaseDownloadEngine):
 
         # Create connection manager
         async with ConnectionManager(effective_config) as conn_manager:
-            # Create workers for segments
-            workers = await conn_manager.create_workers(segments)
+            # Create workers for segments with logging configuration
+            workers = await conn_manager.create_workers(
+                segments, 
+                log_level=self._log_level,
+                log_dir=self._log_dir,
+            )
 
             # Monitor download progress
             async for worker_progress_dict in conn_manager.monitor_workers(workers):
@@ -1456,3 +1471,321 @@ class HttpFtpEngine(BaseDownloadEngine):
 
         # Clean up base class tracking
         self._unregister_task(task_id)
+    def set_log_level(self, log_level: LogLevel) -> None:
+        """
+        Set logging level for the engine and all active downloads.
+        
+        Args:
+            log_level: New logging level
+        """
+        self._log_level = log_level
+        
+        # Update log level for all active downloads
+        for task_id, download_context in self._active_downloads.items():
+            connection_manager = download_context.get("connection_manager")
+            if connection_manager:
+                connection_manager.set_worker_log_level(log_level)
+        
+        logger.info(f"Updated HttpFtpEngine log level to {log_level.value}")
+    
+    def set_log_directory(self, log_dir: Path) -> None:
+        """
+        Set directory for debug logs.
+        
+        Args:
+            log_dir: Directory for debug logs
+        """
+        self._log_dir = log_dir
+        logger.info(f"Updated HttpFtpEngine log directory to {log_dir}")
+    
+    def get_debug_summary(self, task_id: Optional[str] = None) -> dict[str, Any]:
+        """
+        Get comprehensive debug summary for downloads.
+        
+        Args:
+            task_id: Optional specific task ID (None for all active downloads)
+            
+        Returns:
+            Debug summary information
+        """
+        summary = {
+            "engine_info": {
+                "engine_type": "HttpFtpEngine",
+                "log_level": self._log_level.value,
+                "log_directory": str(self._log_dir) if self._log_dir else None,
+                "active_downloads": len(self._active_downloads),
+                "supported_protocols": ["http", "https", "ftp", "ftps", "sftp"],
+            },
+            "downloads": {},
+        }
+        
+        # Get debug info for specific task or all tasks
+        target_tasks = {}
+        if task_id and task_id in self._active_downloads:
+            target_tasks[task_id] = self._active_downloads[task_id]
+        else:
+            target_tasks = self._active_downloads
+        
+        for tid, download_context in target_tasks.items():
+            connection_manager = download_context.get("connection_manager")
+            if connection_manager:
+                summary["downloads"][tid] = connection_manager.get_debug_summary()
+            else:
+                summary["downloads"][tid] = {"status": "no_connection_manager"}
+        
+        return summary
+    
+    def get_performance_metrics(self, task_id: Optional[str] = None) -> dict[str, Any]:
+        """
+        Get performance metrics for downloads.
+        
+        Args:
+            task_id: Optional specific task ID (None for all active downloads)
+            
+        Returns:
+            Performance metrics information
+        """
+        metrics = {
+            "engine_metrics": {
+                "total_active_downloads": len(self._active_downloads),
+                "engine_type": "HttpFtpEngine",
+            },
+            "downloads": {},
+        }
+        
+        # Get metrics for specific task or all tasks
+        target_tasks = {}
+        if task_id and task_id in self._active_downloads:
+            target_tasks[task_id] = self._active_downloads[task_id]
+        else:
+            target_tasks = self._active_downloads
+        
+        for tid, download_context in target_tasks.items():
+            connection_manager = download_context.get("connection_manager")
+            if connection_manager:
+                metrics["downloads"][tid] = connection_manager.get_performance_metrics()
+            else:
+                metrics["downloads"][tid] = {"status": "no_connection_manager"}
+        
+        return metrics
+    
+    def generate_debug_commands(self, task_id: Optional[str] = None) -> dict[str, Any]:
+        """
+        Generate equivalent curl commands for debugging.
+        
+        Args:
+            task_id: Optional specific task ID (None for all active downloads)
+            
+        Returns:
+            Dictionary with curl commands for debugging
+        """
+        commands = {
+            "downloads": {},
+        }
+        
+        # Get commands for specific task or all tasks
+        target_tasks = {}
+        if task_id and task_id in self._active_downloads:
+            target_tasks[task_id] = self._active_downloads[task_id]
+        else:
+            target_tasks = self._active_downloads
+        
+        for tid, download_context in target_tasks.items():
+            connection_manager = download_context.get("connection_manager")
+            if connection_manager:
+                commands["downloads"][tid] = connection_manager.generate_debug_commands()
+            else:
+                commands["downloads"][tid] = {"error": "no_connection_manager"}
+        
+        return commands
+    
+    def diagnose_connection_issues(self, task_id: Optional[str] = None) -> dict[str, Any]:
+        """
+        Diagnose connection issues for downloads.
+        
+        Args:
+            task_id: Optional specific task ID (None for all active downloads)
+            
+        Returns:
+            Diagnosis information with recommendations
+        """
+        diagnosis = {
+            "engine_diagnosis": {
+                "engine_type": "HttpFtpEngine",
+                "active_downloads": len(self._active_downloads),
+                "overall_health": "healthy",
+            },
+            "downloads": {},
+        }
+        
+        # Get diagnosis for specific task or all tasks
+        target_tasks = {}
+        if task_id and task_id in self._active_downloads:
+            target_tasks[task_id] = self._active_downloads[task_id]
+        else:
+            target_tasks = self._active_downloads
+        
+        failed_downloads = 0
+        
+        for tid, download_context in target_tasks.items():
+            connection_manager = download_context.get("connection_manager")
+            if connection_manager:
+                download_diagnosis = connection_manager.diagnose_connection_issues()
+                diagnosis["downloads"][tid] = download_diagnosis
+                
+                # Check if download has issues
+                if download_diagnosis.get("overall_health") not in ("healthy", "minor_issues"):
+                    failed_downloads += 1
+            else:
+                diagnosis["downloads"][tid] = {"error": "no_connection_manager"}
+                failed_downloads += 1
+        
+        # Determine overall engine health
+        total_downloads = len(target_tasks)
+        if total_downloads > 0:
+            failure_rate = failed_downloads / total_downloads
+            
+            if failure_rate == 0:
+                diagnosis["engine_diagnosis"]["overall_health"] = "healthy"
+            elif failure_rate < 0.25:
+                diagnosis["engine_diagnosis"]["overall_health"] = "minor_issues"
+            elif failure_rate < 0.75:
+                diagnosis["engine_diagnosis"]["overall_health"] = "degraded"
+            else:
+                diagnosis["engine_diagnosis"]["overall_health"] = "critical"
+        
+        return diagnosis
+    
+    def get_curl_version_info(self) -> dict[str, Any]:
+        """
+        Get curl version and feature information for debugging.
+        
+        Returns:
+            Curl version and feature information
+        """
+        try:
+            version_info = pycurl.version_info()
+            
+            # Extract version information safely
+            curl_version = version_info[1] if len(version_info) > 1 else "unknown"
+            libcurl_version = version_info[0] if len(version_info) > 0 else "unknown"
+            ssl_version = version_info[2] if len(version_info) > 2 else "unknown"
+            features_bitmask = version_info[3] if len(version_info) > 3 else 0
+            host = version_info[4] if len(version_info) > 4 else "unknown"
+            protocols = list(version_info[8]) if len(version_info) > 8 else []
+            
+            return {
+                "curl_version": curl_version,
+                "libcurl_version": libcurl_version,
+                "ssl_version": ssl_version,
+                "protocols": protocols,
+                "features": {
+                    "ipv6": bool(features_bitmask & pycurl.VERSION_IPV6) if hasattr(pycurl, 'VERSION_IPV6') else False,
+                    "ssl": bool(features_bitmask & pycurl.VERSION_SSL) if hasattr(pycurl, 'VERSION_SSL') else False,
+                    "libz": bool(features_bitmask & pycurl.VERSION_LIBZ) if hasattr(pycurl, 'VERSION_LIBZ') else False,
+                    "ntlm": bool(features_bitmask & pycurl.VERSION_NTLM) if hasattr(pycurl, 'VERSION_NTLM') else False,
+                    "gssnegotiate": bool(features_bitmask & pycurl.VERSION_GSSNEGOTIATE) if hasattr(pycurl, 'VERSION_GSSNEGOTIATE') else False,
+                    "debug": bool(features_bitmask & pycurl.VERSION_DEBUG) if hasattr(pycurl, 'VERSION_DEBUG') else False,
+                    "asynchdns": bool(features_bitmask & pycurl.VERSION_ASYNCHDNS) if hasattr(pycurl, 'VERSION_ASYNCHDNS') else False,
+                    "spnego": bool(features_bitmask & pycurl.VERSION_SPNEGO) if hasattr(pycurl, 'VERSION_SPNEGO') else False,
+                    "largefile": bool(features_bitmask & pycurl.VERSION_LARGEFILE) if hasattr(pycurl, 'VERSION_LARGEFILE') else False,
+                    "idn": bool(features_bitmask & pycurl.VERSION_IDN) if hasattr(pycurl, 'VERSION_IDN') else False,
+                    "sspi": bool(features_bitmask & pycurl.VERSION_SSPI) if hasattr(pycurl, 'VERSION_SSPI') else False,
+                    "conv": bool(features_bitmask & pycurl.VERSION_CONV) if hasattr(pycurl, 'VERSION_CONV') else False,
+                },
+                "host": host,
+                "raw_version_info": str(version_info),  # For debugging
+            }
+        except Exception as e:
+            return {"error": f"Failed to get curl version info: {e}"}
+    
+    async def test_connection(self, url: str, config: Optional[HttpFtpConfig] = None) -> dict[str, Any]:
+        """
+        Test connection to a URL for debugging purposes.
+        
+        Args:
+            url: URL to test
+            config: Optional configuration to use
+            
+        Returns:
+            Connection test results
+        """
+        test_config = config or self._base_config
+        
+        # Create a logger for this test
+        test_logger = get_download_logger("connection_test", EngineType.HTTP)
+        
+        result = {
+            "url": url,
+            "timestamp": time.time(),
+            "success": False,
+            "response_code": None,
+            "error": None,
+            "timing": {},
+            "connection_info": {},
+            "diagnosis": {},
+        }
+        
+        curl_handle = None
+        try:
+            curl_handle = pycurl.Curl()
+            
+            # Basic setup
+            curl_handle.setopt(pycurl.URL, url.encode("utf-8"))
+            curl_handle.setopt(pycurl.NOBODY, 1)  # HEAD request only
+            curl_handle.setopt(pycurl.TIMEOUT, test_config.connect_timeout)
+            curl_handle.setopt(pycurl.CONNECTTIMEOUT, test_config.connect_timeout)
+            
+            # Setup authentication, proxy, SSL, etc.
+            self._setup_curl_auth(curl_handle, test_config)
+            self._setup_curl_proxy(curl_handle, test_config)
+            self._setup_curl_ssl_options(curl_handle, test_config)
+            
+            # Perform the test
+            start_time = time.time()
+            curl_handle.perform()
+            end_time = time.time()
+            
+            # Extract results
+            result["success"] = True
+            result["response_code"] = curl_handle.getinfo(pycurl.RESPONSE_CODE)
+            result["timing"] = {
+                "total_time": curl_handle.getinfo(pycurl.TOTAL_TIME),
+                "namelookup_time": curl_handle.getinfo(pycurl.NAMELOOKUP_TIME),
+                "connect_time": curl_handle.getinfo(pycurl.CONNECT_TIME),
+                "appconnect_time": curl_handle.getinfo(pycurl.APPCONNECT_TIME),
+                "pretransfer_time": curl_handle.getinfo(pycurl.PRETRANSFER_TIME),
+                "starttransfer_time": curl_handle.getinfo(pycurl.STARTTRANSFER_TIME),
+                "test_duration": end_time - start_time,
+            }
+            
+            # Helper function to safely decode curl info
+            def safe_decode(value):
+                if isinstance(value, bytes):
+                    return value.decode("utf-8")
+                return str(value) if value is not None else ""
+            
+            result["connection_info"] = {
+                "effective_url": safe_decode(curl_handle.getinfo(pycurl.EFFECTIVE_URL)),
+                "primary_ip": safe_decode(curl_handle.getinfo(pycurl.PRIMARY_IP)),
+                "primary_port": curl_handle.getinfo(pycurl.PRIMARY_PORT),
+                "local_ip": safe_decode(curl_handle.getinfo(pycurl.LOCAL_IP)),
+                "local_port": curl_handle.getinfo(pycurl.LOCAL_PORT),
+            }
+            
+            test_logger.info(f"Connection test successful for {url}")
+            
+        except pycurl.error as e:
+            result["error"] = f"Curl error {e.args[0]}: {e.args[1]}"
+            result["diagnosis"] = CurlDebugUtilities.diagnose_connection_error(e.args[0], url)
+            test_logger.error(f"Connection test failed for {url}: {result['error']}")
+            
+        except Exception as e:
+            result["error"] = f"Unexpected error: {e}"
+            test_logger.error(f"Connection test failed for {url}: {result['error']}")
+            
+        finally:
+            if curl_handle:
+                curl_handle.close()
+        
+        return result
