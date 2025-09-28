@@ -125,6 +125,40 @@ class FormatExtractor:
             logger.error(f"Unexpected error extracting info for {url}: {e}")
             raise RuntimeError(f"Unexpected extraction error: {e}") from e
 
+    async def get_raw_info(self, url: str) -> dict[str, Any]:
+        """
+        Get raw yt-dlp information dictionary for comprehensive metadata processing.
+
+        Args:
+            url: URL to extract information from
+
+        Returns:
+            Raw yt-dlp info dictionary
+
+        Raises:
+            ValueError: If URL is invalid
+            RuntimeError: If yt-dlp extraction fails
+        """
+        if not url or not url.strip():
+            raise ValueError("URL cannot be empty")
+
+        logger.debug(f"Extracting raw yt-dlp info for URL: {url}")
+
+        try:
+            # Run yt-dlp extraction in thread pool to avoid blocking
+            loop = asyncio.get_event_loop()
+            info_dict = await loop.run_in_executor(None, self._extract_info_sync, url)
+            
+            logger.debug(f"Successfully extracted raw info for: {info_dict.get('title', 'Unknown')}")
+            return info_dict
+
+        except yt_dlp.DownloadError as e:
+            logger.error(f"yt-dlp raw info extraction failed for {url}: {e}")
+            raise RuntimeError(f"Failed to extract raw media info: {e}") from e
+        except Exception as e:
+            logger.error(f"Unexpected error extracting raw info for {url}: {e}")
+            raise RuntimeError(f"Unexpected raw extraction error: {e}") from e
+
     def _extract_info_sync(self, url: str) -> dict[str, Any]:
         """
         Synchronous yt-dlp info extraction with advanced network support.

@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import tempfile
 import time
+from typing import Any, Dict, Optional
 
 from .media_models import (
     ChapterInfo,
@@ -17,6 +18,7 @@ from .media_models import (
     ProcessingStep,
     SubtitleInfo,
 )
+from .metadata_manager import MetadataManager, MetadataTemplate, ThumbnailConfig
 
 logger = logging.getLogger(__name__)
 
@@ -24,16 +26,30 @@ logger = logging.getLogger(__name__)
 class PostProcessor:
     """Handles post-processing tasks like format conversion and metadata embedding."""
 
-    def __init__(self, config: MediaConfig) -> None:
+    def __init__(
+        self, 
+        config: MediaConfig,
+        metadata_template: Optional[MetadataTemplate] = None,
+        thumbnail_config: Optional[ThumbnailConfig] = None
+    ) -> None:
         """
         Initialize PostProcessor with configuration.
 
         Args:
             config: Media configuration for post-processing
+            metadata_template: Template configuration for file organization
+            thumbnail_config: Thumbnail handling configuration
         """
         self.config = config
+        
+        # Initialize metadata manager with enhanced capabilities
+        self.metadata_manager = MetadataManager(
+            template_config=metadata_template,
+            thumbnail_config=thumbnail_config
+        )
+        
         self._check_ffmpeg_availability()
-        logger.info("PostProcessor initialized")
+        logger.info("PostProcessor initialized with enhanced metadata management")
 
     def _check_ffmpeg_availability(self) -> None:
         """Check if FFmpeg is available for post-processing."""
@@ -51,6 +67,88 @@ class PostProcessor:
                 logger.warning("FFmpeg not found - format conversion will be limited")
         except (subprocess.TimeoutExpired, FileNotFoundError):
             logger.warning("FFmpeg not found - format conversion will be limited")
+
+    async def process_media_with_metadata(
+        self,
+        file_path: Path,
+        info: MediaInfo,
+        yt_dlp_info: Dict[str, Any],
+        original_filename: str
+    ) -> ProcessingResult:
+        """
+        Execute comprehensive post-processing pipeline with metadata extraction.
+
+        Args:
+            file_path: Path to the downloaded media file
+            info: Media information from extraction
+            yt_dlp_info: Raw yt-dlp information dictionary
+            original_filename: Original filename for organization
+
+        Returns:
+            ProcessingResult with success status and details
+        """
+        logger.info(f"Starting comprehensive post-processing for {file_path}")
+
+        result = ProcessingResult(
+            success=True, output_path=file_path, processing_time=0.0, steps_completed=[]
+        )
+
+        start_time = time.time()
+
+        try:
+            # Process metadata and organize files
+            organized_path, metadata, thumbnail_path = await self.metadata_manager.process_media_metadata(
+                info, yt_dlp_info, self.config.output_directory, original_filename
+            )
+            
+            # Move file to organized location if different
+            if organized_path != file_path:
+                logger.info(f"Moving file to organized location: {organized_path}")
+                organized_path.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(file_path), str(organized_path))
+                file_path = organized_path
+                result.output_path = organized_path
+                result.steps_completed.append(ProcessingStep.ORGANIZE_FILES)
+
+            # Convert format if audio extraction is enabled
+            if self.config.extract_audio and not self._is_audio_file(file_path):
+                logger.info("Converting to audio format")
+                file_path = await self.convert_to_audio(file_path, info)
+                result.steps_completed.append(ProcessingStep.CONVERT_FORMAT)
+                result.output_path = file_path
+
+            # Embed metadata if enabled
+            if self.config.embed_metadata:
+                logger.info("Embedding comprehensive metadata")
+                await self.embed_metadata(file_path, metadata)
+                result.steps_completed.append(ProcessingStep.EMBED_METADATA)
+
+            # Embed thumbnail if enabled and available
+            if self.config.embed_thumbnail and metadata.thumbnail_url:
+                logger.info("Embedding thumbnail")
+                await self.embed_thumbnail(file_path, metadata.thumbnail_url)
+                result.steps_completed.append(ProcessingStep.EMBED_THUMBNAIL)
+
+            # Embed subtitles if enabled and available
+            if self.config.embed_subtitles and info.subtitles:
+                logger.info("Embedding subtitles")
+                await self.embed_subtitles(file_path, info.subtitles)
+                result.steps_completed.append(ProcessingStep.EMBED_SUBTITLES)
+
+            # Embed chapters if available
+            if info.chapters:
+                logger.info("Embedding chapters")
+                await self.embed_chapters(file_path, info.chapters)
+
+        except Exception as e:
+            logger.error(f"Comprehensive post-processing failed: {e}")
+            result.success = False
+            result.errors.append(str(e))
+
+        result.processing_time = time.time() - start_time
+        logger.info(f"Comprehensive post-processing completed in {result.processing_time:.2f}s")
+
+        return result
 
     async def process_media(self, file_path: Path, info: MediaInfo) -> ProcessingResult:
         """
@@ -484,7 +582,7 @@ class PostProcessor:
 
     async def organize_files(self, file_path: Path, info: MediaInfo) -> Path:
         """
-        Organize files based on metadata templates.
+        Organize files based on metadata templates (legacy method).
 
         Args:
             file_path: Current file path
@@ -496,14 +594,21 @@ class PostProcessor:
         Raises:
             RuntimeError: If file organization fails
         """
-        logger.info(f"Organizing file {file_path}")
+        logger.info(f"Organizing file {file_path} (legacy method)")
 
         try:
-            # Create organized directory structure
-            organized_dir = self._create_organized_directory(info)
-
-            # Generate organized filename
-            organized_filename = self._generate_organized_filename(file_path, info)
+            # Use basic metadata for organization
+            metadata = self.metadata_manager.create_metadata_from_info(info)
+            variables = self.metadata_manager.extractor.create_template_variables(info, metadata)
+            
+            # Generate organized paths using metadata manager
+            organized_dir = self.metadata_manager.filename_generator.generate_directory_path(
+                variables, self.config.output_directory
+            )
+            
+            organized_filename = self.metadata_manager.filename_generator.generate_filename(
+                variables, file_path.suffix
+            )
 
             # Create full organized path
             organized_path = organized_dir / organized_filename
@@ -535,69 +640,11 @@ class PostProcessor:
             logger.error(f"File organization failed: {e}")
             raise RuntimeError(f"File organization failed: {e}") from e
 
-    def _create_organized_directory(self, info: MediaInfo) -> Path:
-        """
-        Create organized directory structure based on metadata.
 
-        Args:
-            info: Media information
-
-        Returns:
-            Path to organized directory
-        """
-        base_dir = self.config.output_directory
-
-        # Create subdirectory based on uploader/channel
-        if info.uploader:
-            # Sanitize uploader name for filesystem
-            uploader_safe = self._sanitize_filename(info.uploader)
-            return base_dir / uploader_safe
-        else:
-            # Use extractor name as fallback
-            extractor_safe = self._sanitize_filename(info.extractor_key)
-            return base_dir / extractor_safe
-
-    def _generate_organized_filename(self, file_path: Path, info: MediaInfo) -> str:
-        """
-        Generate organized filename based on metadata template.
-
-        Args:
-            file_path: Original file path
-            info: Media information
-
-        Returns:
-            Organized filename
-        """
-        # Use title if available, otherwise use original filename
-        if info.title:
-            title_safe = self._sanitize_filename(info.title)
-            return f"{title_safe}{file_path.suffix}"
-        else:
-            return file_path.name
-
-    def _sanitize_filename(self, filename: str) -> str:
-        """
-        Sanitize filename for filesystem compatibility.
-
-        Args:
-            filename: Original filename
-
-        Returns:
-            Sanitized filename
-        """
-        # Remove or replace problematic characters
-        invalid_chars = '<>:"/\\|?*'
-        for char in invalid_chars:
-            filename = filename.replace(char, "_")
-
-        # Limit length and strip whitespace
-        filename = filename.strip()[:200]  # Limit to 200 characters
-
-        return filename
 
     def _create_metadata_from_info(self, info: MediaInfo) -> MediaMetadata:
         """
-        Create MediaMetadata from MediaInfo.
+        Create MediaMetadata from MediaInfo (legacy method).
 
         Args:
             info: Media information
@@ -605,16 +652,7 @@ class PostProcessor:
         Returns:
             MediaMetadata object
         """
-        return MediaMetadata(
-            title=info.title,
-            artist=info.uploader,
-            description=info.description,
-            uploader=info.uploader,
-            view_count=info.view_count,
-            like_count=info.like_count,
-            duration=info.duration,
-            thumbnail_url=info.thumbnail,
-        )
+        return self.metadata_manager.create_metadata_from_info(info)
 
     def _is_audio_file(self, file_path: Path) -> bool:
         """
