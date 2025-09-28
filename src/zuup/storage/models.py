@@ -85,7 +85,8 @@ class ProgressInfo(BaseModel):
     def validate_progress_consistency(self) -> "ProgressInfo":
         """Validate progress information consistency."""
         # Ensure downloaded bytes doesn't exceed total bytes
-        if self.total_bytes is not None and self.downloaded_bytes > self.total_bytes:
+        if (self.total_bytes is not None and self.total_bytes > 0 and 
+            self.downloaded_bytes is not None and self.downloaded_bytes > self.total_bytes):
             raise ValueError("Downloaded bytes cannot exceed total bytes")
 
         # Validate peer relationships
@@ -158,9 +159,14 @@ class TaskConfig(BaseModel):
     download_speed_limit: int | None = None  # bytes per second
     upload_speed_limit: int | None = None  # bytes per second (torrents)
     retry_attempts: int = 3
-    timeout: int = 30
+    timeout: int = 0  # 0 = no timeout, let downloads run as long as they make progress
     headers: dict[str, str] = Field(default_factory=dict)
     cookies: dict[str, str] = Field(default_factory=dict)
+
+    # Authentication settings
+    auth_username: str | None = None
+    auth_password: str | None = None
+    auth_method: str = "basic"  # basic, digest, bearer, etc.
 
     # Torrent-specific settings
     enable_seeding: bool = True  # Whether to seed after download completion
@@ -197,9 +203,9 @@ class TaskConfig(BaseModel):
     @field_validator("timeout")
     @classmethod
     def validate_timeout(cls, v: int) -> int:
-        """Validate timeout is positive."""
-        if v <= 0:
-            raise ValueError("timeout must be positive")
+        """Validate timeout (0 means no timeout, positive means timeout in seconds)."""
+        if v < 0:
+            raise ValueError("timeout must be 0 (no timeout) or positive")
         return v
 
     @field_validator("seed_ratio_limit")

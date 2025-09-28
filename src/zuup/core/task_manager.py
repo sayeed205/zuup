@@ -81,6 +81,11 @@ class TaskManager:
     async def initialize(self) -> None:
         """Initialize the task manager and load existing tasks."""
         try:
+            # Initialize default engines first
+            from ..engines.registry import initialize_default_engines
+            initialize_default_engines()
+            logger.info("Default engines initialized")
+
             # Load existing tasks from database
             existing_tasks = await self.database.list_tasks()
             for task in existing_tasks:
@@ -499,7 +504,12 @@ class TaskManager:
                 # Check for tasks ready to process
                 queued_task = await self.queue.get_next_task()
                 if not queued_task:
-                    await asyncio.sleep(0.1)  # Brief pause
+                    # Wait for queue changes before checking again
+                    try:
+                        await asyncio.wait_for(self.queue._queue_changed.wait(), timeout=1.0)
+                        self.queue._queue_changed.clear()
+                    except asyncio.TimeoutError:
+                        pass
                     continue
 
                 # Start processing the task
@@ -507,7 +517,7 @@ class TaskManager:
                 processor = asyncio.create_task(self._process_single_task(queued_task))
                 self._task_processors[task_id] = processor
 
-                logger.debug(f"Started processor for task {task_id}")
+                logger.info(f"Started processor for task {task_id}")
 
             except Exception as e:
                 logger.error(f"Error in task processor: {e}")

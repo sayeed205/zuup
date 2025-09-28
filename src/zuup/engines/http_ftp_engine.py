@@ -68,6 +68,9 @@ class HttpFtpEngine(BaseDownloadEngine):
         # Active downloads tracking
         self._active_downloads: dict[str, dict[str, Any]] = {}
         self._download_locks: dict[str, asyncio.Lock] = {}
+        
+        # Semaphore to limit concurrent PyCurl operations
+        self._curl_semaphore = asyncio.Semaphore(5)  # Max 5 concurrent curl operations
 
         logger.info(
             f"Initialized HttpFtpEngine with max {self._base_config.max_connections} connections "
@@ -212,7 +215,7 @@ class HttpFtpEngine(BaseDownloadEngine):
             file_info = await self._get_file_info(task.url, effective_config)
 
             # Update task with file information
-            if not task.file_size and file_info.get("content_length"):
+            if (not task.file_size or task.file_size <= 0) and file_info.get("content_length", 0) > 0:
                 task.file_size = file_info["content_length"]
 
             if not task.filename:
@@ -250,8 +253,8 @@ class HttpFtpEngine(BaseDownloadEngine):
                 # Save initial segment data for resume capability
                 segment_merger.save_resume_data(task.id, segments)
 
-            # Store download context
-            self._active_downloads[task.id] = {
+            # Update download context (preserve existing keys like effective_config)
+            context_update = {
                 "task": task,
                 "segments": segments,
                 "segment_merger": segment_merger,
@@ -260,6 +263,7 @@ class HttpFtpEngine(BaseDownloadEngine):
                 "file_info": file_info,
                 "start_time": time.time(),
             }
+            self._active_downloads[task.id].update(context_update)
 
             logger.info(
                 f"Initialized download: {len(segments)} segments, "
@@ -272,7 +276,7 @@ class HttpFtpEngine(BaseDownloadEngine):
 
     async def _get_file_info(self, url: str, config: HttpFtpConfig) -> dict[str, Any]:
         """
-        Get file information from server using HEAD request.
+        Get file information from server using HEAD request for HTTP/HTTPS or SIZE command for FTP/SFTP.
 
         Args:
             url: URL to check
@@ -284,78 +288,113 @@ class HttpFtpEngine(BaseDownloadEngine):
             NetworkError: If unable to get file information
         """
         logger.debug(f"Getting file info for URL: {url}")
+        
+        from urllib.parse import urlparse
+        parsed_url = urlparse(url)
+        protocol = parsed_url.scheme.lower()
 
-        curl_handle = None
-        try:
-            curl_handle = pycurl.Curl()
+        async with self._curl_semaphore:
+            curl_handle = None
+            try:
+                curl_handle = pycurl.Curl()
 
-            # Configure for HEAD request
-            curl_handle.setopt(pycurl.URL, url.encode("utf-8"))
-            curl_handle.setopt(pycurl.NOBODY, 1)  # HEAD request
-            curl_handle.setopt(pycurl.FOLLOWLOCATION, 1)
-            curl_handle.setopt(pycurl.MAXREDIRS, config.max_redirects)
-            # Automatically referer on redirects
-            curl_handle.setopt(pycurl.AUTOREFERER, 1)
-            curl_handle.setopt(pycurl.TIMEOUT, config.connect_timeout)
-            curl_handle.setopt(pycurl.USERAGENT, config.user_agent.encode("utf-8"))
+                # Configure based on protocol
+                curl_handle.setopt(pycurl.URL, url.encode("utf-8"))
+                
+                if protocol in ("http", "https"):
+                    # Use HEAD request for HTTP/HTTPS
+                    curl_handle.setopt(pycurl.NOBODY, 1)  # HEAD request
+                elif protocol in ("ftp", "ftps", "sftp"):
+                    # For FTP/SFTP, we'll do a minimal download to get file info
+                    # Don't use NOBODY for FTP/SFTP as it doesn't work the same way
+                    pass
+                curl_handle.setopt(pycurl.FOLLOWLOCATION, 1)
+                curl_handle.setopt(pycurl.MAXREDIRS, config.max_redirects)
+                # Automatically referer on redirects
+                curl_handle.setopt(pycurl.AUTOREFERER, 1)
+                
+                # Timeout settings
+                if config.timeout > 0:
+                    curl_handle.setopt(pycurl.TIMEOUT, config.timeout)
+                curl_handle.setopt(pycurl.CONNECTTIMEOUT, config.connect_timeout)
+                
+                curl_handle.setopt(pycurl.USERAGENT, config.user_agent.encode("utf-8"))
 
-            # SSL/TLS settings
-            self._setup_curl_ssl_options(curl_handle, config)
+                # SSL/TLS settings (only for protocols that use SSL/TLS)
+                if protocol in ("https", "ftps"):
+                    self._setup_curl_ssl_options(curl_handle, config)
 
-            # Authentication
-            if config.auth.method.value != "none":
-                self._setup_curl_auth(curl_handle, config)
+                # Authentication
+                if config.auth.method.value != "none":
+                    self._setup_curl_auth(curl_handle, config)
 
-            # Custom headers (including bearer token if applicable)
-            self._setup_curl_headers(curl_handle, config)
+                # Custom headers (including bearer token if applicable)
+                self._setup_curl_headers(curl_handle, config)
 
-            # Cookies
-            self._setup_curl_cookies(curl_handle, config)
+                # Cookies
+                self._setup_curl_cookies(curl_handle, config)
 
-            # Proxy settings
-            self._setup_curl_proxy(curl_handle, config)
+                # Proxy settings
+                self._setup_curl_proxy(curl_handle, config)
 
-            # Perform HEAD request
-            await asyncio.get_event_loop().run_in_executor(None, curl_handle.perform)
+                # Perform HEAD request in executor to avoid blocking
+                def perform_request():
+                    try:
+                        curl_handle.perform()
+                    except pycurl.error as e:
+                        # Re-raise pycurl errors to be caught by outer try-except
+                        raise e
+                
+                await asyncio.get_event_loop().run_in_executor(None, perform_request)
 
-            # Get response information
-            response_code = curl_handle.getinfo(pycurl.RESPONSE_CODE)
-            content_length = curl_handle.getinfo(pycurl.CONTENT_LENGTH_DOWNLOAD)
-            content_type = curl_handle.getinfo(pycurl.CONTENT_TYPE)
-            effective_url = curl_handle.getinfo(pycurl.EFFECTIVE_URL)
+                # Get response information
+                response_code = curl_handle.getinfo(pycurl.RESPONSE_CODE)
+                content_length = curl_handle.getinfo(pycurl.CONTENT_LENGTH_DOWNLOAD)
+                content_type = curl_handle.getinfo(pycurl.CONTENT_TYPE)
+                effective_url = curl_handle.getinfo(pycurl.EFFECTIVE_URL)
 
-            if response_code not in (200, 206):
-                error_msg = self._get_http_error_message(response_code)
-                raise NetworkError(error_msg)
+                # Check response based on protocol
+                if protocol in ("http", "https"):
+                    if response_code not in (200, 206):
+                        error_msg = self._get_http_error_message(response_code)
+                        raise NetworkError(error_msg)
+                elif protocol in ("ftp", "ftps", "sftp"):
+                    # For FTP/SFTP, response_code might be 0, which is normal
+                    # We rely on curl not throwing an exception for success
+                    pass
 
-            # Check for range support
-            accept_ranges = False
-            # Note: pycurl doesn't provide direct access to response headers in this simple setup
-            # In a full implementation, we'd use HEADERFUNCTION to capture headers
+                # Check for range support
+                accept_ranges = False
+                # Note: pycurl doesn't provide direct access to response headers in this simple setup
+                # In a full implementation, we'd use HEADERFUNCTION to capture headers
 
-            # Extract filename from effective URL or Content-Disposition header
-            filename = self._extract_filename_from_url(effective_url)
+                # Extract filename from effective URL or Content-Disposition header
+                filename = self._extract_filename_from_url(effective_url)
 
-            file_info = {
-                "content_length": int(content_length) if content_length > 0 else None,
-                "content_type": content_type.decode("utf-8") if content_type else None,
-                "filename": filename,
-                "accept_ranges": accept_ranges,  # Would be determined from headers
-                "effective_url": effective_url.decode("utf-8")
-                if effective_url
-                else url,
-            }
+                # Helper function to safely decode bytes or return string
+                def safe_decode(value):
+                    if isinstance(value, bytes):
+                        return value.decode("utf-8")
+                    return value if value is not None else None
 
-            logger.debug(f"File info: {file_info}")
-            return file_info
+                file_info = {
+                    "content_length": int(content_length) if content_length and content_length > 0 else 0,
+                    "content_type": safe_decode(content_type),
+                    "filename": filename,
+                    "accept_ranges": accept_ranges,  # Would be determined from headers
+                    "effective_url": safe_decode(effective_url) or url,
+                }
 
-        except pycurl.error as e:
-            raise NetworkError(f"Failed to get file info: {e}") from e
-        except Exception as e:
-            raise NetworkError(f"Unexpected error getting file info: {e}") from e
-        finally:
-            if curl_handle:
-                curl_handle.close()
+                logger.debug(f"File info: {file_info}")
+                return file_info
+
+            except pycurl.error as e:
+                raise NetworkError(f"Failed to get file info: {e}") from e
+            except Exception as e:
+                raise NetworkError(f"Unexpected error getting file info: {e}") from e
+            finally:
+                if curl_handle:
+                    curl_handle.close()
 
     def _setup_curl_auth(self, curl_handle: pycurl.Curl, config: HttpFtpConfig) -> None:
         """Setup authentication for curl handle."""
@@ -669,7 +708,7 @@ class HttpFtpEngine(BaseDownloadEngine):
         segments = []
 
         # If server doesn't support ranges or file size is unknown, use single segment
-        if not supports_ranges or not task.file_size:
+        if not supports_ranges or not task.file_size or task.file_size <= 0:
             logger.info(
                 "Using single segment download (no range support or unknown file size)"
             )
@@ -682,7 +721,7 @@ class HttpFtpEngine(BaseDownloadEngine):
                 task_id=task.id,
                 url=task.url,
                 start_byte=0,
-                end_byte=task.file_size - 1 if task.file_size else 0,
+                end_byte=task.file_size - 1 if task.file_size and task.file_size > 0 else 0,
                 temp_file_path=temp_file_path,
             )
             segments.append(segment)
@@ -1021,7 +1060,9 @@ class HttpFtpEngine(BaseDownloadEngine):
             # Configure for directory listing
             curl_handle.setopt(pycurl.URL, url.encode("utf-8"))
             curl_handle.setopt(pycurl.FTPLISTONLY, 1)  # List filenames only
-            curl_handle.setopt(pycurl.TIMEOUT, self.config.connect_timeout)
+            if self.config.timeout > 0:
+                curl_handle.setopt(pycurl.TIMEOUT, self.config.timeout)
+            curl_handle.setopt(pycurl.CONNECTTIMEOUT, self.config.connect_timeout)
 
             # SSL/TLS settings
             self._setup_curl_ssl_options(curl_handle)
@@ -1122,7 +1163,9 @@ class HttpFtpEngine(BaseDownloadEngine):
             # Configure for detailed directory listing
             curl_handle.setopt(pycurl.URL, url.encode("utf-8"))
             # Don't use FTPLISTONLY for detailed listing
-            curl_handle.setopt(pycurl.TIMEOUT, self.config.connect_timeout)
+            if self.config.timeout > 0:
+                curl_handle.setopt(pycurl.TIMEOUT, self.config.timeout)
+            curl_handle.setopt(pycurl.CONNECTTIMEOUT, self.config.connect_timeout)
 
             # SSL/TLS settings
             self._setup_curl_ssl_options(curl_handle)
@@ -1350,7 +1393,9 @@ class HttpFtpEngine(BaseDownloadEngine):
             # Configure for HEAD-like request to check if it's a directory
             curl_handle.setopt(pycurl.URL, url.encode("utf-8"))
             curl_handle.setopt(pycurl.NOBODY, 1)  # Don't download body
-            curl_handle.setopt(pycurl.TIMEOUT, self.config.connect_timeout)
+            if self.config.timeout > 0:
+                curl_handle.setopt(pycurl.TIMEOUT, self.config.timeout)
+            curl_handle.setopt(pycurl.CONNECTTIMEOUT, self.config.connect_timeout)
 
             # SSL/TLS settings
             self._setup_curl_ssl_options(curl_handle)
@@ -1460,20 +1505,30 @@ class HttpFtpEngine(BaseDownloadEngine):
         download_context = self._active_downloads.pop(task_id, None)
 
         if download_context:
-            # Clean up temporary files if download was cancelled or failed
+            # Clean up temporary files for all completed downloads
             progress = self._task_progress.get(task_id)
-            if progress and progress.status in (
-                TaskStatus.CANCELLED,
-                TaskStatus.FAILED,
-            ):
-                try:
-                    segment_merger = download_context["segment_merger"]
-                    segments = download_context["segments"]
+            try:
+                segment_merger = download_context.get("segment_merger")
+                segments = download_context.get("segments")
+                temp_dir = download_context.get("temp_dir")
+                
+                if segment_merger and segments:
+                    # Clean up segment files
                     segment_merger.cleanup_temp_files(segments)
-                except Exception as e:
-                    logger.warning(
-                        f"Error cleaning up temp files for task {task_id}: {e}"
-                    )
+                
+                # Remove temp directory if it exists and is empty
+                if temp_dir and temp_dir.exists():
+                    try:
+                        temp_dir.rmdir()  # Only removes if empty
+                        logger.debug(f"Removed temp directory: {temp_dir}")
+                    except OSError:
+                        # Directory not empty or other error, that's okay
+                        pass
+                        
+            except Exception as e:
+                logger.warning(
+                    f"Error cleaning up temp files for task {task_id}: {e}"
+                )
 
         # Remove download lock
         self._download_locks.pop(task_id, None)

@@ -379,15 +379,9 @@ class DownloadQueue:
                 except asyncio.TimeoutError:
                     continue
 
-                # Process available tasks
-                while self._running and len(self._active_tasks) < self.max_concurrent:
-                    queued_task = await self.get_next_task()
-                    if not queued_task:
-                        break
-
-                    # Start processing the task
-                    # Note: Actual task execution will be handled by TaskManager
-                    logger.debug(f"Task {queued_task.task.id} ready for processing")
+                # The queue processor just waits for changes and signals
+                # Actual task processing is handled by TaskManager._process_tasks()
+                # This processor is mainly for cleanup and monitoring
 
             except Exception as e:
                 logger.error(f"Error in queue processor: {e}")

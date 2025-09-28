@@ -320,10 +320,10 @@ class CurlLogger:
                 self.logger.info(
                     f"Connection established: {primary_ip}:{primary_port} -> {local_ip}:{local_port}",
                     extra={
-                        "effective_url": effective_url.decode("utf-8") if effective_url else "",
-                        "primary_ip": primary_ip.decode("utf-8") if primary_ip else "",
+                        "effective_url": effective_url.decode("utf-8") if isinstance(effective_url, bytes) else (effective_url or ""),
+                        "primary_ip": primary_ip.decode("utf-8") if isinstance(primary_ip, bytes) else (primary_ip or ""),
                         "primary_port": primary_port,
-                        "local_ip": local_ip.decode("utf-8") if local_ip else "",
+                        "local_ip": local_ip.decode("utf-8") if isinstance(local_ip, bytes) else (local_ip or ""),
                         "local_port": local_port,
                         "successful_connections": self.successful_connections,
                     }
@@ -437,20 +437,26 @@ class CurlLogger:
             self.metrics.num_redirects = curl_handle.getinfo(pycurl.REDIRECT_COUNT)
             self.metrics.response_code = curl_handle.getinfo(pycurl.RESPONSE_CODE)
             
+            # Helper function to safely decode bytes or return string
+            def safe_decode(value):
+                if isinstance(value, bytes):
+                    return value.decode("utf-8")
+                return value if value is not None else ""
+
             # URL and content information
             effective_url = curl_handle.getinfo(pycurl.EFFECTIVE_URL)
-            self.metrics.effective_url = effective_url.decode("utf-8") if effective_url else ""
+            self.metrics.effective_url = safe_decode(effective_url)
             
             content_type = curl_handle.getinfo(pycurl.CONTENT_TYPE)
-            self.metrics.content_type = content_type.decode("utf-8") if content_type else ""
+            self.metrics.content_type = safe_decode(content_type)
             
             # Network information
             primary_ip = curl_handle.getinfo(pycurl.PRIMARY_IP)
-            self.metrics.primary_ip = primary_ip.decode("utf-8") if primary_ip else ""
+            self.metrics.primary_ip = safe_decode(primary_ip)
             self.metrics.primary_port = curl_handle.getinfo(pycurl.PRIMARY_PORT)
             
             local_ip = curl_handle.getinfo(pycurl.LOCAL_IP)
-            self.metrics.local_ip = local_ip.decode("utf-8") if local_ip else ""
+            self.metrics.local_ip = safe_decode(local_ip)
             self.metrics.local_port = curl_handle.getinfo(pycurl.LOCAL_PORT)
             
             # SSL information
@@ -748,7 +754,8 @@ class CurlDebugUtilities:
             info = {}
             
             # Basic information
-            info["effective_url"] = curl_handle.getinfo(pycurl.EFFECTIVE_URL).decode("utf-8")
+            effective_url = curl_handle.getinfo(pycurl.EFFECTIVE_URL)
+            info["effective_url"] = effective_url.decode("utf-8") if isinstance(effective_url, bytes) else effective_url
             info["response_code"] = curl_handle.getinfo(pycurl.RESPONSE_CODE)
             info["total_time"] = curl_handle.getinfo(pycurl.TOTAL_TIME)
             
@@ -771,10 +778,12 @@ class CurlDebugUtilities:
             }
             
             # Connection information
+            primary_ip = curl_handle.getinfo(pycurl.PRIMARY_IP)
+            local_ip = curl_handle.getinfo(pycurl.LOCAL_IP)
             info["connection"] = {
-                "primary_ip": curl_handle.getinfo(pycurl.PRIMARY_IP).decode("utf-8"),
+                "primary_ip": primary_ip.decode("utf-8") if isinstance(primary_ip, bytes) else primary_ip,
                 "primary_port": curl_handle.getinfo(pycurl.PRIMARY_PORT),
-                "local_ip": curl_handle.getinfo(pycurl.LOCAL_IP).decode("utf-8"),
+                "local_ip": local_ip.decode("utf-8") if isinstance(local_ip, bytes) else local_ip,
                 "local_port": curl_handle.getinfo(pycurl.LOCAL_PORT),
                 "num_connects": curl_handle.getinfo(pycurl.NUM_CONNECTS),
                 "redirect_count": curl_handle.getinfo(pycurl.REDIRECT_COUNT),
@@ -788,7 +797,7 @@ class CurlDebugUtilities:
             # Content information
             content_type = curl_handle.getinfo(pycurl.CONTENT_TYPE)
             if content_type:
-                info["content_type"] = content_type.decode("utf-8")
+                info["content_type"] = content_type.decode("utf-8") if isinstance(content_type, bytes) else content_type
             
             return info
             

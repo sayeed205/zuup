@@ -145,7 +145,9 @@ class ConfigurationMapper:
         
         # Timeout
         config.timeout = task_config.timeout
-        config.connect_timeout = min(task_config.timeout, config.connect_timeout)
+        # Only adjust connect_timeout if we have a total timeout (timeout > 0)
+        if config.timeout > 0:
+            config.connect_timeout = min(task_config.timeout, config.connect_timeout)
         
         # Retry settings
         config.retry_attempts = task_config.retry_attempts
@@ -163,6 +165,27 @@ class ConfigurationMapper:
             config.low_speed_limit = max(1024, task_config.download_speed_limit // 10)
             config.low_speed_time = 30  # 30 seconds before considering it too slow
         
+        # Authentication settings
+        if task_config.auth_username or task_config.auth_password:
+            # Map auth method string to enum
+            auth_method_map = {
+                "basic": AuthMethod.BASIC,
+                "digest": AuthMethod.DIGEST,
+                "bearer": AuthMethod.BEARER,
+                "ntlm": AuthMethod.NTLM,
+                "negotiate": AuthMethod.NEGOTIATE,
+                "auto": AuthMethod.AUTO,
+            }
+            
+            auth_method = auth_method_map.get(task_config.auth_method.lower(), AuthMethod.BASIC)
+            
+            # Create auth config
+            config.auth = AuthConfig(
+                method=auth_method,
+                username=task_config.auth_username,
+                password=task_config.auth_password,
+            )
+
         # Proxy override
         if task_config.proxy:
             config.proxy = self._map_proxy_config(task_config.proxy)
@@ -273,8 +296,8 @@ class ConfigurationMapper:
                 "may cause server rejection or poor performance"
             )
         
-        # Check timeout consistency
-        if config.connect_timeout >= config.timeout:
+        # Check timeout consistency (skip if timeout=0 means no timeout)
+        if config.timeout > 0 and config.connect_timeout >= config.timeout:
             warnings.append(
                 "connect_timeout should be less than total timeout for better error handling"
             )

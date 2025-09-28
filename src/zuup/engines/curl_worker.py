@@ -216,7 +216,8 @@ class CurlWorker:
             self.curl_handle.setopt(pycurl.RANGE, range_header.encode("utf-8"))
 
         # Timeout settings
-        self.curl_handle.setopt(pycurl.TIMEOUT, self.config.timeout)
+        if self.config.timeout > 0:
+            self.curl_handle.setopt(pycurl.TIMEOUT, self.config.timeout)
         self.curl_handle.setopt(pycurl.CONNECTTIMEOUT, self.config.connect_timeout)
 
         # Low speed settings for stalled connections
@@ -229,8 +230,18 @@ class CurlWorker:
                 pycurl.USERAGENT, self.config.user_agent.encode("utf-8")
             )
 
-        # SSL/TLS settings
-        self._setup_ssl_options()
+        # SSL/TLS settings (only for protocols that use SSL/TLS)
+        # IMPORTANT: Never call SSL setup for SFTP as it uses SSH, not SSL
+        if protocol in ("https", "ftps"):
+            self._setup_ssl_options()
+        elif protocol == "sftp":
+            # Ensure SSL is completely disabled for SFTP - this is redundant with
+            # _setup_sftp_options but provides extra safety
+            self.curl_handle.setopt(pycurl.SSL_VERIFYPEER, 0)
+            self.curl_handle.setopt(pycurl.SSL_VERIFYHOST, 0)
+            # Also ensure no CA bundle is used for SFTP
+            self.curl_handle.setopt(pycurl.CAINFO, "")
+            self.curl_handle.setopt(pycurl.CAPATH, "")
 
         # Authentication
         if self.config.auth.method.value != "none":
@@ -241,8 +252,11 @@ class CurlWorker:
             self._setup_proxy()
 
         # Share handle for cookies, DNS cache, SSL sessions
-        if self.curl_share:
+        # IMPORTANT: Do not use shared handle for SFTP as it may inherit SSL settings
+        if self.curl_share and protocol != "sftp":
             self.curl_handle.setopt(pycurl.SHARE, self.curl_share)
+        elif protocol == "sftp":
+            logger.debug(f"Skipping curl share for SFTP connection in worker {self.worker_id}")
 
         # Performance settings
         self.curl_handle.setopt(pycurl.BUFFERSIZE, self.config.buffer_size)
@@ -298,7 +312,7 @@ class CurlWorker:
         if self.config.ftp_create_missing_dirs:
             self.curl_handle.setopt(pycurl.FTP_CREATE_MISSING_DIRS, 1)
 
-        # Skip PASV IP address for NAT/firewall issues
+        # Skip PASV IP address for NAT/firewall issues (helps with NAT/firewall)
         if self.config.ftp_skip_pasv_ip:
             self.curl_handle.setopt(pycurl.FTP_SKIP_PASV_IP, 1)
 
@@ -306,14 +320,23 @@ class CurlWorker:
         if self.config.ftp_use_pret:
             self.curl_handle.setopt(pycurl.FTP_USE_PRET, 1)
 
+        # Enable EPSV for better passive mode support
+        if self.config.ftp_use_epsv:
+            self.curl_handle.setopt(pycurl.FTP_USE_EPSV, 1)
+
+        # Configure EPRT usage
+        if self.config.ftp_use_eprt:
+            self.curl_handle.setopt(pycurl.FTP_USE_EPRT, 1)
+
         # Enable FTP resume support
-        self.curl_handle.setopt(pycurl.FTP_RESPONSE_TIMEOUT, self.config.timeout)
+        if self.config.timeout > 0:
+            self.curl_handle.setopt(pycurl.FTP_RESPONSE_TIMEOUT, self.config.timeout)
 
         # Set transfer mode to binary (important for file integrity)
         self.curl_handle.setopt(pycurl.TRANSFERTEXT, 0)
 
         # Set FTP file method for better compatibility
-        self.curl_handle.setopt(pycurl.FTPMETHOD, pycurl.FTPMETHOD_SINGLECWD)
+        self.curl_handle.setopt(pycurl.FTP_FILEMETHOD, pycurl.FTPMETHOD_SINGLECWD)
 
         logger.debug(f"Configured FTP options for worker {self.worker_id}")
 
@@ -321,15 +344,46 @@ class CurlWorker:
         """Setup SFTP specific options."""
         ssh_config = self.config.ssh
 
+        # CRITICAL: SFTP uses SSH, not SSL/TLS - completely disable SSL
+        self.curl_handle.setopt(pycurl.SSL_VERIFYPEER, 0)
+        self.curl_handle.setopt(pycurl.SSL_VERIFYHOST, 0)
+        self.curl_handle.setopt(pycurl.SSL_SESSIONID_CACHE, 0)
+        
+        # Explicitly disable CA bundle usage for SFTP
+        # This prevents curl from trying to verify SSL certificates for SSH connections
+        try:
+            self.curl_handle.setopt(pycurl.CAINFO, None)
+        except Exception:
+            # If setting to None fails, try empty string
+            self.curl_handle.setopt(pycurl.CAINFO, "")
+        
+        try:
+            self.curl_handle.setopt(pycurl.CAPATH, None)
+        except Exception:
+            # If setting to None fails, try empty string
+            self.curl_handle.setopt(pycurl.CAPATH, "")
+        
+        # Force SSH protocol settings and disable any SSL/TLS negotiation
+        try:
+            # Explicitly set SSH options to override any SSL defaults
+            self.curl_handle.setopt(pycurl.PROTOCOLS, pycurl.PROTO_SFTP)
+            self.curl_handle.setopt(pycurl.REDIR_PROTOCOLS, pycurl.PROTO_SFTP)
+        except Exception as e:
+            logger.debug(f"Could not set protocol restrictions: {e}")
+        
+        logger.debug(f"SFTP configured with SSH protocol only for worker {self.worker_id}")
+
         # SSH host key verification
         if ssh_config.known_hosts_path and ssh_config.known_hosts_path.exists():
             self.curl_handle.setopt(
                 pycurl.SSH_KNOWNHOSTS, str(ssh_config.known_hosts_path)
             )
+            logger.debug(f"Using known_hosts file: {ssh_config.known_hosts_path}")
         else:
-            # Disable host key verification if no known_hosts file
+            # Disable host key verification by NOT setting SSH_KNOWNHOSTS at all
             # WARNING: This is insecure and should only be used for development
-            self.curl_handle.setopt(pycurl.SSH_KNOWNHOSTS, "")
+            # When SSH_KNOWNHOSTS is not set, pycurl skips host key verification
+            logger.debug("SSH host key verification disabled (no known_hosts file configured)")
 
         # SSH key-based authentication
         if ssh_config.private_key_path and ssh_config.private_key_path.exists():
@@ -349,11 +403,18 @@ class CurlWorker:
                 )
 
         # SFTP specific settings
-        # Enable compression for SFTP
+        # Enable compression for SFTP (if supported by pycurl version)
         if self.config.enable_compression:
-            self.curl_handle.setopt(pycurl.SSH_COMPRESSION, 1)
+            try:
+                # SSH_COMPRESSION might not be available in all pycurl versions
+                if hasattr(pycurl, 'SSH_COMPRESSION'):
+                    self.curl_handle.setopt(pycurl.SSH_COMPRESSION, 1)
+                else:
+                    logger.debug("SSH_COMPRESSION not available in this pycurl version")
+            except AttributeError:
+                logger.debug("SSH_COMPRESSION not supported by this pycurl version")
 
-        logger.debug(f"Configured SFTP options for worker {self.worker_id}")
+        logger.debug(f"Configured SFTP options for worker {self.worker_id} (SSL verification disabled)")
 
     def _setup_headers(self) -> None:
         """Setup custom headers for curl handle."""
@@ -749,7 +810,32 @@ class CurlWorker:
             self.curl_logger.log_connection_success(self.curl_handle)
             metrics = self.curl_logger.collect_performance_metrics(self.curl_handle)
 
-            if response_code in (200, 206):  # OK or Partial Content
+            # Helper function to safely decode bytes or return string
+            def safe_decode(value):
+                if isinstance(value, bytes):
+                    return value.decode("utf-8")
+                return value if value is not None else None
+
+            # Determine success based on protocol
+            from urllib.parse import urlparse
+            parsed_url = urlparse(self.segment.url)
+            protocol = parsed_url.scheme.lower()
+            
+            is_success = False
+            if protocol in ("http", "https"):
+                # HTTP/HTTPS: Check for 200 (OK) or 206 (Partial Content)
+                is_success = response_code in (200, 206)
+            elif protocol in ("ftp", "ftps"):
+                # FTP/FTPS: Response code 0 means success, or 200-299 range
+                is_success = response_code == 0 or (200 <= response_code < 300)
+            elif protocol == "sftp":
+                # SFTP: Response code 0 means success (SFTP doesn't use HTTP codes)
+                is_success = response_code == 0
+            else:
+                # Default: assume HTTP-like behavior
+                is_success = response_code in (200, 206)
+
+            if is_success:
                 self.status = WorkerStatus.COMPLETED
                 self.segment.status = SegmentStatus.COMPLETED
                 self.segment.downloaded_bytes = self.downloaded_bytes
@@ -765,22 +851,18 @@ class CurlWorker:
                     success=True,
                     downloaded_bytes=self.downloaded_bytes,
                     response_code=response_code,
-                    effective_url=effective_url.decode("utf-8")
-                    if effective_url
-                    else None,
+                    effective_url=safe_decode(effective_url),
                     performance_metrics=metrics.to_dict(),
                 )
             else:
-                error_msg = self._get_http_error_message(response_code)
+                error_msg = self._get_protocol_error_message(protocol, response_code)
                 self.status = WorkerStatus.FAILED
                 self.error_message = error_msg
                 return self._create_result(
                     success=False,
                     error=error_msg,
                     response_code=response_code,
-                    effective_url=effective_url.decode("utf-8")
-                    if effective_url
-                    else None,
+                    effective_url=safe_decode(effective_url),
                 )
 
         except pycurl.error as e:
@@ -866,6 +948,26 @@ class CurlWorker:
 
         return result
 
+    def _get_protocol_error_message(self, protocol: str, response_code: int) -> str:
+        """
+        Get a descriptive error message for different protocol response codes.
+
+        Args:
+            protocol: Protocol scheme (http, https, ftp, ftps, sftp)
+            response_code: Protocol-specific response code
+
+        Returns:
+            Descriptive error message
+        """
+        if protocol in ("http", "https"):
+            return self._get_http_error_message(response_code)
+        elif protocol in ("ftp", "ftps"):
+            return self._get_ftp_error_message(response_code)
+        elif protocol == "sftp":
+            return self._get_sftp_error_message(response_code)
+        else:
+            return f"Protocol {protocol.upper()} error: Code {response_code}"
+
     def _get_http_error_message(self, response_code: int) -> str:
         """
         Get a descriptive error message for HTTP status codes.
@@ -933,6 +1035,56 @@ class CurlWorker:
         status_message = http_status_messages.get(response_code, "Unknown Error")
         return f"HTTP {response_code}: {status_message}"
 
+    def _get_ftp_error_message(self, response_code: int) -> str:
+        """
+        Get a descriptive error message for FTP response codes.
+
+        Args:
+            response_code: FTP response code
+
+        Returns:
+            Descriptive error message
+        """
+        ftp_status_messages = {
+            0: "Success",
+            421: "Service not available, closing control connection",
+            425: "Can't open data connection",
+            426: "Connection closed; transfer aborted",
+            450: "Requested file action not taken",
+            451: "Requested action aborted: local error in processing",
+            452: "Requested action not taken: insufficient system storage",
+            500: "Syntax error, command unrecognized",
+            501: "Syntax error in parameters or arguments",
+            502: "Command not implemented",
+            503: "Bad sequence of commands",
+            504: "Command not implemented for that parameter",
+            530: "Not logged in",
+            532: "Need account for storing files",
+            550: "Requested action not taken: file unavailable",
+            551: "Requested action aborted: page type unknown",
+            552: "Requested file action aborted: exceeded storage allocation",
+            553: "Requested action not taken: file name not allowed",
+        }
+        
+        status_message = ftp_status_messages.get(response_code, "Unknown FTP Error")
+        return f"FTP {response_code}: {status_message}"
+
+    def _get_sftp_error_message(self, response_code: int) -> str:
+        """
+        Get a descriptive error message for SFTP response codes.
+
+        Args:
+            response_code: SFTP response code (usually 0 for success)
+
+        Returns:
+            Descriptive error message
+        """
+        if response_code == 0:
+            return "SFTP Success"
+        else:
+            # For SFTP, non-zero response codes are typically curl errors, not SFTP protocol errors
+            return f"SFTP Error: Code {response_code} (curl error or connection issue)"
+
     def pause(self) -> None:
         """Pause the download."""
         logger.info(f"Pausing worker {self.worker_id}")
@@ -982,17 +1134,35 @@ class CurlWorker:
 
     def _cleanup_curl(self) -> None:
         """Clean up curl handle and file resources."""
-        if self.curl_handle:
+        if hasattr(self, 'curl_handle') and self.curl_handle:
             try:
+                # First try to pause/abort any ongoing transfer
+                try:
+                    # Set a flag to stop the transfer
+                    self._should_stop = True
+                    # Give a brief moment for the transfer to stop
+                    import time
+                    time.sleep(0.1)
+                except Exception:
+                    pass
+                
+                # Now close the handle
                 self.curl_handle.close()
             except Exception as e:
-                logger.warning(
-                    f"Error closing curl handle for worker {self.worker_id}: {e}"
-                )
+                # Log the specific error but don't raise it
+                error_msg = str(e).lower()
+                if "perform() is currently running" in error_msg:
+                    logger.warning(
+                        f"Curl handle for worker {self.worker_id} was closed while transfer was active"
+                    )
+                else:
+                    logger.warning(
+                        f"Error closing curl handle for worker {self.worker_id}: {e}"
+                    )
             finally:
                 self.curl_handle = None
 
-        if self.temp_file:
+        if hasattr(self, 'temp_file') and self.temp_file:
             try:
                 self.temp_file.close()
             except Exception as e:
@@ -1004,4 +1174,8 @@ class CurlWorker:
 
     def __del__(self) -> None:
         """Cleanup when worker is destroyed."""
-        self._cleanup_curl()
+        try:
+            self._cleanup_curl()
+        except AttributeError:
+            # Handle case where initialization failed before setting attributes
+            pass
