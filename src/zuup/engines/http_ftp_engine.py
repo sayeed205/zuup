@@ -233,8 +233,13 @@ class HttpFtpEngine(BaseDownloadEngine):
             temp_dir = Path(task.destination).parent / f".{task.id}_temp"
             temp_dir.mkdir(parents=True, exist_ok=True)
 
-            # Initialize segment merger
-            segment_merger = SegmentMerger(task.destination, temp_dir)
+            # Initialize segment merger with performance optimizations
+            segment_merger = SegmentMerger(
+                task.destination, 
+                temp_dir,
+                total_file_size=task.file_size or 0,
+                use_memory_mapping=None,  # Auto-detect based on file size
+            )
 
             # Try to load resume data
             resume_segments = segment_merger.load_resume_data(task.id)
@@ -748,8 +753,12 @@ class HttpFtpEngine(BaseDownloadEngine):
         # Initialize progress tracking
         total_bytes = task.file_size or sum(seg.segment_size for seg in segments)
 
-        # Create connection manager
-        async with ConnectionManager(effective_config) as conn_manager:
+        # Create connection manager with performance optimizations
+        async with ConnectionManager(
+            effective_config,
+            enable_adaptive_scaling=True,
+            enable_connection_pooling=True,
+        ) as conn_manager:
             # Create workers for segments with logging configuration
             workers = await conn_manager.create_workers(
                 segments, 

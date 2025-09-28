@@ -1,4 +1,4 @@
-"""SegmentMerger for file assembly and integrity verification."""
+"""SegmentMerger for file assembly and integrity verification with memory-mapped I/O support."""
 
 from __future__ import annotations
 
@@ -21,24 +21,49 @@ from .pycurl_models import (
     SegmentMergeInfo,
     SegmentStatus,
 )
+from .memory_mapped_io import (
+    MemoryMappedSegmentWriter,
+    should_use_memory_mapping,
+    get_optimal_mmap_threshold,
+)
 
 logger = logging.getLogger(__name__)
 
 
 class SegmentMerger:
-    """Handles merging completed segments into the final file."""
+    """Handles merging completed segments into the final file with memory-mapped I/O optimization."""
 
-    def __init__(self, target_path: Path, temp_dir: Path) -> None:
+    def __init__(
+        self, 
+        target_path: Path, 
+        temp_dir: Path,
+        total_file_size: int = 0,
+        use_memory_mapping: bool | None = None,
+    ) -> None:
         """
-        Initialize SegmentMerger.
+        Initialize SegmentMerger with memory-mapped I/O support.
 
         Args:
             target_path: Final destination path for the merged file
             temp_dir: Directory for temporary files and resume data
+            total_file_size: Total expected file size for optimization decisions
+            use_memory_mapping: Force enable/disable memory mapping (None for auto-detect)
         """
         self.target_path = target_path
         self.temp_dir = temp_dir
+        self.total_file_size = total_file_size
         self.resume_data_path = temp_dir / "resume_data.json"
+
+        # Determine if we should use memory mapping
+        if use_memory_mapping is None:
+            self.use_memory_mapping = should_use_memory_mapping(
+                total_file_size, get_optimal_mmap_threshold()
+            )
+        else:
+            self.use_memory_mapping = use_memory_mapping
+
+        # Memory-mapped writer for large files
+        self._mmap_writer: MemoryMappedSegmentWriter | None = None
 
         # Ensure directories exist
         self.target_path.parent.mkdir(parents=True, exist_ok=True)
@@ -46,7 +71,12 @@ class SegmentMerger:
 
         # Merge tracking
         self._merge_info = SegmentMergeInfo(
-            total_segments=0, merged_segments=0, bytes_merged=0, total_bytes=0
+            total_segments=0, merged_segments=0, bytes_merged=0, total_bytes=total_file_size
+        )
+
+        logger.info(
+            f"Initialized SegmentMerger for {target_path} "
+            f"(size={total_file_size}, mmap={'enabled' if self.use_memory_mapping else 'disabled'})"
         )
 
         logger.debug(f"Initialized SegmentMerger for {target_path}")
@@ -134,7 +164,7 @@ class SegmentMerger:
 
     async def _merge_segment_data(self, segment: CompletedSegment) -> int:
         """
-        Merge segment data into the target file.
+        Merge segment data into the target file using optimized I/O.
 
         Args:
             segment: Completed segment to merge
@@ -145,54 +175,93 @@ class SegmentMerger:
         Raises:
             IOError: If merge operation fails
         """
+        if self.use_memory_mapping and self.total_file_size > 0:
+            return await self._merge_segment_mmap(segment)
+        else:
+            return await self._merge_segment_traditional(segment)
+
+    async def _merge_segment_mmap(self, segment: CompletedSegment) -> int:
+        """
+        Merge segment using memory-mapped I/O for large files.
+
+        Args:
+            segment: Completed segment to merge
+
+        Returns:
+            Number of bytes merged
+        """
+        # Initialize memory-mapped writer if not already done
+        if self._mmap_writer is None:
+            self._mmap_writer = MemoryMappedSegmentWriter(
+                self.target_path, self.total_file_size
+            )
+            self._mmap_writer.open()
+
+        # Read segment data
+        with open(segment.temp_file_path, "rb") as segment_file:
+            segment_data = segment_file.read()
+
+        # Write segment to memory-mapped file
+        bytes_merged = self._mmap_writer.write_segment(
+            segment.segment.start_byte, segment_data
+        )
+
+        # Sync to disk periodically
+        self._mmap_writer.sync()
+
+        logger.debug(
+            f"Memory-mapped merge: {bytes_merged} bytes for segment {segment.segment.id}"
+        )
+
+        return bytes_merged
+
+    async def _merge_segment_traditional(self, segment: CompletedSegment) -> int:
+        """
+        Merge segment using traditional file I/O for smaller files.
+
+        Args:
+            segment: Completed segment to merge
+
+        Returns:
+            Number of bytes merged
+        """
         # Create target file if it doesn't exist
         if not self.target_path.exists():
-            self.target_path.touch()
+            if self.total_file_size > 0:
+                # Create sparse file of expected size
+                with open(self.target_path, "wb") as f:
+                    f.seek(self.total_file_size - 1)
+                    f.write(b"\0")
+            else:
+                self.target_path.touch()
 
         bytes_merged = 0
 
-        # Use a temporary file for atomic operations
-        with tempfile.NamedTemporaryFile(
-            dir=self.target_path.parent,
-            prefix=f".{self.target_path.name}_merge_",
-            delete=False,
-        ) as temp_target:
-            temp_target_path = Path(temp_target.name)
-
-            try:
-                # Copy existing target file content to temp file
-                if self.target_path.stat().st_size > 0:
-                    with open(self.target_path, "rb") as source:
-                        shutil.copyfileobj(source, temp_target)
-
+        # Use direct file I/O for smaller files or when mmap is disabled
+        try:
+            with open(self.target_path, "r+b") as target_file:
                 # Seek to the correct position for this segment
-                temp_target.seek(segment.segment.start_byte)
+                target_file.seek(segment.segment.start_byte)
 
-                # Copy segment data
+                # Copy segment data in chunks
                 with open(segment.temp_file_path, "rb") as segment_file:
                     while True:
                         chunk = segment_file.read(64 * 1024)  # 64KB chunks
                         if not chunk:
                             break
-                        temp_target.write(chunk)
+                        target_file.write(chunk)
                         bytes_merged += len(chunk)
 
                 # Ensure data is written to disk
-                temp_target.flush()
-                os.fsync(temp_target.fileno())
+                target_file.flush()
+                os.fsync(target_file.fileno())
 
-                # Atomically replace the target file
-                temp_target_path.replace(self.target_path)
+            logger.debug(
+                f"Traditional merge: {bytes_merged} bytes for segment {segment.segment.id}"
+            )
 
-                logger.debug(
-                    f"Merged {bytes_merged} bytes for segment {segment.segment.id}"
-                )
-
-            except Exception as e:
-                # Clean up temp file on error
-                if temp_target_path.exists():
-                    temp_target_path.unlink()
-                raise OSError(f"Failed to merge segment data: {e}") from e
+        except Exception as e:
+            raise OSError(f"Failed to merge segment data: {e}") from e
 
         return bytes_merged
 
@@ -358,12 +427,22 @@ class SegmentMerger:
 
     def cleanup_temp_files(self, segments: list[DownloadSegment]) -> None:
         """
-        Clean up temporary files for completed segments.
+        Clean up temporary files for completed segments and memory-mapped resources.
 
         Args:
             segments: List of download segments to clean up
         """
         logger.info(f"Cleaning up temporary files for {len(segments)} segments")
+
+        # Close memory-mapped writer if open
+        if self._mmap_writer:
+            try:
+                self._mmap_writer.close()
+                logger.debug("Closed memory-mapped writer")
+            except Exception as e:
+                logger.warning(f"Error closing memory-mapped writer: {e}")
+            finally:
+                self._mmap_writer = None
 
         cleaned_count = 0
         error_count = 0
@@ -391,6 +470,53 @@ class SegmentMerger:
         logger.info(
             f"Cleanup completed: {cleaned_count} files removed, {error_count} errors"
         )
+
+    def get_performance_stats(self) -> dict[str, Any]:
+        """
+        Get performance statistics for the segment merger.
+
+        Returns:
+            Dictionary with performance statistics
+        """
+        stats = {
+            "use_memory_mapping": self.use_memory_mapping,
+            "total_file_size": self.total_file_size,
+            "target_path": str(self.target_path),
+            "temp_dir": str(self.temp_dir),
+            "merge_info": {
+                "total_segments": self._merge_info.total_segments,
+                "merged_segments": self._merge_info.merged_segments,
+                "bytes_merged": self._merge_info.bytes_merged,
+                "total_bytes": self._merge_info.total_bytes,
+                "current_segment": self._merge_info.current_segment,
+            },
+        }
+
+        # Add memory-mapped writer stats if available
+        if self._mmap_writer:
+            stats["mmap_writer"] = self._mmap_writer.get_stats()
+
+        # Add file system information
+        if self.target_path.exists():
+            stat = self.target_path.stat()
+            stats["target_file"] = {
+                "exists": True,
+                "size": stat.st_size,
+                "modified_time": stat.st_mtime,
+            }
+        else:
+            stats["target_file"] = {"exists": False}
+
+        return stats
+
+    def __del__(self) -> None:
+        """Cleanup when merger is destroyed."""
+        if self._mmap_writer:
+            logger.warning("SegmentMerger destroyed without proper cleanup")
+            try:
+                self._mmap_writer.close()
+            except Exception:
+                pass
 
     def save_resume_data(self, task_id: str, segments: list[DownloadSegment]) -> None:
         """
