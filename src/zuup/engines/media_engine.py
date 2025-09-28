@@ -15,7 +15,13 @@ from .media_error_handler import (
     ExtractionError,
     MediaErrorHandler,
 )
-from .media_models import BatchDownloadConfig, BatchProgress, DownloadStatus, MediaConfig, MediaInfo
+from .media_models import (
+    BatchDownloadConfig,
+    BatchProgress,
+    DownloadStatus,
+    MediaConfig,
+    MediaInfo,
+)
 from .metadata_manager import MetadataTemplate, ThumbnailConfig
 from .playlist_manager import PlaylistManager
 from .post_processor import PostProcessor
@@ -38,16 +44,16 @@ class MediaEngine(BaseDownloadEngine):
         self.extractor = FormatExtractor(config)
         self.downloader = MediaDownloader(config)
         self.playlist_manager = PlaylistManager(config)
-        
+
         # Initialize post-processor with enhanced metadata capabilities
         metadata_template = MetadataTemplate(
             filename_template=config.output_template,
-            create_subdirectories=config.create_subdirectories
+            create_subdirectories=config.create_subdirectories,
         )
         thumbnail_config = ThumbnailConfig(
             download_thumbnails=config.embed_thumbnail,
             embed_thumbnails=config.embed_thumbnail,
-            save_separate_thumbnails=False  # Embed by default
+            save_separate_thumbnails=False,  # Embed by default
         )
         self.post_processor = PostProcessor(config, metadata_template, thumbnail_config)
 
@@ -395,17 +401,17 @@ class MediaEngine(BaseDownloadEngine):
                     # Convert to ProgressInfo and update internal tracking
                     progress_info = self.downloader.convert_to_progress_info(progress)
                     self._update_progress(task.id, progress_info)
-                    
+
                     # Store the downloaded file path when download completes
                     if progress.status == DownloadStatus.FINISHED and progress.filename:
                         downloaded_file_path = Path(progress.filename)
-                    
+
                     yield progress_info
 
                 # Post-process the downloaded file if available
                 if downloaded_file_path and downloaded_file_path.exists():
                     logger.info(f"Starting post-processing for {downloaded_file_path}")
-                    
+
                     # Update status to processing
                     processing_progress = ProgressInfo(
                         downloaded_bytes=progress_info.downloaded_bytes,
@@ -416,17 +422,26 @@ class MediaEngine(BaseDownloadEngine):
                     )
                     self._update_progress(task.id, processing_progress)
                     yield processing_progress
-                    
+
                     # Get yt-dlp info for comprehensive metadata processing
-                    yt_dlp_info = await self.extractor.get_raw_info(media_info.webpage_url)
-                    
-                    # Process with comprehensive metadata extraction
-                    processing_result = await self.post_processor.process_media_with_metadata(
-                        downloaded_file_path, media_info, yt_dlp_info, downloaded_file_path.name
+                    yt_dlp_info = await self.extractor.get_raw_info(
+                        media_info.webpage_url
                     )
-                    
+
+                    # Process with comprehensive metadata extraction
+                    processing_result = (
+                        await self.post_processor.process_media_with_metadata(
+                            downloaded_file_path,
+                            media_info,
+                            yt_dlp_info,
+                            downloaded_file_path.name,
+                        )
+                    )
+
                     if processing_result.success:
-                        logger.info(f"Post-processing completed: {processing_result.output_path}")
+                        logger.info(
+                            f"Post-processing completed: {processing_result.output_path}"
+                        )
                         # Update final progress with completed status
                         final_progress = ProgressInfo(
                             downloaded_bytes=progress_info.downloaded_bytes,
@@ -438,7 +453,9 @@ class MediaEngine(BaseDownloadEngine):
                         self._update_progress(task.id, final_progress)
                         yield final_progress
                     else:
-                        logger.warning(f"Post-processing had errors: {processing_result.errors}")
+                        logger.warning(
+                            f"Post-processing had errors: {processing_result.errors}"
+                        )
                         # Still mark as completed but log the errors
                         final_progress = ProgressInfo(
                             downloaded_bytes=progress_info.downloaded_bytes,

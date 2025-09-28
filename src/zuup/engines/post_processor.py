@@ -7,7 +7,7 @@ import shutil
 import subprocess
 import tempfile
 import time
-from typing import Any, Dict, Optional
+from typing import Any
 
 from .media_models import (
     ChapterInfo,
@@ -27,10 +27,10 @@ class PostProcessor:
     """Handles post-processing tasks like format conversion and metadata embedding."""
 
     def __init__(
-        self, 
+        self,
         config: MediaConfig,
-        metadata_template: Optional[MetadataTemplate] = None,
-        thumbnail_config: Optional[ThumbnailConfig] = None
+        metadata_template: MetadataTemplate | None = None,
+        thumbnail_config: ThumbnailConfig | None = None,
     ) -> None:
         """
         Initialize PostProcessor with configuration.
@@ -41,13 +41,12 @@ class PostProcessor:
             thumbnail_config: Thumbnail handling configuration
         """
         self.config = config
-        
+
         # Initialize metadata manager with enhanced capabilities
         self.metadata_manager = MetadataManager(
-            template_config=metadata_template,
-            thumbnail_config=thumbnail_config
+            template_config=metadata_template, thumbnail_config=thumbnail_config
         )
-        
+
         self._check_ffmpeg_availability()
         logger.info("PostProcessor initialized with enhanced metadata management")
 
@@ -72,8 +71,8 @@ class PostProcessor:
         self,
         file_path: Path,
         info: MediaInfo,
-        yt_dlp_info: Dict[str, Any],
-        original_filename: str
+        yt_dlp_info: dict[str, Any],
+        original_filename: str,
     ) -> ProcessingResult:
         """
         Execute comprehensive post-processing pipeline with metadata extraction.
@@ -97,10 +96,14 @@ class PostProcessor:
 
         try:
             # Process metadata and organize files
-            organized_path, metadata, thumbnail_path = await self.metadata_manager.process_media_metadata(
+            (
+                organized_path,
+                metadata,
+                thumbnail_path,
+            ) = await self.metadata_manager.process_media_metadata(
                 info, yt_dlp_info, self.config.output_directory, original_filename
             )
-            
+
             # Move file to organized location if different
             if organized_path != file_path:
                 logger.info(f"Moving file to organized location: {organized_path}")
@@ -146,7 +149,9 @@ class PostProcessor:
             result.errors.append(str(e))
 
         result.processing_time = time.time() - start_time
-        logger.info(f"Comprehensive post-processing completed in {result.processing_time:.2f}s")
+        logger.info(
+            f"Comprehensive post-processing completed in {result.processing_time:.2f}s"
+        )
 
         return result
 
@@ -599,15 +604,21 @@ class PostProcessor:
         try:
             # Use basic metadata for organization
             metadata = self.metadata_manager.create_metadata_from_info(info)
-            variables = self.metadata_manager.extractor.create_template_variables(info, metadata)
-            
-            # Generate organized paths using metadata manager
-            organized_dir = self.metadata_manager.filename_generator.generate_directory_path(
-                variables, self.config.output_directory
+            variables = self.metadata_manager.extractor.create_template_variables(
+                info, metadata
             )
-            
-            organized_filename = self.metadata_manager.filename_generator.generate_filename(
-                variables, file_path.suffix
+
+            # Generate organized paths using metadata manager
+            organized_dir = (
+                self.metadata_manager.filename_generator.generate_directory_path(
+                    variables, self.config.output_directory
+                )
+            )
+
+            organized_filename = (
+                self.metadata_manager.filename_generator.generate_filename(
+                    variables, file_path.suffix
+                )
             )
 
             # Create full organized path
@@ -639,8 +650,6 @@ class PostProcessor:
         except Exception as e:
             logger.error(f"File organization failed: {e}")
             raise RuntimeError(f"File organization failed: {e}") from e
-
-
 
     def _create_metadata_from_info(self, info: MediaInfo) -> MediaMetadata:
         """

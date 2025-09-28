@@ -148,8 +148,10 @@ class FormatExtractor:
             # Run yt-dlp extraction in thread pool to avoid blocking
             loop = asyncio.get_event_loop()
             info_dict = await loop.run_in_executor(None, self._extract_info_sync, url)
-            
-            logger.debug(f"Successfully extracted raw info for: {info_dict.get('title', 'Unknown')}")
+
+            logger.debug(
+                f"Successfully extracted raw info for: {info_dict.get('title', 'Unknown')}"
+            )
             return info_dict
 
         except yt_dlp.DownloadError as e:
