@@ -78,6 +78,7 @@ from .torrent_models import (
     TrackerInfo,
     TrackerStatus,
 )
+from .torrent_session import SessionManager
 
 __all__ = [
     "AlertCategory",
@@ -123,6 +124,7 @@ __all__ = [
     "SegmentMergeInfo",
     "SegmentMerger",
     "SegmentStatus",
+    "SessionManager",
     "SessionStats",
     "SshConfig",
     "SubtitleInfo",
