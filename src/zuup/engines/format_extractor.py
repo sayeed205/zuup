@@ -1,0 +1,625 @@
+"""Format extraction and selection for media downloads using yt-dlp."""
+
+import asyncio
+import logging
+from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse
+
+import yt_dlp
+
+from .media_models import (
+    ChapterInfo,
+    FormatPreferences,
+    MediaConfig,
+    MediaFormat,
+    MediaInfo,
+    SubtitleInfo,
+)
+
+logger = logging.getLogger(__name__)
+
+
+class FormatExtractor:
+    """Extracts available formats and metadata from URLs using yt-dlp."""
+
+    def __init__(self, config: MediaConfig) -> None:
+        """
+        Initialize FormatExtractor with configuration.
+
+        Args:
+            config: Media configuration for extraction
+        """
+        self.config = config
+        self._yt_dlp_opts = self._create_yt_dlp_options()
+        logger.info("FormatExtractor initialized")
+
+    def _create_yt_dlp_options(self) -> Dict[str, Any]:
+        """
+        Create yt-dlp options from configuration.
+
+        Returns:
+            Dictionary of yt-dlp options
+        """
+        opts = {
+            # Don't download, just extract info
+            "quiet": True,
+            "no_warnings": False,
+            "extract_flat": False,
+            "writethumbnail": False,
+            "writesubtitles": False,
+            "writeinfojson": False,
+            "writedescription": False,
+            
+            # Network settings
+            "socket_timeout": self.config.socket_timeout,
+            "retries": self.config.retries,
+            "fragment_retries": self.config.fragment_retries,
+            
+            # Proxy settings
+            "proxy": self.config.proxy,
+            
+            # Geo-bypass settings
+            "geo_bypass": self.config.geo_bypass,
+            "geo_bypass_country": self.config.geo_bypass_country,
+            
+            # Extractor arguments
+            "extractor_args": self.config.extractor_args,
+        }
+
+        # Add authentication if configured
+        if self.config.auth_config.username:
+            opts["username"] = self.config.auth_config.username
+        if self.config.auth_config.password:
+            opts["password"] = self.config.auth_config.password
+        if self.config.auth_config.cookies_file:
+            opts["cookiefile"] = str(self.config.auth_config.cookies_file)
+        if self.config.auth_config.netrc_file:
+            opts["usenetrc"] = True
+            opts["netrc_location"] = str(self.config.auth_config.netrc_file)
+
+        return opts
+
+    async def extract_info(self, url: str) -> MediaInfo:
+        """
+        Extract comprehensive media information from URL.
+
+        Args:
+            url: URL to extract information from
+
+        Returns:
+            MediaInfo object with extracted information
+
+        Raises:
+            ValueError: If URL is invalid or extraction fails
+            RuntimeError: If yt-dlp extraction fails
+        """
+        if not url or not url.strip():
+            raise ValueError("URL cannot be empty")
+
+        logger.info(f"Extracting info for URL: {url}")
+
+        try:
+            # Run yt-dlp extraction in thread pool to avoid blocking
+            loop = asyncio.get_event_loop()
+            info_dict = await loop.run_in_executor(
+                None, self._extract_info_sync, url
+            )
+
+            # Convert yt-dlp info dict to our MediaInfo model
+            media_info = self._parse_info_dict(info_dict)
+            
+            logger.info(f"Successfully extracted info for: {media_info.title}")
+            return media_info
+
+        except yt_dlp.DownloadError as e:
+            logger.error(f"yt-dlp extraction failed for {url}: {e}")
+            raise RuntimeError(f"Failed to extract media info: {e}") from e
+        except Exception as e:
+            logger.error(f"Unexpected error extracting info for {url}: {e}")
+            raise RuntimeError(f"Unexpected extraction error: {e}") from e
+
+    def _extract_info_sync(self, url: str) -> Dict[str, Any]:
+        """
+        Synchronous yt-dlp info extraction.
+
+        Args:
+            url: URL to extract information from
+
+        Returns:
+            Raw yt-dlp info dictionary
+        """
+        with yt_dlp.YoutubeDL(self._yt_dlp_opts) as ydl:
+            return ydl.extract_info(url, download=False)
+
+    def _parse_info_dict(self, info_dict: Dict[str, Any]) -> MediaInfo:
+        """
+        Parse yt-dlp info dictionary into MediaInfo model.
+
+        Args:
+            info_dict: Raw yt-dlp info dictionary
+
+        Returns:
+            Parsed MediaInfo object
+        """
+        # Extract basic information
+        media_id = info_dict.get("id", "")
+        title = info_dict.get("title", "Unknown Title")
+        description = info_dict.get("description")
+        uploader = info_dict.get("uploader")
+        upload_date = info_dict.get("upload_date")
+        duration = info_dict.get("duration")
+        view_count = info_dict.get("view_count")
+        like_count = info_dict.get("like_count")
+        thumbnail = info_dict.get("thumbnail")
+        webpage_url = info_dict.get("webpage_url", "")
+        extractor = info_dict.get("extractor", "")
+        extractor_key = info_dict.get("extractor_key", "")
+
+        # Parse formats
+        formats = self._parse_formats(info_dict.get("formats", []))
+        
+        # Parse subtitles
+        subtitles = self._parse_subtitles(info_dict.get("subtitles", {}))
+        
+        # Parse chapters
+        chapters = self._parse_chapters(info_dict.get("chapters", []))
+
+        # Determine if this is a playlist
+        is_playlist = "_type" in info_dict and info_dict["_type"] == "playlist"
+
+        return MediaInfo(
+            id=media_id,
+            title=title,
+            description=description,
+            uploader=uploader,
+            upload_date=upload_date,
+            duration=duration,
+            view_count=view_count,
+            like_count=like_count,
+            thumbnail=thumbnail,
+            formats=formats,
+            subtitles=subtitles,
+            chapters=chapters,
+            webpage_url=webpage_url,
+            extractor=extractor,
+            extractor_key=extractor_key,
+            is_playlist=is_playlist,
+        )
+
+    def _parse_formats(self, formats_list: List[Dict[str, Any]]) -> List[MediaFormat]:
+        """
+        Parse yt-dlp formats list into MediaFormat objects.
+
+        Args:
+            formats_list: List of format dictionaries from yt-dlp
+
+        Returns:
+            List of MediaFormat objects
+        """
+        formats = []
+        
+        for fmt in formats_list:
+            try:
+                media_format = MediaFormat(
+                    format_id=fmt.get("format_id", ""),
+                    ext=fmt.get("ext", ""),
+                    resolution=fmt.get("resolution"),
+                    fps=fmt.get("fps"),
+                    vcodec=fmt.get("vcodec"),
+                    acodec=fmt.get("acodec"),
+                    abr=fmt.get("abr"),
+                    vbr=fmt.get("vbr"),
+                    filesize=fmt.get("filesize"),
+                    filesize_approx=fmt.get("filesize_approx"),
+                    quality=fmt.get("quality"),
+                    format_note=fmt.get("format_note"),
+                    language=fmt.get("language"),
+                    preference=fmt.get("preference"),
+                )
+                formats.append(media_format)
+            except Exception as e:
+                logger.warning(f"Failed to parse format {fmt.get('format_id', 'unknown')}: {e}")
+                continue
+
+        return formats
+
+    def _parse_subtitles(self, subtitles_dict: Dict[str, List[Dict[str, Any]]]) -> Dict[str, List[SubtitleInfo]]:
+        """
+        Parse yt-dlp subtitles dictionary into SubtitleInfo objects.
+
+        Args:
+            subtitles_dict: Subtitles dictionary from yt-dlp
+
+        Returns:
+            Dictionary mapping language codes to lists of SubtitleInfo objects
+        """
+        parsed_subtitles = {}
+        
+        for lang, sub_list in subtitles_dict.items():
+            parsed_list = []
+            for sub in sub_list:
+                try:
+                    subtitle_info = SubtitleInfo(
+                        url=sub.get("url", ""),
+                        ext=sub.get("ext", ""),
+                        language=lang,
+                        name=sub.get("name"),
+                    )
+                    parsed_list.append(subtitle_info)
+                except Exception as e:
+                    logger.warning(f"Failed to parse subtitle for language {lang}: {e}")
+                    continue
+            
+            if parsed_list:
+                parsed_subtitles[lang] = parsed_list
+
+        return parsed_subtitles
+
+    def _parse_chapters(self, chapters_list: List[Dict[str, Any]]) -> List[ChapterInfo]:
+        """
+        Parse yt-dlp chapters list into ChapterInfo objects.
+
+        Args:
+            chapters_list: List of chapter dictionaries from yt-dlp
+
+        Returns:
+            List of ChapterInfo objects
+        """
+        chapters = []
+        
+        for chapter in chapters_list:
+            try:
+                chapter_info = ChapterInfo(
+                    title=chapter.get("title", ""),
+                    start_time=chapter.get("start_time", 0.0),
+                    end_time=chapter.get("end_time", 0.0),
+                )
+                chapters.append(chapter_info)
+            except Exception as e:
+                logger.warning(f"Failed to parse chapter {chapter.get('title', 'unknown')}: {e}")
+                continue
+
+        return chapters
+
+    async def get_formats(self, url: str) -> List[MediaFormat]:
+        """
+        Get available formats for a URL.
+
+        Args:
+            url: URL to get formats for
+
+        Returns:
+            List of available MediaFormat objects
+        """
+        media_info = await self.extract_info(url)
+        return media_info.formats
+
+    def select_format(
+        self, 
+        formats: List[MediaFormat], 
+        preferences: Optional[FormatPreferences] = None
+    ) -> MediaFormat:
+        """
+        Select the best format based on preferences.
+
+        Args:
+            formats: List of available formats
+            preferences: Format selection preferences (uses config if None)
+
+        Returns:
+            Selected MediaFormat
+
+        Raises:
+            ValueError: If no formats available or no suitable format found
+        """
+        if not formats:
+            raise ValueError("No formats available for selection")
+
+        # Use provided preferences or fall back to config preferences
+        prefs = preferences or self.config.format_preferences
+        
+        logger.info(f"Selecting format from {len(formats)} available formats")
+
+        # Filter formats based on preferences
+        filtered_formats = self._filter_formats(formats, prefs)
+        
+        if not filtered_formats:
+            logger.warning("No formats match preferences, falling back to all formats")
+            filtered_formats = formats
+
+        # Select best format from filtered list
+        selected_format = self._select_best_format(filtered_formats, prefs)
+        
+        logger.info(f"Selected format: {selected_format.format_id} ({selected_format.ext})")
+        return selected_format
+
+    def _filter_formats(
+        self, 
+        formats: List[MediaFormat], 
+        preferences: FormatPreferences
+    ) -> List[MediaFormat]:
+        """
+        Filter formats based on preferences.
+
+        Args:
+            formats: List of formats to filter
+            preferences: Filtering preferences
+
+        Returns:
+            Filtered list of formats
+        """
+        filtered = formats.copy()
+
+        # Filter by audio/video only preferences
+        if preferences.audio_only:
+            filtered = [f for f in filtered if f.vcodec in (None, "none")]
+        elif preferences.video_only:
+            filtered = [f for f in filtered if f.acodec in (None, "none")]
+
+        # Filter by maximum dimensions
+        if preferences.max_height:
+            filtered = [
+                f for f in filtered 
+                if not f.resolution or self._get_height_from_resolution(f.resolution) <= preferences.max_height
+            ]
+
+        if preferences.max_width:
+            filtered = [
+                f for f in filtered 
+                if not f.resolution or self._get_width_from_resolution(f.resolution) <= preferences.max_width
+            ]
+
+        # Filter by preferred codecs
+        if preferences.preferred_codecs:
+            codec_filtered = []
+            for fmt in filtered:
+                if (fmt.vcodec and any(codec in fmt.vcodec for codec in preferences.preferred_codecs)) or \
+                   (fmt.acodec and any(codec in fmt.acodec for codec in preferences.preferred_codecs)):
+                    codec_filtered.append(fmt)
+            if codec_filtered:
+                filtered = codec_filtered
+
+        # Filter by preferred containers
+        if preferences.preferred_containers:
+            container_filtered = [
+                f for f in filtered 
+                if f.ext in preferences.preferred_containers
+            ]
+            if container_filtered:
+                filtered = container_filtered
+
+        # Filter by free formats preference
+        if preferences.prefer_free_formats:
+            free_formats = [
+                f for f in filtered 
+                if f.ext in ("webm", "ogg", "opus", "flac") or
+                   (f.vcodec and any(codec in f.vcodec for codec in ("vp8", "vp9", "av01"))) or
+                   (f.acodec and any(codec in f.acodec for codec in ("vorbis", "opus", "flac")))
+            ]
+            if free_formats:
+                filtered = free_formats
+
+        return filtered
+
+    def _select_best_format(
+        self, 
+        formats: List[MediaFormat], 
+        preferences: FormatPreferences
+    ) -> MediaFormat:
+        """
+        Select the best format from a filtered list.
+
+        Args:
+            formats: Filtered list of formats
+            preferences: Selection preferences
+
+        Returns:
+            Best format based on quality and preferences
+        """
+        # Sort formats by quality metrics
+        def format_score(fmt: MediaFormat) -> tuple:
+            """Calculate format score for sorting."""
+            # Primary: explicit preference value (higher is better)
+            preference_score = fmt.preference or 0
+            
+            # Secondary: quality value (higher is better)
+            quality_score = fmt.quality or 0
+            
+            # Tertiary: resolution (higher is better)
+            resolution_score = 0
+            if fmt.resolution:
+                height = self._get_height_from_resolution(fmt.resolution)
+                if height:
+                    resolution_score = height
+            
+            # Quaternary: bitrate (higher is better)
+            bitrate_score = 0
+            if fmt.vbr:
+                bitrate_score += fmt.vbr
+            if fmt.abr:
+                bitrate_score += fmt.abr
+            
+            # Quinary: filesize (smaller is better for tie-breaking)
+            filesize_score = 0
+            if fmt.filesize:
+                filesize_score = -fmt.filesize  # Negative for reverse sorting
+            elif fmt.filesize_approx:
+                filesize_score = -fmt.filesize_approx
+
+            return (preference_score, quality_score, resolution_score, bitrate_score, filesize_score)
+
+        # Sort by score (descending)
+        sorted_formats = sorted(formats, key=format_score, reverse=True)
+        
+        return sorted_formats[0]
+
+    def _get_height_from_resolution(self, resolution: str) -> Optional[int]:
+        """
+        Extract height from resolution string.
+
+        Args:
+            resolution: Resolution string (e.g., "1920x1080", "1080p")
+
+        Returns:
+            Height in pixels, or None if cannot parse
+        """
+        try:
+            if "x" in resolution:
+                # Format: "1920x1080"
+                return int(resolution.split("x")[1])
+            elif "p" in resolution:
+                # Format: "1080p"
+                return int(resolution.replace("p", ""))
+            else:
+                # Try to parse as integer
+                return int(resolution)
+        except (ValueError, IndexError):
+            return None
+
+    def _get_width_from_resolution(self, resolution: str) -> Optional[int]:
+        """
+        Extract width from resolution string.
+
+        Args:
+            resolution: Resolution string (e.g., "1920x1080")
+
+        Returns:
+            Width in pixels, or None if cannot parse
+        """
+        try:
+            if "x" in resolution:
+                # Format: "1920x1080"
+                return int(resolution.split("x")[0])
+            else:
+                # For formats like "1080p", estimate width based on 16:9 aspect ratio
+                height = self._get_height_from_resolution(resolution)
+                if height:
+                    return int(height * 16 / 9)
+                return None
+        except (ValueError, IndexError):
+            return None
+
+    def check_format_compatibility(self, format_obj: MediaFormat) -> bool:
+        """
+        Check if a format is compatible with current system/configuration.
+
+        Args:
+            format_obj: Format to check compatibility for
+
+        Returns:
+            True if format is compatible, False otherwise
+        """
+        # Check if format has required codecs
+        if not format_obj.vcodec and not format_obj.acodec:
+            logger.warning(f"Format {format_obj.format_id} has no codecs")
+            return False
+
+        # Check for known problematic codecs
+        problematic_codecs = ["none", "unknown"]
+        if (format_obj.vcodec in problematic_codecs and 
+            format_obj.acodec in problematic_codecs):
+            logger.warning(f"Format {format_obj.format_id} has problematic codecs")
+            return False
+
+        # Check file extension
+        if not format_obj.ext or format_obj.ext == "unknown":
+            logger.warning(f"Format {format_obj.format_id} has unknown extension")
+            return False
+
+        # All checks passed
+        return True
+
+    def get_fallback_formats(
+        self, 
+        formats: List[MediaFormat], 
+        failed_format: MediaFormat
+    ) -> List[MediaFormat]:
+        """
+        Get fallback formats when primary format fails.
+
+        Args:
+            formats: All available formats
+            failed_format: Format that failed
+
+        Returns:
+            List of fallback formats, ordered by preference
+        """
+        logger.info(f"Finding fallback formats for failed format: {failed_format.format_id}")
+
+        # Remove the failed format from consideration
+        available_formats = [f for f in formats if f.format_id != failed_format.format_id]
+        
+        if not available_formats:
+            return []
+
+        # Prefer formats with similar characteristics
+        fallback_formats = []
+        
+        # First, try formats with same container
+        same_container = [f for f in available_formats if f.ext == failed_format.ext]
+        fallback_formats.extend(same_container)
+        
+        # Then, try formats with similar codecs
+        if failed_format.vcodec:
+            similar_vcodec = [
+                f for f in available_formats 
+                if f.vcodec and f.vcodec == failed_format.vcodec and f not in fallback_formats
+            ]
+            fallback_formats.extend(similar_vcodec)
+        
+        if failed_format.acodec:
+            similar_acodec = [
+                f for f in available_formats 
+                if f.acodec and f.acodec == failed_format.acodec and f not in fallback_formats
+            ]
+            fallback_formats.extend(similar_acodec)
+        
+        # Finally, add remaining formats sorted by quality
+        remaining_formats = [f for f in available_formats if f not in fallback_formats]
+        remaining_formats.sort(key=lambda x: x.quality or 0, reverse=True)
+        fallback_formats.extend(remaining_formats)
+
+        logger.info(f"Found {len(fallback_formats)} fallback formats")
+        return fallback_formats
+
+    def supports_url(self, url: str) -> bool:
+        """
+        Check if URL is supported by yt-dlp extractors.
+
+        Args:
+            url: URL to check
+
+        Returns:
+            True if URL is supported, False otherwise
+        """
+        try:
+            # Use yt-dlp's built-in extractor matching
+            with yt_dlp.YoutubeDL({"quiet": True}) as ydl:
+                # This will return the extractor class if supported
+                extractor = ydl._get_info_extractor_class(url)
+                return extractor is not None
+        except Exception:
+            # If any error occurs, assume not supported
+            return False
+
+    def get_supported_sites(self) -> List[str]:
+        """
+        Get list of sites supported by yt-dlp.
+
+        Returns:
+            List of supported site names
+        """
+        try:
+            # Get all extractor classes
+            extractors = yt_dlp.extractor.gen_extractors()
+            
+            # Extract site names (IE_NAME attribute)
+            sites = []
+            for extractor in extractors:
+                if hasattr(extractor, 'IE_NAME') and extractor.IE_NAME:
+                    sites.append(extractor.IE_NAME)
+            
+            return sorted(set(sites))
+        except Exception as e:
+            logger.error(f"Failed to get supported sites: {e}")
+            return []
