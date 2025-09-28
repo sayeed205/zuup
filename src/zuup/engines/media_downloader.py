@@ -14,7 +14,6 @@ from ..storage.models import ProgressInfo, TaskStatus
 from .auth_error_handler import AuthenticationErrorHandler
 from .cookie_manager import AuthenticationError, AuthenticationManager
 from .format_selector import FormatSelector
-from .quality_controller import QualityController
 from .media_models import (
     DownloadProgress,
     DownloadStatus,
@@ -24,6 +23,7 @@ from .media_models import (
     MediaInfo,
 )
 from .network_manager import NetworkManager
+from .quality_controller import QualityController
 
 logger = logging.getLogger(__name__)
 
@@ -47,27 +47,29 @@ class MediaDownloader:
         self.progress_queue: asyncio.Queue[DownloadProgress] = asyncio.Queue()
         self._download_states: dict[str, DownloadStatus] = {}
         self._download_tasks: dict[str, asyncio.Task[None]] = {}
-        
+
         # Initialize authentication components
         cookies_file = config.auth_config.cookies_file
         self.auth_manager = AuthenticationManager(cookies_file)
         self.auth_error_handler = AuthenticationErrorHandler(self.auth_manager)
-        
+
         # Initialize quality control components
         self.format_selector = FormatSelector()
         self.quality_controller = QualityController(self.format_selector)
-        
+
         # Initialize network manager for advanced proxy and geo-bypass support
         self.network_manager = NetworkManager(
             network_config=config.network_config,
             proxy_config=config.proxy_config,
             geo_bypass_config=config.geo_bypass_config,
         )
-        
+
         # Track progress history for quality adaptation
         self._progress_history: dict[str, list[DownloadProgress]] = {}
-        
-        logger.info("MediaDownloader initialized with authentication and advanced network support")
+
+        logger.info(
+            "MediaDownloader initialized with authentication and advanced network support"
+        )
 
     def _create_yt_dlp_options(self, url: str, task_id: str) -> dict[str, Any]:
         """
@@ -85,30 +87,26 @@ class MediaDownloader:
             "outtmpl": str(self.config.output_directory / self.config.output_template),
             "restrictfilenames": False,
             "windowsfilenames": False,
-
             # Format selection
             "format": self.config.format_selector,
-
             # Progress hooks
             "progress_hooks": [lambda d: self._progress_hook(d, task_id)],
-
             # Extractor arguments
             "extractor_args": self.config.extractor_args,
-
             # Post-processing
             "writesubtitles": self.config.embed_subtitles,
             "writeautomaticsub": self.config.embed_subtitles,
             "writethumbnail": self.config.embed_thumbnail,
             "embedsubtitles": self.config.embed_subtitles,
             "embedthumbnail": self.config.embed_thumbnail,
-
             # Download behavior
             "ignoreerrors": self.config.ignore_errors,
-            "download_archive": str(self.config.download_archive) if self.config.download_archive else None,
+            "download_archive": str(self.config.download_archive)
+            if self.config.download_archive
+            else None,
             "playliststart": self.config.playlist_start,
             "playlistend": self.config.playlist_end,
             "max_downloads": self.config.max_downloads,
-
             # Logging
             "quiet": False,
             "no_warnings": False,
@@ -128,22 +126,26 @@ class MediaDownloader:
         # Audio extraction settings
         if self.config.extract_audio:
             opts["format"] = "bestaudio/best"
-            opts["postprocessors"] = [{
-                "key": "FFmpegExtractAudio",
-                "preferredcodec": self.config.audio_format or "mp3",
-                "preferredquality": self.config.audio_quality,
-            }]
+            opts["postprocessors"] = [
+                {
+                    "key": "FFmpegExtractAudio",
+                    "preferredcodec": self.config.audio_format or "mp3",
+                    "preferredquality": self.config.audio_quality,
+                }
+            ]
 
         return opts
-    
-    async def _setup_authentication_for_url(self, url: str, opts: dict[str, Any]) -> dict[str, Any]:
+
+    async def _setup_authentication_for_url(
+        self, url: str, opts: dict[str, Any]
+    ) -> dict[str, Any]:
         """
         Set up authentication for a specific URL.
-        
+
         Args:
             url: URL being accessed
             opts: Current yt-dlp options
-            
+
         Returns:
             Updated options with authentication
         """
@@ -153,42 +155,58 @@ class MediaDownloader:
                 "method": self.config.auth_config.method.value,
                 "username": self.config.auth_config.username,
                 "password": self.config.auth_config.password,
-                "cookies_file": str(self.config.auth_config.cookies_file) if self.config.auth_config.cookies_file else None,
-                "netrc_file": str(self.config.auth_config.netrc_file) if self.config.auth_config.netrc_file else None,
-                "oauth_token": self.config.auth_config.oauth_token
+                "cookies_file": str(self.config.auth_config.cookies_file)
+                if self.config.auth_config.cookies_file
+                else None,
+                "netrc_file": str(self.config.auth_config.netrc_file)
+                if self.config.auth_config.netrc_file
+                else None,
+                "oauth_token": self.config.auth_config.oauth_token,
             }
-            
+
             # Set up authentication
             auth_opts = await self.auth_manager.setup_authentication(auth_dict, url)
             opts.update(auth_opts)
-            
+
             logger.debug(f"Authentication configured for {urlparse(url).netloc}")
-            
+
         except AuthenticationError as e:
             logger.warning(f"Authentication setup failed for {url}: {e}")
             # Continue without authentication - some sites may work without it
         except Exception as e:
             logger.error(f"Unexpected error setting up authentication for {url}: {e}")
-        
+
         return opts
-    
+
     async def _is_authentication_error(self, error: Exception) -> bool:
         """
         Check if an error is authentication-related.
-        
+
         Args:
             error: Exception to check
-            
+
         Returns:
             True if error is authentication-related
         """
         error_message = str(error).lower()
         auth_keywords = [
-            "login", "password", "authentication", "unauthorized", "forbidden",
-            "cookie", "session", "token", "captcha", "verify", "sign in",
-            "403", "401", "please log in", "access denied"
+            "login",
+            "password",
+            "authentication",
+            "unauthorized",
+            "forbidden",
+            "cookie",
+            "session",
+            "token",
+            "captcha",
+            "verify",
+            "sign in",
+            "403",
+            "401",
+            "please log in",
+            "access denied",
         ]
-        
+
         return any(keyword in error_message for keyword in auth_keywords)
 
     async def _is_geo_blocking_error(self, error: Exception) -> bool:
@@ -203,9 +221,16 @@ class MediaDownloader:
         """
         error_message = str(error).lower()
         geo_keywords = [
-            "geo", "region", "country", "location", "blocked", "restricted",
-            "not available in your country", "content not available",
-            "video is not available", "this video is blocked"
+            "geo",
+            "region",
+            "country",
+            "location",
+            "blocked",
+            "restricted",
+            "not available in your country",
+            "content not available",
+            "video is not available",
+            "this video is blocked",
         ]
         return any(keyword in error_message for keyword in geo_keywords)
 
@@ -221,25 +246,31 @@ class MediaDownloader:
         """
         error_message = str(error).lower()
         network_keywords = [
-            "timeout", "connection", "network", "unreachable", "refused",
-            "dns", "resolve", "socket", "ssl", "certificate", "handshake"
+            "timeout",
+            "connection",
+            "network",
+            "unreachable",
+            "refused",
+            "dns",
+            "resolve",
+            "socket",
+            "ssl",
+            "certificate",
+            "handshake",
         ]
         return any(keyword in error_message for keyword in network_keywords)
-    
+
     async def _handle_authentication_error(
-        self, 
-        error: Exception, 
-        url: str, 
-        current_opts: dict[str, Any]
+        self, error: Exception, url: str, current_opts: dict[str, Any]
     ) -> dict[str, Any] | None:
         """
         Handle authentication error and attempt recovery.
-        
+
         Args:
             error: Authentication error
             url: URL that failed
             current_opts: Current yt-dlp options
-            
+
         Returns:
             Updated options for retry, or None if recovery failed
         """
@@ -248,52 +279,51 @@ class MediaDownloader:
             action = await self.auth_error_handler.handle_auth_error(
                 error, self.config.auth_config, url
             )
-            
+
             # Execute recovery action
             recovery_opts = await self.auth_error_handler.execute_recovery_action(
                 action, self.config.auth_config, url
             )
-            
+
             if recovery_opts:
                 # Merge with current options
                 updated_opts = current_opts.copy()
                 updated_opts.update(recovery_opts)
                 return updated_opts
-            
+
             return None
-            
+
         except Exception as e:
             logger.error(f"Authentication error handling failed: {e}")
             return None
 
     async def _handle_geo_blocking_error(
-        self, 
-        error: Exception, 
-        url: str, 
-        original_opts: dict[str, Any]
+        self, error: Exception, url: str, original_opts: dict[str, Any]
     ) -> dict[str, Any] | None:
         """
         Handle geo-blocking error and attempt recovery with geo-bypass.
-        
+
         Args:
             error: The geo-blocking error
             url: URL that encountered the error
             original_opts: Original yt-dlp options
-            
+
         Returns:
             Updated options for retry, or None if recovery not possible
         """
         try:
             # Use network manager to handle geo-blocking
-            updated_opts = await self.network_manager.handle_geo_blocking_error(url, error)
-            
+            updated_opts = await self.network_manager.handle_geo_blocking_error(
+                url, error
+            )
+
             # Merge with original options
             recovery_opts = original_opts.copy()
             recovery_opts.update(updated_opts)
-            
+
             logger.info(f"Geo-blocking recovery options prepared for {url}")
             return recovery_opts
-            
+
         except Exception as e:
             logger.error(f"Failed to prepare geo-blocking recovery options: {e}")
             return None
@@ -308,16 +338,16 @@ class MediaDownloader:
         """
         try:
             progress = self._parse_progress_dict(d)
-            
+
             # Store progress history for quality adaptation
             if task_id not in self._progress_history:
                 self._progress_history[task_id] = []
             self._progress_history[task_id].append(progress)
-            
+
             # Keep only recent progress entries (last 10)
             if len(self._progress_history[task_id]) > 10:
                 self._progress_history[task_id] = self._progress_history[task_id][-10:]
-            
+
             # Put progress in queue for async consumption
             task = asyncio.create_task(self.progress_queue.put(progress))
             # Store reference to prevent garbage collection
@@ -342,7 +372,9 @@ class MediaDownloader:
             "extracting": DownloadStatus.EXTRACTING,
         }
 
-        status = status_map.get(d.get("status", "downloading"), DownloadStatus.DOWNLOADING)
+        status = status_map.get(
+            d.get("status", "downloading"), DownloadStatus.DOWNLOADING
+        )
 
         # Extract progress information
         downloaded_bytes = d.get("downloaded_bytes", 0) or 0
@@ -373,10 +405,7 @@ class MediaDownloader:
         )
 
     async def download_media(
-        self,
-        info: MediaInfo,
-        task_id: str,
-        format_spec: str | None = None
+        self, info: MediaInfo, task_id: str, format_spec: str | None = None
     ) -> AsyncIterator[DownloadProgress]:
         """
         Download media with real-time progress tracking and adaptive quality control.
@@ -415,7 +444,7 @@ class MediaDownloader:
             opts = self._create_yt_dlp_options(info.webpage_url, task_id)
             if format_spec:
                 opts["format"] = format_spec
-            
+
             # Set up authentication for this URL
             opts = await self._setup_authentication_for_url(info.webpage_url, opts)
 
@@ -426,7 +455,9 @@ class MediaDownloader:
             self._download_tasks[task_id] = download_task
 
             # Yield progress updates with quality adaptation
-            async for progress in self._stream_progress_with_adaptation(task_id, info, current_format):
+            async for progress in self._stream_progress_with_adaptation(
+                task_id, info, current_format
+            ):
                 yield progress
 
                 # Check if download is complete or failed
@@ -447,54 +478,80 @@ class MediaDownloader:
         except Exception as e:
             # Check if this is an authentication error
             if await self._is_authentication_error(e):
-                logger.info(f"Authentication error detected for task {task_id}, attempting recovery")
+                logger.info(
+                    f"Authentication error detected for task {task_id}, attempting recovery"
+                )
                 try:
                     # Attempt to handle authentication error
-                    recovered_opts = await self._handle_authentication_error(e, info.webpage_url, opts)
+                    recovered_opts = await self._handle_authentication_error(
+                        e, info.webpage_url, opts
+                    )
                     if recovered_opts:
                         # Retry download with recovered authentication
-                        logger.info(f"Retrying download with recovered authentication for task {task_id}")
+                        logger.info(
+                            f"Retrying download with recovered authentication for task {task_id}"
+                        )
                         download_task = asyncio.create_task(
-                            self._download_with_yt_dlp(info.webpage_url, recovered_opts, task_id)
+                            self._download_with_yt_dlp(
+                                info.webpage_url, recovered_opts, task_id
+                            )
                         )
                         self._download_tasks[task_id] = download_task
                         await download_task
                         return  # Success after recovery
                 except Exception as recovery_error:
-                    logger.error(f"Authentication recovery failed for task {task_id}: {recovery_error}")
-            
+                    logger.error(
+                        f"Authentication recovery failed for task {task_id}: {recovery_error}"
+                    )
+
             # Check if this is a geo-blocking error
             elif await self._is_geo_blocking_error(e):
-                logger.info(f"Geo-blocking error detected for task {task_id}, attempting bypass")
+                logger.info(
+                    f"Geo-blocking error detected for task {task_id}, attempting bypass"
+                )
                 try:
                     # Attempt to handle geo-blocking error
-                    recovered_opts = await self._handle_geo_blocking_error(e, info.webpage_url, opts)
+                    recovered_opts = await self._handle_geo_blocking_error(
+                        e, info.webpage_url, opts
+                    )
                     if recovered_opts:
                         # Retry download with geo-bypass
-                        logger.info(f"Retrying download with geo-bypass for task {task_id}")
+                        logger.info(
+                            f"Retrying download with geo-bypass for task {task_id}"
+                        )
                         download_task = asyncio.create_task(
-                            self._download_with_yt_dlp(info.webpage_url, recovered_opts, task_id)
+                            self._download_with_yt_dlp(
+                                info.webpage_url, recovered_opts, task_id
+                            )
                         )
                         self._download_tasks[task_id] = download_task
                         await download_task
                         return  # Success after recovery
                 except Exception as recovery_error:
-                    logger.error(f"Geo-bypass recovery failed for task {task_id}: {recovery_error}")
-            
+                    logger.error(
+                        f"Geo-bypass recovery failed for task {task_id}: {recovery_error}"
+                    )
+
             # Check if this is a network error
             elif await self._is_network_error(e):
-                logger.info(f"Network error detected for task {task_id}, calculating retry delay")
+                logger.info(
+                    f"Network error detected for task {task_id}, calculating retry delay"
+                )
                 try:
                     # Calculate retry delay
                     retry_delay = await self.network_manager.handle_network_error(
-                        info.webpage_url, e, 1  # First attempt
+                        info.webpage_url,
+                        e,
+                        1,  # First attempt
                     )
-                    
+
                     # Wait before retry
                     await asyncio.sleep(retry_delay)
-                    
+
                     # Retry download with same options
-                    logger.info(f"Retrying download after network error for task {task_id}")
+                    logger.info(
+                        f"Retrying download after network error for task {task_id}"
+                    )
                     download_task = asyncio.create_task(
                         self._download_with_yt_dlp(info.webpage_url, opts, task_id)
                     )
@@ -502,8 +559,10 @@ class MediaDownloader:
                     await download_task
                     return  # Success after retry
                 except Exception as recovery_error:
-                    logger.error(f"Network error recovery failed for task {task_id}: {recovery_error}")
-            
+                    logger.error(
+                        f"Network error recovery failed for task {task_id}: {recovery_error}"
+                    )
+
             logger.error(f"Download failed for task {task_id}: {e}")
             self._download_states[task_id] = DownloadStatus.ERROR
             raise RuntimeError(f"Media download failed: {e}") from e
@@ -514,10 +573,7 @@ class MediaDownloader:
             self.quality_controller.cleanup_download_data(task_id)
 
     async def _download_with_yt_dlp(
-        self,
-        url: str,
-        opts: dict[str, Any],
-        task_id: str
+        self, url: str, opts: dict[str, Any], task_id: str
     ) -> None:
         """
         Execute yt-dlp download in thread pool.
@@ -527,6 +583,7 @@ class MediaDownloader:
             opts: yt-dlp options
             task_id: Task identifier
         """
+
         def download_sync() -> None:
             """Synchronous download function for thread pool."""
             try:
@@ -551,10 +608,7 @@ class MediaDownloader:
         await loop.run_in_executor(None, download_sync)
 
     async def _stream_progress_with_adaptation(
-        self, 
-        task_id: str, 
-        info: MediaInfo, 
-        current_format: MediaFormat | None
+        self, task_id: str, info: MediaInfo, current_format: MediaFormat | None
     ) -> AsyncIterator[DownloadProgress]:
         """
         Stream progress updates with adaptive quality control.
@@ -569,53 +623,65 @@ class MediaDownloader:
         """
         last_progress = None
         adaptation_check_counter = 0
-        
+
         while True:
             try:
                 # Wait for progress update with timeout
                 progress = await asyncio.wait_for(
-                    self.progress_queue.get(),
-                    timeout=1.0
+                    self.progress_queue.get(), timeout=1.0
                 )
 
                 # Store progress in history for analysis
                 self._progress_history[task_id].append(progress)
-                
+
                 # Check for quality adaptation every 10 progress updates
                 adaptation_check_counter += 1
-                if (adaptation_check_counter >= 10 and 
-                    current_format and 
-                    info.formats and 
-                    self.config.format_preferences.adaptive_quality):
-                    
-                    should_adapt, trigger = self.quality_controller.should_adapt_quality(
-                        task_id, progress, current_format, info.formats
+                if (
+                    adaptation_check_counter >= 10
+                    and current_format
+                    and info.formats
+                    and self.config.format_preferences.adaptive_quality
+                ):
+                    should_adapt, trigger = (
+                        self.quality_controller.should_adapt_quality(
+                            task_id, progress, current_format, info.formats
+                        )
                     )
-                    
+
                     if should_adapt and trigger:
-                        logger.info(f"Quality adaptation triggered for {task_id}: {trigger.value}")
-                        
+                        logger.info(
+                            f"Quality adaptation triggered for {task_id}: {trigger.value}"
+                        )
+
                         # Get new format
                         new_format = self.quality_controller.adapt_quality(
-                            task_id, current_format, info.formats, 
-                            self.config.format_preferences, trigger
+                            task_id,
+                            current_format,
+                            info.formats,
+                            self.config.format_preferences,
+                            trigger,
                         )
-                        
-                        if new_format and new_format.format_id != current_format.format_id:
-                            logger.info(f"Adapting quality from {current_format.format_id} "
-                                       f"to {new_format.format_id} for {task_id}")
-                            
+
+                        if (
+                            new_format
+                            and new_format.format_id != current_format.format_id
+                        ):
+                            logger.info(
+                                f"Adapting quality from {current_format.format_id} "
+                                f"to {new_format.format_id} for {task_id}"
+                            )
+
                             # Cancel current download
                             if task_id in self._download_tasks:
                                 self._download_tasks[task_id].cancel()
-                            
+
                             # Start new download with adapted format
                             await self._restart_download_with_new_format(
                                 task_id, info.webpage_url, new_format.format_id
                             )
-                            
+
                             current_format = new_format
-                    
+
                     adaptation_check_counter = 0
 
                 # Only yield if progress has changed significantly
@@ -635,12 +701,20 @@ class MediaDownloader:
             except asyncio.TimeoutError:
                 # Check if task is still active
                 current_state = self._download_states.get(task_id)
-                if current_state in (DownloadStatus.FINISHED, DownloadStatus.ERROR, DownloadStatus.CANCELLED):
+                if current_state in (
+                    DownloadStatus.FINISHED,
+                    DownloadStatus.ERROR,
+                    DownloadStatus.CANCELLED,
+                ):
                     # Create final progress update
                     final_progress = DownloadProgress(
                         status=current_state,
-                        downloaded_bytes=last_progress.downloaded_bytes if last_progress else 0,
-                        total_bytes=last_progress.total_bytes if last_progress else None,
+                        downloaded_bytes=last_progress.downloaded_bytes
+                        if last_progress
+                        else 0,
+                        total_bytes=last_progress.total_bytes
+                        if last_progress
+                        else None,
                         download_speed=0.0,
                         filename=last_progress.filename if last_progress else None,
                     )
@@ -651,37 +725,34 @@ class MediaDownloader:
                 continue
 
     async def _restart_download_with_new_format(
-        self, 
-        task_id: str, 
-        url: str, 
-        format_spec: str
+        self, task_id: str, url: str, format_spec: str
     ) -> None:
         """
         Restart download with a new format specification.
-        
+
         Args:
             task_id: Task identifier
             url: URL to download
             format_spec: New format specification
         """
         logger.info(f"Restarting download {task_id} with format {format_spec}")
-        
+
         try:
             # Create new options with adapted format
             opts = self._create_yt_dlp_options(url, task_id)
             opts["format"] = format_spec
-            
+
             # Set up authentication for this URL
             opts = await self._setup_authentication_for_url(url, opts)
-            
+
             # Create new download task
             download_task = asyncio.create_task(
                 self._download_with_yt_dlp(url, opts, task_id)
             )
             self._download_tasks[task_id] = download_task
-            
+
             logger.info(f"Download restarted successfully for {task_id}")
-            
+
         except Exception as e:
             logger.error(f"Failed to restart download {task_id} with new format: {e}")
             self._download_states[task_id] = DownloadStatus.ERROR
@@ -702,8 +773,7 @@ class MediaDownloader:
             try:
                 # Wait for progress update with timeout
                 progress = await asyncio.wait_for(
-                    self.progress_queue.get(),
-                    timeout=1.0
+                    self.progress_queue.get(), timeout=1.0
                 )
 
                 # Only yield if progress has changed significantly
@@ -718,12 +788,20 @@ class MediaDownloader:
             except asyncio.TimeoutError:
                 # Check if task is still active
                 current_state = self._download_states.get(task_id)
-                if current_state in (DownloadStatus.FINISHED, DownloadStatus.ERROR, DownloadStatus.CANCELLED):
+                if current_state in (
+                    DownloadStatus.FINISHED,
+                    DownloadStatus.ERROR,
+                    DownloadStatus.CANCELLED,
+                ):
                     # Create final progress update
                     final_progress = DownloadProgress(
                         status=current_state,
-                        downloaded_bytes=last_progress.downloaded_bytes if last_progress else 0,
-                        total_bytes=last_progress.total_bytes if last_progress else None,
+                        downloaded_bytes=last_progress.downloaded_bytes
+                        if last_progress
+                        else 0,
+                        total_bytes=last_progress.total_bytes
+                        if last_progress
+                        else None,
                         download_speed=0.0,
                         filename=last_progress.filename if last_progress else None,
                     )
@@ -734,9 +812,7 @@ class MediaDownloader:
                 continue
 
     def _should_yield_progress(
-        self,
-        current: DownloadProgress,
-        last: DownloadProgress | None
+        self, current: DownloadProgress, last: DownloadProgress | None
     ) -> bool:
         """
         Determine if progress update should be yielded.
@@ -807,10 +883,7 @@ class MediaDownloader:
         self._download_states[task_id] = DownloadStatus.PAUSED
 
     async def resume_download(
-        self,
-        task_id: str,
-        info: MediaInfo,
-        format_spec: str | None = None
+        self, task_id: str, info: MediaInfo, format_spec: str | None = None
     ) -> AsyncIterator[DownloadProgress]:
         """
         Resume a paused download task.
@@ -849,7 +922,7 @@ class MediaDownloader:
             True if playlist is supported
         """
         # Use the format extractor to check support
-        return self.extractor.supports_url(url) if hasattr(self, 'extractor') else True
+        return self.extractor.supports_url(url) if hasattr(self, "extractor") else True
 
     async def cancel_download(self, task_id: str) -> None:
         """
@@ -911,7 +984,9 @@ class MediaDownloader:
         # Progress hooks are already set up in _create_yt_dlp_options
         logger.debug("Progress hooks already configured")
 
-    def create_yt_dlp_options(self, url: str = "", task_id: str = "default") -> dict[str, Any]:
+    def create_yt_dlp_options(
+        self, url: str = "", task_id: str = "default"
+    ) -> dict[str, Any]:
         """
         Get current yt-dlp options.
 
@@ -925,10 +1000,7 @@ class MediaDownloader:
         return self._create_yt_dlp_options(url, task_id)
 
     async def download_audio_only(
-        self,
-        info: MediaInfo,
-        task_id: str,
-        target_bitrate: int | None = None
+        self, info: MediaInfo, task_id: str, target_bitrate: int | None = None
     ) -> AsyncIterator[DownloadProgress]:
         """
         Download audio-only format with quality optimization.
@@ -953,15 +1025,18 @@ class MediaDownloader:
         # Select optimal audio format
         try:
             from .format_extractor import FormatExtractor
+
             extractor = FormatExtractor(self.config)
-            
+
             audio_format = extractor.select_audio_only_format(
                 info.formats, self.config.format_preferences, target_bitrate
             )
-            
-            logger.info(f"Selected audio format: {audio_format.format_id} "
-                       f"({audio_format.ext}, {audio_format.abr or 'unknown'} kbps)")
-            
+
+            logger.info(
+                f"Selected audio format: {audio_format.format_id} "
+                f"({audio_format.ext}, {audio_format.abr or 'unknown'} kbps)"
+            )
+
         except Exception as e:
             logger.error(f"Failed to select audio format: {e}")
             raise ValueError(f"No suitable audio format found: {e}") from e
@@ -969,27 +1044,31 @@ class MediaDownloader:
         # Configure for audio extraction
         opts = self._create_yt_dlp_options(info.webpage_url, task_id)
         opts["format"] = audio_format.format_id
-        
+
         # Force audio extraction post-processing
-        opts["postprocessors"] = [{
-            "key": "FFmpegExtractAudio",
-            "preferredcodec": self.config.audio_format or "mp3",
-            "preferredquality": str(target_bitrate) if target_bitrate else self.config.audio_quality,
-        }]
+        opts["postprocessors"] = [
+            {
+                "key": "FFmpegExtractAudio",
+                "preferredcodec": self.config.audio_format or "mp3",
+                "preferredquality": str(target_bitrate)
+                if target_bitrate
+                else self.config.audio_quality,
+            }
+        ]
 
         # Create a temporary downloader with audio-specific options
         try:
             # Use the existing download_media method but with audio-specific format
-            async for progress in self.download_media(info, task_id, audio_format.format_id):
+            async for progress in self.download_media(
+                info, task_id, audio_format.format_id
+            ):
                 yield progress
         except Exception as e:
             logger.error(f"Audio download failed: {e}")
             raise
 
     def get_recommended_audio_bitrate(
-        self,
-        formats: list[MediaFormat],
-        preferences: FormatPreferences | None = None
+        self, formats: list[MediaFormat], preferences: FormatPreferences | None = None
     ) -> int:
         """
         Get recommended audio bitrate based on available formats.
@@ -1002,23 +1081,23 @@ class MediaDownloader:
             Recommended bitrate in kbps
         """
         prefs = preferences or self.config.format_preferences
-        
+
         # If user specified target bitrate, use it
         if prefs.target_audio_bitrate:
             return prefs.target_audio_bitrate
-        
+
         # Find audio formats and their bitrates
         audio_bitrates = []
         for fmt in formats:
             if fmt.abr and (fmt.vcodec in (None, "none") or fmt.acodec):
                 audio_bitrates.append(fmt.abr)
-        
+
         if not audio_bitrates:
             return 192  # Default fallback
-        
+
         # Recommend based on available quality
         max_bitrate = max(audio_bitrates)
-        
+
         if max_bitrate >= 320:
             return 320  # High quality
         elif max_bitrate >= 256:
@@ -1029,8 +1108,7 @@ class MediaDownloader:
             return int(max_bitrate)  # Use best available
 
     def analyze_format_quality_distribution(
-        self,
-        formats: list[MediaFormat]
+        self, formats: list[MediaFormat]
     ) -> dict[str, Any]:
         """
         Analyze quality distribution of available formats.
@@ -1064,7 +1142,7 @@ class MediaDownloader:
                 self.progress_queue.get_nowait()
             except asyncio.QueueEmpty:
                 break
-        
+
         # Clean up authentication resources
         try:
             await self.auth_error_handler.cleanup()

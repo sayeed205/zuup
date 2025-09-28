@@ -83,6 +83,7 @@ class TaskManager:
         try:
             # Initialize default engines first
             from ..engines.registry import initialize_default_engines
+
             initialize_default_engines()
             logger.info("Default engines initialized")
 
@@ -506,7 +507,9 @@ class TaskManager:
                 if not queued_task:
                     # Wait for queue changes before checking again
                     try:
-                        await asyncio.wait_for(self.queue._queue_changed.wait(), timeout=1.0)
+                        await asyncio.wait_for(
+                            self.queue._queue_changed.wait(), timeout=1.0
+                        )
                         self.queue._queue_changed.clear()
                     except asyncio.TimeoutError:
                         pass

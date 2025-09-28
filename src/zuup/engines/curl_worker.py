@@ -5,12 +5,13 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable
 import logging
-import time
-from typing import Any, Optional
 from pathlib import Path
+import time
+from typing import Any
 
 import pycurl
 
+from .pycurl_logging import LogLevel, setup_curl_logging
 from .pycurl_models import (
     CurlError,
     DownloadSegment,
@@ -20,7 +21,6 @@ from .pycurl_models import (
     WorkerProgress,
     WorkerStatus,
 )
-from .pycurl_logging import CurlLogger, LogLevel, setup_curl_logging
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +34,7 @@ class CurlWorker:
         config: HttpFtpConfig,
         curl_share: pycurl.CurlShare | None = None,
         log_level: LogLevel = LogLevel.BASIC,
-        log_dir: Optional[Path] = None,
+        log_dir: Path | None = None,
     ) -> None:
         """
         Initialize CurlWorker.
@@ -102,6 +102,7 @@ class CurlWorker:
     def generate_debug_curl_command(self) -> str:
         """Generate equivalent curl command for debugging."""
         from .pycurl_logging import CurlDebugUtilities
+
         return CurlDebugUtilities.generate_curl_command(
             self.segment.url, self.config, self.segment
         )
@@ -148,10 +149,10 @@ class CurlWorker:
                 if retry_count < max_retries and not self._cancelled:
                     retry_count += 1
                     delay = self._calculate_retry_delay(retry_count)
-                    
+
                     # Log retry attempt
                     self.curl_logger.log_retry_attempt(retry_count, delay, error)
-                    
+
                     logger.info(
                         f"Retrying segment {self.segment.id} in {delay:.1f} seconds (attempt {retry_count + 1}/{max_retries + 1})"
                     )
@@ -256,7 +257,9 @@ class CurlWorker:
         if self.curl_share and protocol != "sftp":
             self.curl_handle.setopt(pycurl.SHARE, self.curl_share)
         elif protocol == "sftp":
-            logger.debug(f"Skipping curl share for SFTP connection in worker {self.worker_id}")
+            logger.debug(
+                f"Skipping curl share for SFTP connection in worker {self.worker_id}"
+            )
 
         # Performance settings
         self.curl_handle.setopt(pycurl.BUFFERSIZE, self.config.buffer_size)
@@ -348,7 +351,7 @@ class CurlWorker:
         self.curl_handle.setopt(pycurl.SSL_VERIFYPEER, 0)
         self.curl_handle.setopt(pycurl.SSL_VERIFYHOST, 0)
         self.curl_handle.setopt(pycurl.SSL_SESSIONID_CACHE, 0)
-        
+
         # Explicitly disable CA bundle usage for SFTP
         # This prevents curl from trying to verify SSL certificates for SSH connections
         try:
@@ -356,13 +359,13 @@ class CurlWorker:
         except Exception:
             # If setting to None fails, try empty string
             self.curl_handle.setopt(pycurl.CAINFO, "")
-        
+
         try:
             self.curl_handle.setopt(pycurl.CAPATH, None)
         except Exception:
             # If setting to None fails, try empty string
             self.curl_handle.setopt(pycurl.CAPATH, "")
-        
+
         # Force SSH protocol settings and disable any SSL/TLS negotiation
         try:
             # Explicitly set SSH options to override any SSL defaults
@@ -370,8 +373,10 @@ class CurlWorker:
             self.curl_handle.setopt(pycurl.REDIR_PROTOCOLS, pycurl.PROTO_SFTP)
         except Exception as e:
             logger.debug(f"Could not set protocol restrictions: {e}")
-        
-        logger.debug(f"SFTP configured with SSH protocol only for worker {self.worker_id}")
+
+        logger.debug(
+            f"SFTP configured with SSH protocol only for worker {self.worker_id}"
+        )
 
         # SSH host key verification
         if ssh_config.known_hosts_path and ssh_config.known_hosts_path.exists():
@@ -383,7 +388,9 @@ class CurlWorker:
             # Disable host key verification by NOT setting SSH_KNOWNHOSTS at all
             # WARNING: This is insecure and should only be used for development
             # When SSH_KNOWNHOSTS is not set, pycurl skips host key verification
-            logger.debug("SSH host key verification disabled (no known_hosts file configured)")
+            logger.debug(
+                "SSH host key verification disabled (no known_hosts file configured)"
+            )
 
         # SSH key-based authentication
         if ssh_config.private_key_path and ssh_config.private_key_path.exists():
@@ -407,14 +414,16 @@ class CurlWorker:
         if self.config.enable_compression:
             try:
                 # SSH_COMPRESSION might not be available in all pycurl versions
-                if hasattr(pycurl, 'SSH_COMPRESSION'):
+                if hasattr(pycurl, "SSH_COMPRESSION"):
                     self.curl_handle.setopt(pycurl.SSH_COMPRESSION, 1)
                 else:
                     logger.debug("SSH_COMPRESSION not available in this pycurl version")
             except AttributeError:
                 logger.debug("SSH_COMPRESSION not supported by this pycurl version")
 
-        logger.debug(f"Configured SFTP options for worker {self.worker_id} (SSL verification disabled)")
+        logger.debug(
+            f"Configured SFTP options for worker {self.worker_id} (SSL verification disabled)"
+        )
 
     def _setup_headers(self) -> None:
         """Setup custom headers for curl handle."""
@@ -425,9 +434,8 @@ class CurlWorker:
             headers.extend([f"{k}: {v}" for k, v in self.config.custom_headers.items()])
 
         # Add bearer token if using bearer authentication and not already in headers
-        if (
-            self.config.auth.method.value == "bearer"
-            and not any(h.lower().startswith("authorization:") for h in headers)
+        if self.config.auth.method.value == "bearer" and not any(
+            h.lower().startswith("authorization:") for h in headers
         ):
             token = self.config.auth.get_token()
             if token:
@@ -474,7 +482,7 @@ class CurlWorker:
             # Set username and password for non-bearer authentication using secure retrieval
             username = auth.get_username()
             password = auth.get_password()
-            
+
             if username and password and auth.method.value != "bearer":
                 self.curl_handle.setopt(pycurl.USERPWD, f"{username}:{password}")
 
@@ -482,7 +490,7 @@ class CurlWorker:
             # FTP authentication - always uses username/password
             username = auth.get_username()
             password = auth.get_password()
-            
+
             if username and password:
                 self.curl_handle.setopt(pycurl.USERPWD, f"{username}:{password}")
             elif username:
@@ -496,7 +504,7 @@ class CurlWorker:
             # SFTP authentication - can use password or key-based
             username = auth.get_username()
             password = auth.get_password()
-            
+
             if username:
                 if password and not self.config.ssh.private_key_path:
                     # Password-based authentication (only if no SSH key is configured)
@@ -552,10 +560,12 @@ class CurlWorker:
         else:
             self.curl_handle.setopt(pycurl.SSL_VERIFYPEER, 0)
             self.curl_handle.setopt(pycurl.SSL_VERIFYHOST, 0)
-            
+
             # Log warning for development mode
             if self.config.ssl_development_mode:
-                logger.warning(f"Worker {self.worker_id}: SSL verification disabled for development mode - NOT SECURE")
+                logger.warning(
+                    f"Worker {self.worker_id}: SSL verification disabled for development mode - NOT SECURE"
+                )
 
         # SSL/TLS version specification
         if self.config.ssl_version:
@@ -569,7 +579,9 @@ class CurlWorker:
                 "SSLv3": pycurl.SSLVERSION_SSLv3,
             }
             if self.config.ssl_version in ssl_version_map:
-                self.curl_handle.setopt(pycurl.SSLVERSION, ssl_version_map[self.config.ssl_version])
+                self.curl_handle.setopt(
+                    pycurl.SSLVERSION, ssl_version_map[self.config.ssl_version]
+                )
 
         # Custom CA certificate bundle
         if self.config.ca_cert_path and self.config.ca_cert_path.exists():
@@ -586,15 +598,21 @@ class CurlWorker:
         # Client certificate authentication
         if self.config.client_cert_path and self.config.client_cert_path.exists():
             self.curl_handle.setopt(pycurl.SSLCERT, str(self.config.client_cert_path))
-            self.curl_handle.setopt(pycurl.SSLCERTTYPE, self.config.ssl_cert_type.encode("utf-8"))
+            self.curl_handle.setopt(
+                pycurl.SSLCERTTYPE, self.config.ssl_cert_type.encode("utf-8")
+            )
 
         if self.config.client_key_path and self.config.client_key_path.exists():
             self.curl_handle.setopt(pycurl.SSLKEY, str(self.config.client_key_path))
-            self.curl_handle.setopt(pycurl.SSLKEYTYPE, self.config.ssl_key_type.encode("utf-8"))
-            
+            self.curl_handle.setopt(
+                pycurl.SSLKEYTYPE, self.config.ssl_key_type.encode("utf-8")
+            )
+
             # Private key password
             if self.config.ssl_key_password:
-                self.curl_handle.setopt(pycurl.KEYPASSWD, self.config.ssl_key_password.encode("utf-8"))
+                self.curl_handle.setopt(
+                    pycurl.KEYPASSWD, self.config.ssl_key_password.encode("utf-8")
+                )
 
         # SSL cipher list
         if self.config.ssl_cipher_list:
@@ -818,9 +836,10 @@ class CurlWorker:
 
             # Determine success based on protocol
             from urllib.parse import urlparse
+
             parsed_url = urlparse(self.segment.url)
             protocol = parsed_url.scheme.lower()
-            
+
             is_success = False
             if protocol in ("http", "https"):
                 # HTTP/HTTPS: Check for 200 (OK) or 206 (Partial Content)
@@ -878,7 +897,7 @@ class CurlWorker:
 
             # Log connection failure with diagnostic information
             self.curl_logger.log_connection_failure(curl_error, e.args[0])
-            
+
             # Log failed completion
             duration = time.time() - self.start_time
             self.curl_logger.log_completion(False, self.downloaded_bytes, duration)
@@ -887,8 +906,8 @@ class CurlWorker:
             self.error_message = curl_error.curl_message
 
             return self._create_result(
-                success=False, 
-                error=curl_error.curl_message, 
+                success=False,
+                error=curl_error.curl_message,
                 curl_error=curl_error,
                 debug_summary=self.curl_logger.get_debug_summary(),
             )
@@ -1065,7 +1084,7 @@ class CurlWorker:
             552: "Requested file action aborted: exceeded storage allocation",
             553: "Requested action not taken: file name not allowed",
         }
-        
+
         status_message = ftp_status_messages.get(response_code, "Unknown FTP Error")
         return f"FTP {response_code}: {status_message}"
 
@@ -1134,7 +1153,7 @@ class CurlWorker:
 
     def _cleanup_curl(self) -> None:
         """Clean up curl handle and file resources."""
-        if hasattr(self, 'curl_handle') and self.curl_handle:
+        if hasattr(self, "curl_handle") and self.curl_handle:
             try:
                 # First try to pause/abort any ongoing transfer
                 try:
@@ -1142,10 +1161,11 @@ class CurlWorker:
                     self._should_stop = True
                     # Give a brief moment for the transfer to stop
                     import time
+
                     time.sleep(0.1)
                 except Exception:
                     pass
-                
+
                 # Now close the handle
                 self.curl_handle.close()
             except Exception as e:
@@ -1162,7 +1182,7 @@ class CurlWorker:
             finally:
                 self.curl_handle = None
 
-        if hasattr(self, 'temp_file') and self.temp_file:
+        if hasattr(self, "temp_file") and self.temp_file:
             try:
                 self.temp_file.close()
             except Exception as e:

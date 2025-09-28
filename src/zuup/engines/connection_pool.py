@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
+from collections import deque
 import logging
 import threading
 import time
-from collections import deque
-from typing import Any, Optional
+from typing import Any
 from urllib.parse import urlparse
 
 import pycurl
@@ -50,7 +50,7 @@ class CurlHandlePool:
         }
 
         # Cleanup thread
-        self._cleanup_thread: Optional[threading.Thread] = None
+        self._cleanup_thread: threading.Thread | None = None
         self._shutdown = False
         self._start_cleanup_thread()
 
@@ -136,7 +136,7 @@ class CurlHandlePool:
                     del self._pool[i]
                     self._stats["reused"] += 1
                     logger.debug(f"Reused curl handle for {host}")
-                    
+
                     # Reset handle for new use
                     self._reset_handle(handle, config)
                     return handle
@@ -299,7 +299,7 @@ class CurlHandlePool:
 
 
 # Global pool instance
-_global_pool: Optional[CurlHandlePool] = None
+_global_pool: CurlHandlePool | None = None
 _pool_lock = threading.Lock()
 
 

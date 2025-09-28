@@ -66,7 +66,9 @@ class DownloadSegment(BaseModel):
         segment_size = self.end_byte - self.start_byte + 1
         # Allow generous tolerance for HTTP overhead (headers, redirects, chunked encoding, etc.)
         if self.downloaded_bytes > segment_size * 1.5:  # 50% tolerance
-            raise ValueError(f"downloaded_bytes ({self.downloaded_bytes}) significantly exceed segment size ({segment_size})")
+            raise ValueError(
+                f"downloaded_bytes ({self.downloaded_bytes}) significantly exceed segment size ({segment_size})"
+            )
 
         return self
 
@@ -85,10 +87,10 @@ class DownloadSegment(BaseModel):
 
 class CompletedSegment(BaseModel):
     """Represents a completed download segment ready for merging."""
-    
+
     segment: DownloadSegment
     temp_file_path: Path
-    
+
     @field_validator("temp_file_path")
     @classmethod
     def validate_temp_file_exists(cls, v: Path) -> Path:
@@ -143,8 +145,12 @@ class WorkerProgress(BaseModel):
         """Validate progress consistency."""
         # Allow a generous tolerance for downloaded bytes exceeding total bytes
         # This can happen due to headers, redirects, chunked encoding, or other protocol overhead
-        if self.total_bytes > 0 and self.downloaded_bytes > self.total_bytes * 1.5:  # 50% tolerance
-            raise ValueError(f"Downloaded bytes ({self.downloaded_bytes}) significantly exceed total bytes ({self.total_bytes})")
+        if (
+            self.total_bytes > 0 and self.downloaded_bytes > self.total_bytes * 1.5
+        ):  # 50% tolerance
+            raise ValueError(
+                f"Downloaded bytes ({self.downloaded_bytes}) significantly exceed total bytes ({self.total_bytes})"
+            )
         return self
 
     @property
@@ -162,26 +168,26 @@ class WorkerProgress(BaseModel):
 
 class SecureCredentialStore(BaseModel):
     """Secure credential storage with encryption support."""
-    
+
     encrypted: bool = False
     encryption_key_path: Path | None = None
     credentials: dict[str, str] = Field(default_factory=dict)
-    
+
     @field_validator("encryption_key_path")
     @classmethod
     def validate_encryption_key_path(cls, v: Path | None) -> Path | None:
         """Validate encryption key file exists and is readable."""
         if v is None:
             return v
-        
+
         if not v.exists():
             raise ValueError(f"Encryption key file does not exist: {v}")
-        
+
         if not v.is_file():
             raise ValueError(f"Encryption key path is not a file: {v}")
-        
+
         return v
-    
+
     def store_credential(self, key: str, value: str) -> None:
         """Store a credential securely."""
         if self.encrypted and self.encryption_key_path:
@@ -190,19 +196,19 @@ class SecureCredentialStore(BaseModel):
             self.credentials[key] = f"encrypted:{value}"
         else:
             self.credentials[key] = value
-    
+
     def get_credential(self, key: str) -> str | None:
         """Retrieve a credential securely."""
         value = self.credentials.get(key)
         if value is None:
             return None
-        
+
         if self.encrypted and value.startswith("encrypted:"):
             # In a real implementation, this would decrypt the value
             return value[10:]  # Remove "encrypted:" prefix
-        
+
         return value
-    
+
     def clear_credentials(self) -> None:
         """Clear all stored credentials."""
         self.credentials.clear()
@@ -210,7 +216,7 @@ class SecureCredentialStore(BaseModel):
 
 class SSLSecurityProfile(BaseModel):
     """Predefined SSL security profiles for different use cases."""
-    
+
     name: str
     description: str
     verify_ssl: bool = True
@@ -219,7 +225,7 @@ class SSLSecurityProfile(BaseModel):
     ssl_verify_status: bool = False
     ssl_pinned_public_key: str | None = None
     ssl_development_mode: bool = False
-    
+
     @classmethod
     def create_high_security_profile(cls) -> SSLSecurityProfile:
         """Create a high-security SSL profile."""
@@ -230,9 +236,9 @@ class SSLSecurityProfile(BaseModel):
             ssl_version="TLSv1.2",  # Minimum TLS 1.2
             ssl_cipher_list="ECDHE+AESGCM:ECDHE+CHACHA20:DHE+AESGCM:DHE+CHACHA20:!aNULL:!MD5:!DSS",
             ssl_verify_status=True,  # Enable OCSP stapling
-            ssl_development_mode=False
+            ssl_development_mode=False,
         )
-    
+
     @classmethod
     def create_development_profile(cls) -> SSLSecurityProfile:
         """Create a development-friendly SSL profile."""
@@ -240,9 +246,9 @@ class SSLSecurityProfile(BaseModel):
             name="development",
             description="Development profile with relaxed SSL verification",
             verify_ssl=False,
-            ssl_development_mode=True
+            ssl_development_mode=True,
         )
-    
+
     @classmethod
     def create_balanced_profile(cls) -> SSLSecurityProfile:
         """Create a balanced SSL profile."""
@@ -252,7 +258,7 @@ class SSLSecurityProfile(BaseModel):
             verify_ssl=True,
             ssl_version="TLSv1.1",  # Allow TLS 1.1+
             ssl_cipher_list="HIGH:!aNULL:!eNULL:!EXPORT:!DES:!RC4:!MD5:!PSK:!SRP:!CAMELLIA",
-            ssl_verify_status=False
+            ssl_verify_status=False,
         )
 
 
@@ -275,7 +281,7 @@ class AuthConfig(BaseModel):
     username: str | None = None
     password: str | None = None
     token: str | None = None  # For bearer token authentication
-    
+
     # Secure credential storage
     use_secure_storage: bool = False
     credential_store: SecureCredentialStore | None = None
@@ -291,7 +297,7 @@ class AuthConfig(BaseModel):
             except ValueError:
                 raise ValueError(f"Invalid authentication method: {v}")
         return v
-    
+
     def __setattr__(self, name: str, value: Any) -> None:
         """Override setattr to handle method conversion."""
         if name == "method" and isinstance(value, str):
@@ -334,88 +340,116 @@ class AuthConfig(BaseModel):
                     )
 
         return self
-    
+
     def _has_secure_username(self) -> bool:
         """Check if username is available in secure storage."""
         if not self.use_secure_storage or not self.credential_store:
             return False
-        return self.credential_store.get_credential(f"{self.credential_key_prefix}_username") is not None
-    
+        return (
+            self.credential_store.get_credential(
+                f"{self.credential_key_prefix}_username"
+            )
+            is not None
+        )
+
     def _has_secure_password(self) -> bool:
         """Check if password is available in secure storage."""
         if not self.use_secure_storage or not self.credential_store:
             return False
-        return self.credential_store.get_credential(f"{self.credential_key_prefix}_password") is not None
-    
+        return (
+            self.credential_store.get_credential(
+                f"{self.credential_key_prefix}_password"
+            )
+            is not None
+        )
+
     def _has_secure_token(self) -> bool:
         """Check if token is available in secure storage."""
         if not self.use_secure_storage or not self.credential_store:
             return False
-        return self.credential_store.get_credential(f"{self.credential_key_prefix}_token") is not None
-    
+        return (
+            self.credential_store.get_credential(f"{self.credential_key_prefix}_token")
+            is not None
+        )
+
     def get_username(self) -> str | None:
         """Get username from direct field or secure storage."""
         if self.username:
             return self.username
-        
+
         if self.use_secure_storage and self.credential_store:
-            return self.credential_store.get_credential(f"{self.credential_key_prefix}_username")
-        
+            return self.credential_store.get_credential(
+                f"{self.credential_key_prefix}_username"
+            )
+
         return None
-    
+
     def get_password(self) -> str | None:
         """Get password from direct field or secure storage."""
         if self.password:
             return self.password
-        
+
         if self.use_secure_storage and self.credential_store:
-            return self.credential_store.get_credential(f"{self.credential_key_prefix}_password")
-        
+            return self.credential_store.get_credential(
+                f"{self.credential_key_prefix}_password"
+            )
+
         return None
-    
+
     def get_token(self) -> str | None:
         """Get token from direct field or secure storage."""
         if self.token:
             return self.token
-        
+
         if self.use_secure_storage and self.credential_store:
-            return self.credential_store.get_credential(f"{self.credential_key_prefix}_token")
-        
+            return self.credential_store.get_credential(
+                f"{self.credential_key_prefix}_token"
+            )
+
         return None
-    
-    def store_credentials_securely(self, username: str | None = None, 
-                                 password: str | None = None, 
-                                 token: str | None = None) -> None:
+
+    def store_credentials_securely(
+        self,
+        username: str | None = None,
+        password: str | None = None,
+        token: str | None = None,
+    ) -> None:
         """Store credentials in secure storage."""
         if not self.use_secure_storage or not self.credential_store:
             raise ValueError("Secure storage not configured")
-        
+
         if username:
-            self.credential_store.store_credential(f"{self.credential_key_prefix}_username", username)
-        
+            self.credential_store.store_credential(
+                f"{self.credential_key_prefix}_username", username
+            )
+
         if password:
-            self.credential_store.store_credential(f"{self.credential_key_prefix}_password", password)
-        
+            self.credential_store.store_credential(
+                f"{self.credential_key_prefix}_password", password
+            )
+
         if token:
-            self.credential_store.store_credential(f"{self.credential_key_prefix}_token", token)
-    
+            self.credential_store.store_credential(
+                f"{self.credential_key_prefix}_token", token
+            )
+
     def clear_credentials(self) -> None:
         """Clear all credentials from both direct fields and secure storage."""
         self.username = None
         self.password = None
         self.token = None
-        
+
         if self.use_secure_storage and self.credential_store:
             # Clear only this auth config's credentials
             keys_to_remove = [
                 f"{self.credential_key_prefix}_username",
-                f"{self.credential_key_prefix}_password", 
-                f"{self.credential_key_prefix}_token"
+                f"{self.credential_key_prefix}_password",
+                f"{self.credential_key_prefix}_token",
             ]
             for key in keys_to_remove:
                 if key in self.credential_store.credentials:
                     del self.credential_store.credentials[key]
-    
+
     def validate_credentials_available(self) -> None:
         """Validate that required credentials are available when needed."""
         if self.method == AuthMethod.NONE:
@@ -426,8 +460,10 @@ class AuthConfig(BaseModel):
                 raise ValueError("Bearer authentication requires a token")
         else:
             if not self.get_username():
-                raise ValueError(f"{self.method.value} authentication requires a username")
-            
+                raise ValueError(
+                    f"{self.method.value} authentication requires a username"
+                )
+
             if self.method in (
                 AuthMethod.BASIC,
                 AuthMethod.DIGEST,
@@ -436,7 +472,9 @@ class AuthConfig(BaseModel):
                 AuthMethod.AUTO,
             ):
                 if not self.get_password():
-                    raise ValueError(f"{self.method.value} authentication requires a password")
+                    raise ValueError(
+                        f"{self.method.value} authentication requires a password"
+                    )
 
 
 class SshConfig(BaseModel):
@@ -532,7 +570,9 @@ class HttpFtpConfig(BaseModel):
     # Connection settings
     max_connections: int = 8
     segment_size: int = 1024 * 1024  # 1MB default
-    timeout: int = 0  # 0 = no total timeout, let download run as long as it's making progress
+    timeout: int = (
+        0  # 0 = no total timeout, let download run as long as it's making progress
+    )
     connect_timeout: int = 30  # 30 seconds to establish connection
     low_speed_limit: int = 512  # bytes per second - cancel if slower than 512 B/s
     low_speed_time: int = 60  # seconds - allow 60s of slow speed before timeout
@@ -555,7 +595,7 @@ class HttpFtpConfig(BaseModel):
     client_cert_path: Path | None = None
     client_key_path: Path | None = None
     ssl_cipher_list: str | None = None
-    
+
     # Advanced SSL/TLS security features
     ssl_version: str | None = None  # Force specific SSL/TLS version
     ssl_cert_type: str = "PEM"  # Certificate format (PEM, DER, P12)
@@ -568,7 +608,7 @@ class HttpFtpConfig(BaseModel):
     ssl_falsestart: bool = False  # Enable SSL False Start for performance
     ssl_enable_alpn: bool = True  # Enable ALPN (Application-Layer Protocol Negotiation)
     ssl_enable_npn: bool = True  # Enable NPN (Next Protocol Negotiation)
-    
+
     # Development and debugging options
     ssl_development_mode: bool = False  # Allow insecure connections in development
     ssl_debug_level: int = 0  # SSL debug verbosity (0-3)
@@ -583,7 +623,7 @@ class HttpFtpConfig(BaseModel):
 
     # Proxy settings
     proxy: ProxyConfig = Field(default_factory=ProxyConfig)
-    
+
     # SSL Security Profile
     ssl_security_profile: SSLSecurityProfile | None = None
 
@@ -676,7 +716,9 @@ class HttpFtpConfig(BaseModel):
         """Validate SSL certificate and key types."""
         valid_types = {"PEM", "DER", "P12"}
         if v.upper() not in valid_types:
-            raise ValueError(f"SSL cert/key type must be one of: {', '.join(valid_types)}")
+            raise ValueError(
+                f"SSL cert/key type must be one of: {', '.join(valid_types)}"
+            )
         return v.upper()
 
     @field_validator("ssl_version")
@@ -685,10 +727,15 @@ class HttpFtpConfig(BaseModel):
         """Validate SSL/TLS version specification."""
         if v is None:
             return v
-        
+
         valid_versions = {
-            "TLSv1", "TLSv1.0", "TLSv1.1", "TLSv1.2", "TLSv1.3",
-            "SSLv2", "SSLv3"  # Legacy versions (not recommended)
+            "TLSv1",
+            "TLSv1.0",
+            "TLSv1.1",
+            "TLSv1.2",
+            "TLSv1.3",
+            "SSLv2",
+            "SSLv3",  # Legacy versions (not recommended)
         }
         if v not in valid_versions:
             raise ValueError(f"SSL version must be one of: {', '.join(valid_versions)}")
@@ -719,70 +766,74 @@ class HttpFtpConfig(BaseModel):
         """Validate SSL public key pinning format."""
         if v is None:
             return v
-        
+
         # Should be SHA256 hash in base64 format or hex format
         import re
-        
+
         # Base64 format (44 characters + =)
-        if re.match(r'^[A-Za-z0-9+/]{43}=$', v):
+        if re.match(r"^[A-Za-z0-9+/]{43}=$", v):
             return v
-        
+
         # Hex format (64 characters)
-        if re.match(r'^[a-fA-F0-9]{64}$', v):
+        if re.match(r"^[a-fA-F0-9]{64}$", v):
             return v
-        
+
         # SHA256:// prefix format (8 chars prefix + 64 hex chars = 72 total)
-        if v.startswith('sha256//') and len(v) == 72:
+        if v.startswith("sha256//") and len(v) == 72:
             # Validate the hex part after the prefix
             hex_part = v[8:]  # Remove 'sha256//' prefix
-            if re.match(r'^[a-fA-F0-9]{64}$', hex_part):
+            if re.match(r"^[a-fA-F0-9]{64}$", hex_part):
                 return v
-        
+
         # SHA256:// prefix format with base64 (8 chars prefix + 44 base64 chars = 52 total)
-        if v.startswith('sha256//') and len(v) == 52:
+        if v.startswith("sha256//") and len(v) == 52:
             # Validate the base64 part after the prefix
             b64_part = v[8:]  # Remove 'sha256//' prefix
-            if re.match(r'^[A-Za-z0-9+/]{43}=$', b64_part):
+            if re.match(r"^[A-Za-z0-9+/]{43}=$", b64_part):
                 return v
-            
+
         raise ValueError(
             "SSL pinned public key must be SHA256 hash in base64 (44 chars + =) "
             "or hex format (64 chars) or 'sha256//' prefix format with base64 (52 total) "
             "or hex (72 total)"
         )
-    
+
     def apply_ssl_security_profile(self, profile: SSLSecurityProfile) -> None:
         """Apply an SSL security profile to this configuration."""
         self.ssl_security_profile = profile
         self.verify_ssl = profile.verify_ssl
-        
+
         if profile.ssl_version:
             self.ssl_version = profile.ssl_version
-        
+
         if profile.ssl_cipher_list:
             self.ssl_cipher_list = profile.ssl_cipher_list
-        
+
         self.ssl_verify_status = profile.ssl_verify_status
-        
+
         if profile.ssl_pinned_public_key:
             self.ssl_pinned_public_key = profile.ssl_pinned_public_key
-        
+
         self.ssl_development_mode = profile.ssl_development_mode
-    
+
     @classmethod
     def create_with_high_security(cls, **kwargs) -> HttpFtpConfig:
         """Create configuration with high security SSL profile."""
         config = cls(**kwargs)
-        config.apply_ssl_security_profile(SSLSecurityProfile.create_high_security_profile())
+        config.apply_ssl_security_profile(
+            SSLSecurityProfile.create_high_security_profile()
+        )
         return config
-    
+
     @classmethod
     def create_with_development_profile(cls, **kwargs) -> HttpFtpConfig:
         """Create configuration with development SSL profile."""
         config = cls(**kwargs)
-        config.apply_ssl_security_profile(SSLSecurityProfile.create_development_profile())
+        config.apply_ssl_security_profile(
+            SSLSecurityProfile.create_development_profile()
+        )
         return config
-    
+
     @classmethod
     def create_with_balanced_profile(cls, **kwargs) -> HttpFtpConfig:
         """Create configuration with balanced SSL profile."""

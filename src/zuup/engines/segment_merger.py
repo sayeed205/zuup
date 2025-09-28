@@ -8,11 +8,14 @@ import json
 import logging
 import os
 from pathlib import Path
-import shutil
-import tempfile
 import time
 from typing import Any
 
+from .memory_mapped_io import (
+    MemoryMappedSegmentWriter,
+    get_optimal_mmap_threshold,
+    should_use_memory_mapping,
+)
 from .pycurl_models import (
     CompletedSegment,
     DownloadSegment,
@@ -20,11 +23,6 @@ from .pycurl_models import (
     MergeResult,
     SegmentMergeInfo,
     SegmentStatus,
-)
-from .memory_mapped_io import (
-    MemoryMappedSegmentWriter,
-    should_use_memory_mapping,
-    get_optimal_mmap_threshold,
 )
 
 logger = logging.getLogger(__name__)
@@ -34,8 +32,8 @@ class SegmentMerger:
     """Handles merging completed segments into the final file with memory-mapped I/O optimization."""
 
     def __init__(
-        self, 
-        target_path: Path, 
+        self,
+        target_path: Path,
         temp_dir: Path,
         total_file_size: int = 0,
         use_memory_mapping: bool | None = None,
@@ -71,7 +69,10 @@ class SegmentMerger:
 
         # Merge tracking
         self._merge_info = SegmentMergeInfo(
-            total_segments=0, merged_segments=0, bytes_merged=0, total_bytes=total_file_size
+            total_segments=0,
+            merged_segments=0,
+            bytes_merged=0,
+            total_bytes=total_file_size,
         )
 
         logger.info(
@@ -387,7 +388,7 @@ class SegmentMerger:
 
         # Allow up to 20% difference to account for HTTP headers, redirects, etc.
         size_tolerance = max(1024, expected_size * 0.2)  # At least 1KB tolerance
-        
+
         if abs(actual_size - expected_size) > size_tolerance:
             logger.warning(
                 f"File size differs from expected: expected {expected_size}, got {actual_size} "

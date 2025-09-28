@@ -5,12 +5,14 @@ from .http_ftp_engine import HttpFtpEngine
 from .media_engine import MediaEngine
 from .media_models import (
     AuthConfig as MediaAuthConfig,
+)
+from .media_models import (
     AuthMethod as MediaAuthMethod,
+)
+from .media_models import (
     BatchDownloadConfig,
     BatchProgress,
     ChapterInfo,
-    DownloadProgress as MediaDownloadProgress,
-    DownloadStatus as MediaDownloadStatus,
     FormatPreferences,
     MediaConfig,
     MediaFormat,
@@ -20,6 +22,12 @@ from .media_models import (
     ProcessingResult,
     ProcessingStep,
     SubtitleInfo,
+)
+from .media_models import (
+    DownloadProgress as MediaDownloadProgress,
+)
+from .media_models import (
+    DownloadStatus as MediaDownloadStatus,
 )
 from .pycurl_models import (
     AuthConfig,

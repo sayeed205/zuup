@@ -2,11 +2,11 @@
 
 import asyncio
 import logging
-from typing import Any, Dict, List, Optional
-from urllib.parse import urlparse
+from typing import Any
 
 import yt_dlp  # type: ignore[import-untyped]
 
+from .format_selector import FormatSelector, QualityTier
 from .media_models import (
     ChapterInfo,
     FormatPreferences,
@@ -15,7 +15,6 @@ from .media_models import (
     MediaInfo,
     SubtitleInfo,
 )
-from .format_selector import FormatSelector, QualityTier
 from .network_manager import NetworkManager
 
 logger = logging.getLogger(__name__)
@@ -33,17 +32,19 @@ class FormatExtractor:
         """
         self.config = config
         self.format_selector = FormatSelector()
-        
+
         # Initialize network manager for advanced proxy and geo-bypass support
         self.network_manager = NetworkManager(
             network_config=config.network_config,
             proxy_config=config.proxy_config,
             geo_bypass_config=config.geo_bypass_config,
         )
-        
-        logger.info("FormatExtractor initialized with advanced format selection and network management")
 
-    def _create_yt_dlp_options(self, url: str) -> Dict[str, Any]:
+        logger.info(
+            "FormatExtractor initialized with advanced format selection and network management"
+        )
+
+    def _create_yt_dlp_options(self, url: str) -> dict[str, Any]:
         """
         Create yt-dlp options from configuration with advanced network support.
 
@@ -62,7 +63,6 @@ class FormatExtractor:
             "writesubtitles": False,
             "writeinfojson": False,
             "writedescription": False,
-            
             # Extractor arguments
             "extractor_args": self.config.extractor_args,
         }
@@ -110,13 +110,11 @@ class FormatExtractor:
         try:
             # Run yt-dlp extraction in thread pool to avoid blocking
             loop = asyncio.get_event_loop()
-            info_dict = await loop.run_in_executor(
-                None, self._extract_info_sync, url
-            )
+            info_dict = await loop.run_in_executor(None, self._extract_info_sync, url)
 
             # Convert yt-dlp info dict to our MediaInfo model
             media_info = self._parse_info_dict(info_dict)
-            
+
             logger.info(f"Successfully extracted info for: {media_info.title}")
             return media_info
 
@@ -127,7 +125,7 @@ class FormatExtractor:
             logger.error(f"Unexpected error extracting info for {url}: {e}")
             raise RuntimeError(f"Unexpected extraction error: {e}") from e
 
-    def _extract_info_sync(self, url: str) -> Dict[str, Any]:
+    def _extract_info_sync(self, url: str) -> dict[str, Any]:
         """
         Synchronous yt-dlp info extraction with advanced network support.
 
@@ -139,12 +137,12 @@ class FormatExtractor:
         """
         # Create URL-specific options
         yt_dlp_opts = self._create_yt_dlp_options(url)
-        
+
         with yt_dlp.YoutubeDL(yt_dlp_opts) as ydl:
-            result: Dict[str, Any] = ydl.extract_info(url, download=False)
+            result: dict[str, Any] = ydl.extract_info(url, download=False)
             return result
 
-    def _parse_info_dict(self, info_dict: Dict[str, Any]) -> MediaInfo:
+    def _parse_info_dict(self, info_dict: dict[str, Any]) -> MediaInfo:
         """
         Parse yt-dlp info dictionary into MediaInfo model.
 
@@ -170,10 +168,10 @@ class FormatExtractor:
 
         # Parse formats
         formats = self._parse_formats(info_dict.get("formats", []))
-        
+
         # Parse subtitles
         subtitles = self._parse_subtitles(info_dict.get("subtitles", {}))
-        
+
         # Parse chapters
         chapters = self._parse_chapters(info_dict.get("chapters", []))
 
@@ -199,7 +197,7 @@ class FormatExtractor:
             is_playlist=is_playlist,
         )
 
-    def _parse_formats(self, formats_list: List[Dict[str, Any]]) -> List[MediaFormat]:
+    def _parse_formats(self, formats_list: list[dict[str, Any]]) -> list[MediaFormat]:
         """
         Parse yt-dlp formats list into MediaFormat objects.
 
@@ -210,7 +208,7 @@ class FormatExtractor:
             List of MediaFormat objects
         """
         formats = []
-        
+
         for fmt in formats_list:
             try:
                 media_format = MediaFormat(
@@ -231,12 +229,16 @@ class FormatExtractor:
                 )
                 formats.append(media_format)
             except Exception as e:
-                logger.warning(f"Failed to parse format {fmt.get('format_id', 'unknown')}: {e}")
+                logger.warning(
+                    f"Failed to parse format {fmt.get('format_id', 'unknown')}: {e}"
+                )
                 continue
 
         return formats
 
-    def _parse_subtitles(self, subtitles_dict: Dict[str, List[Dict[str, Any]]]) -> Dict[str, List[SubtitleInfo]]:
+    def _parse_subtitles(
+        self, subtitles_dict: dict[str, list[dict[str, Any]]]
+    ) -> dict[str, list[SubtitleInfo]]:
         """
         Parse yt-dlp subtitles dictionary into SubtitleInfo objects.
 
@@ -247,7 +249,7 @@ class FormatExtractor:
             Dictionary mapping language codes to lists of SubtitleInfo objects
         """
         parsed_subtitles = {}
-        
+
         for lang, sub_list in subtitles_dict.items():
             parsed_list = []
             for sub in sub_list:
@@ -262,13 +264,13 @@ class FormatExtractor:
                 except Exception as e:
                     logger.warning(f"Failed to parse subtitle for language {lang}: {e}")
                     continue
-            
+
             if parsed_list:
                 parsed_subtitles[lang] = parsed_list
 
         return parsed_subtitles
 
-    def _parse_chapters(self, chapters_list: List[Dict[str, Any]]) -> List[ChapterInfo]:
+    def _parse_chapters(self, chapters_list: list[dict[str, Any]]) -> list[ChapterInfo]:
         """
         Parse yt-dlp chapters list into ChapterInfo objects.
 
@@ -279,7 +281,7 @@ class FormatExtractor:
             List of ChapterInfo objects
         """
         chapters = []
-        
+
         for chapter in chapters_list:
             try:
                 chapter_info = ChapterInfo(
@@ -289,12 +291,14 @@ class FormatExtractor:
                 )
                 chapters.append(chapter_info)
             except Exception as e:
-                logger.warning(f"Failed to parse chapter {chapter.get('title', 'unknown')}: {e}")
+                logger.warning(
+                    f"Failed to parse chapter {chapter.get('title', 'unknown')}: {e}"
+                )
                 continue
 
         return chapters
 
-    async def get_formats(self, url: str) -> List[MediaFormat]:
+    async def get_formats(self, url: str) -> list[MediaFormat]:
         """
         Get available formats for a URL.
 
@@ -308,9 +312,7 @@ class FormatExtractor:
         return media_info.formats
 
     def select_format(
-        self, 
-        formats: List[MediaFormat], 
-        preferences: Optional[FormatPreferences] = None
+        self, formats: list[MediaFormat], preferences: FormatPreferences | None = None
     ) -> MediaFormat:
         """
         Select the best format using advanced quality control.
@@ -330,8 +332,10 @@ class FormatExtractor:
 
         # Use provided preferences or fall back to config preferences
         prefs = preferences or self.config.format_preferences
-        
-        logger.info(f"Selecting format from {len(formats)} available formats using advanced selection")
+
+        logger.info(
+            f"Selecting format from {len(formats)} available formats using advanced selection"
+        )
 
         # Use advanced format selector
         try:
@@ -339,26 +343,28 @@ class FormatExtractor:
             target_quality = None
             if prefs.target_quality:
                 target_quality = QualityTier(prefs.target_quality)
-            
+
             selected_format = self.format_selector.select_optimal_format(
                 formats=formats,
                 preferences=prefs,
                 target_quality=target_quality,
-                adaptive=prefs.adaptive_quality
+                adaptive=prefs.adaptive_quality,
             )
-            
-            logger.info(f"Selected format: {selected_format.format_id} ({selected_format.ext})")
+
+            logger.info(
+                f"Selected format: {selected_format.format_id} ({selected_format.ext})"
+            )
             return selected_format
-            
+
         except Exception as e:
-            logger.warning(f"Advanced format selection failed: {e}, falling back to basic selection")
+            logger.warning(
+                f"Advanced format selection failed: {e}, falling back to basic selection"
+            )
             return self._fallback_format_selection(formats, prefs)
 
     def _filter_formats(
-        self, 
-        formats: List[MediaFormat], 
-        preferences: FormatPreferences
-    ) -> List[MediaFormat]:
+        self, formats: list[MediaFormat], preferences: FormatPreferences
+    ) -> list[MediaFormat]:
         """
         Filter formats based on preferences.
 
@@ -380,19 +386,24 @@ class FormatExtractor:
         # Filter by maximum dimensions
         if preferences.max_height:
             filtered = [
-                f for f in filtered 
-                if not f.resolution or (
-                    (height := self._get_height_from_resolution(f.resolution)) is not None and
-                    height <= preferences.max_height
+                f
+                for f in filtered
+                if not f.resolution
+                or (
+                    (height := self._get_height_from_resolution(f.resolution))
+                    is not None
+                    and height <= preferences.max_height
                 )
             ]
 
         if preferences.max_width:
             filtered = [
-                f for f in filtered 
-                if not f.resolution or (
-                    (width := self._get_width_from_resolution(f.resolution)) is not None and
-                    width <= preferences.max_width
+                f
+                for f in filtered
+                if not f.resolution
+                or (
+                    (width := self._get_width_from_resolution(f.resolution)) is not None
+                    and width <= preferences.max_width
                 )
             ]
 
@@ -400,8 +411,17 @@ class FormatExtractor:
         if preferences.preferred_codecs:
             codec_filtered = []
             for fmt in filtered:
-                if (fmt.vcodec and any(codec in fmt.vcodec for codec in preferences.preferred_codecs)) or \
-                   (fmt.acodec and any(codec in fmt.acodec for codec in preferences.preferred_codecs)):
+                if (
+                    fmt.vcodec
+                    and any(
+                        codec in fmt.vcodec for codec in preferences.preferred_codecs
+                    )
+                ) or (
+                    fmt.acodec
+                    and any(
+                        codec in fmt.acodec for codec in preferences.preferred_codecs
+                    )
+                ):
                     codec_filtered.append(fmt)
             if codec_filtered:
                 filtered = codec_filtered
@@ -409,8 +429,7 @@ class FormatExtractor:
         # Filter by preferred containers
         if preferences.preferred_containers:
             container_filtered = [
-                f for f in filtered 
-                if f.ext in preferences.preferred_containers
+                f for f in filtered if f.ext in preferences.preferred_containers
             ]
             if container_filtered:
                 filtered = container_filtered
@@ -418,10 +437,17 @@ class FormatExtractor:
         # Filter by free formats preference
         if preferences.prefer_free_formats:
             free_formats = [
-                f for f in filtered 
-                if f.ext in ("webm", "ogg", "opus", "flac") or
-                   (f.vcodec and any(codec in f.vcodec for codec in ("vp8", "vp9", "av01"))) or
-                   (f.acodec and any(codec in f.acodec for codec in ("vorbis", "opus", "flac")))
+                f
+                for f in filtered
+                if f.ext in ("webm", "ogg", "opus", "flac")
+                or (
+                    f.vcodec
+                    and any(codec in f.vcodec for codec in ("vp8", "vp9", "av01"))
+                )
+                or (
+                    f.acodec
+                    and any(codec in f.acodec for codec in ("vorbis", "opus", "flac"))
+                )
             ]
             if free_formats:
                 filtered = free_formats
@@ -429,9 +455,7 @@ class FormatExtractor:
         return filtered
 
     def _select_best_format(
-        self, 
-        formats: List[MediaFormat], 
-        preferences: FormatPreferences
+        self, formats: list[MediaFormat], preferences: FormatPreferences
     ) -> MediaFormat:
         """
         Select the best format from a filtered list.
@@ -443,29 +467,30 @@ class FormatExtractor:
         Returns:
             Best format based on quality and preferences
         """
+
         # Sort formats by quality metrics
         def format_score(fmt: MediaFormat) -> tuple[int, float, int, float, float]:
             """Calculate format score for sorting."""
             # Primary: explicit preference value (higher is better)
             preference_score = fmt.preference or 0
-            
+
             # Secondary: quality value (higher is better)
             quality_score = fmt.quality or 0
-            
+
             # Tertiary: resolution (higher is better)
             resolution_score = 0
             if fmt.resolution:
                 height = self._get_height_from_resolution(fmt.resolution)
                 if height:
                     resolution_score = height
-            
+
             # Quaternary: bitrate (higher is better)
             bitrate_score = 0.0
             if fmt.vbr:
                 bitrate_score += fmt.vbr
             if fmt.abr:
                 bitrate_score += fmt.abr
-            
+
             # Quinary: filesize (smaller is better for tie-breaking)
             filesize_score = 0.0
             if fmt.filesize:
@@ -473,19 +498,25 @@ class FormatExtractor:
             elif fmt.filesize_approx:
                 filesize_score = -float(fmt.filesize_approx)
 
-            return (preference_score, quality_score, resolution_score, bitrate_score, filesize_score)
+            return (
+                preference_score,
+                quality_score,
+                resolution_score,
+                bitrate_score,
+                filesize_score,
+            )
 
         # Sort by score (descending)
         sorted_formats = sorted(formats, key=format_score, reverse=True)
-        
+
         return sorted_formats[0]
 
     def select_audio_only_format(
         self,
-        formats: List[MediaFormat],
-        preferences: Optional[FormatPreferences] = None,
-        target_bitrate: Optional[int] = None,
-        allow_conversion: bool = True
+        formats: list[MediaFormat],
+        preferences: FormatPreferences | None = None,
+        target_bitrate: int | None = None,
+        allow_conversion: bool = True,
     ) -> MediaFormat:
         """
         Select optimal audio-only format with advanced quality control and conversion support.
@@ -506,35 +537,41 @@ class FormatExtractor:
             raise ValueError("No formats available for audio selection")
 
         prefs = preferences or self.config.format_preferences
-        
+
         # Use target bitrate from preferences if not specified
         if target_bitrate is None:
             target_bitrate = prefs.target_audio_bitrate
-        
-        logger.info(f"Selecting audio-only format from {len(formats)} available formats")
+
+        logger.info(
+            f"Selecting audio-only format from {len(formats)} available formats"
+        )
 
         try:
             selected_format = self.format_selector.select_audio_only_format(
                 formats=formats,
                 preferences=prefs,
                 target_bitrate=target_bitrate,
-                allow_conversion=allow_conversion
+                allow_conversion=allow_conversion,
             )
-            
-            logger.info(f"Selected audio format: {selected_format.format_id} "
-                       f"({selected_format.ext}, {selected_format.abr or 'unknown'} kbps)")
+
+            logger.info(
+                f"Selected audio format: {selected_format.format_id} "
+                f"({selected_format.ext}, {selected_format.abr or 'unknown'} kbps)"
+            )
             return selected_format
-            
+
         except Exception as e:
-            logger.warning(f"Advanced audio selection failed: {e}, falling back to basic selection")
+            logger.warning(
+                f"Advanced audio selection failed: {e}, falling back to basic selection"
+            )
             return self._fallback_audio_selection(formats, prefs)
 
     def get_quality_alternatives(
         self,
-        formats: List[MediaFormat],
+        formats: list[MediaFormat],
         current_format: MediaFormat,
-        direction: str = "lower"
-    ) -> List[MediaFormat]:
+        direction: str = "lower",
+    ) -> list[MediaFormat]:
         """
         Get quality alternatives for adaptive selection.
 
@@ -546,23 +583,23 @@ class FormatExtractor:
         Returns:
             List of alternative formats ordered by preference
         """
-        logger.info(f"Finding {direction} quality alternatives for {current_format.format_id}")
-        
+        logger.info(
+            f"Finding {direction} quality alternatives for {current_format.format_id}"
+        )
+
         try:
             alternatives = self.format_selector.get_quality_alternatives(
-                formats=formats,
-                current_format=current_format,
-                direction=direction
+                formats=formats, current_format=current_format, direction=direction
             )
-            
+
             logger.info(f"Found {len(alternatives)} {direction} quality alternatives")
             return alternatives
-            
+
         except Exception as e:
             logger.error(f"Failed to get quality alternatives: {e}")
             return []
 
-    def analyze_available_formats(self, formats: List[MediaFormat]) -> Dict[str, Any]:
+    def analyze_available_formats(self, formats: list[MediaFormat]) -> dict[str, Any]:
         """
         Analyze format distribution for debugging and optimization.
 
@@ -576,9 +613,9 @@ class FormatExtractor:
 
     def select_format_with_fallback(
         self,
-        formats: List[MediaFormat],
-        preferences: Optional[FormatPreferences] = None,
-        max_attempts: int = 3
+        formats: list[MediaFormat],
+        preferences: FormatPreferences | None = None,
+        max_attempts: int = 3,
     ) -> MediaFormat:
         """
         Select format with automatic quality fallback on failure.
@@ -595,100 +632,97 @@ class FormatExtractor:
             ValueError: If no suitable format found after all attempts
         """
         prefs = preferences or self.config.format_preferences
-        
+
         if not prefs.quality_fallback:
             return self.select_format(formats, preferences)
-        
+
         logger.info("Selecting format with quality fallback enabled")
-        
+
         # Try original selection first
         try:
             return self.select_format(formats, preferences)
         except Exception as e:
             logger.warning(f"Primary format selection failed: {e}")
-        
+
         # Try with progressively lower quality targets
         quality_fallback_order = [
             QualityTier.HIGH,
             QualityTier.MEDIUM,
             QualityTier.LOW,
-            QualityTier.VERY_LOW
+            QualityTier.VERY_LOW,
         ]
-        
+
         for attempt, fallback_quality in enumerate(quality_fallback_order):
             if attempt >= max_attempts - 1:
                 break
-                
+
             try:
-                logger.info(f"Attempting fallback with {fallback_quality.value} quality")
-                
+                logger.info(
+                    f"Attempting fallback with {fallback_quality.value} quality"
+                )
+
                 # Create modified preferences with lower quality target
                 fallback_prefs = prefs.model_copy()
                 fallback_prefs.target_quality = fallback_quality.value
-                
+
                 return self.format_selector.select_optimal_format(
                     formats=formats,
                     preferences=fallback_prefs,
                     target_quality=fallback_quality,
-                    adaptive=True
+                    adaptive=True,
                 )
-                
+
             except Exception as e:
                 logger.warning(f"Fallback attempt {attempt + 1} failed: {e}")
                 continue
-        
+
         # Final fallback to basic selection
         logger.warning("All quality fallbacks failed, using basic selection")
         return self._fallback_format_selection(formats, prefs)
 
     def _fallback_format_selection(
-        self,
-        formats: List[MediaFormat],
-        preferences: FormatPreferences
+        self, formats: list[MediaFormat], preferences: FormatPreferences
     ) -> MediaFormat:
         """Fallback to basic format selection when advanced selection fails."""
         logger.info("Using fallback format selection")
-        
+
         # Filter formats based on basic preferences
         filtered_formats = self._filter_formats(formats, preferences)
-        
+
         if not filtered_formats:
             logger.warning("No formats match preferences, using all formats")
             filtered_formats = formats
 
         # Select best format from filtered list using basic scoring
         selected_format = self._select_best_format(filtered_formats, preferences)
-        
+
         return selected_format
 
     def _fallback_audio_selection(
-        self,
-        formats: List[MediaFormat],
-        preferences: FormatPreferences
+        self, formats: list[MediaFormat], preferences: FormatPreferences
     ) -> MediaFormat:
         """Fallback to basic audio format selection."""
         logger.info("Using fallback audio format selection")
-        
+
         # Filter to audio formats
         audio_formats = [
-            fmt for fmt in formats
-            if fmt.acodec is not None and fmt.acodec != "none"
+            fmt for fmt in formats if fmt.acodec is not None and fmt.acodec != "none"
         ]
-        
+
         if not audio_formats:
             raise ValueError("No audio formats available")
-        
+
         # Prefer audio-only formats
         audio_only = [fmt for fmt in audio_formats if fmt.vcodec in (None, "none")]
         if audio_only:
             audio_formats = audio_only
-        
+
         # Sort by audio bitrate (higher is better)
         audio_formats.sort(key=lambda x: x.abr or 0, reverse=True)
-        
+
         return audio_formats[0]
 
-    def _get_height_from_resolution(self, resolution: str) -> Optional[int]:
+    def _get_height_from_resolution(self, resolution: str) -> int | None:
         """
         Extract height from resolution string.
 
@@ -711,7 +745,7 @@ class FormatExtractor:
         except (ValueError, IndexError):
             return None
 
-    def _get_width_from_resolution(self, resolution: str) -> Optional[int]:
+    def _get_width_from_resolution(self, resolution: str) -> int | None:
         """
         Extract width from resolution string.
 
@@ -751,8 +785,10 @@ class FormatExtractor:
 
         # Check for known problematic codecs
         problematic_codecs = ["none", "unknown"]
-        if (format_obj.vcodec in problematic_codecs and 
-            format_obj.acodec in problematic_codecs):
+        if (
+            format_obj.vcodec in problematic_codecs
+            and format_obj.acodec in problematic_codecs
+        ):
             logger.warning(f"Format {format_obj.format_id} has problematic codecs")
             return False
 
@@ -765,10 +801,8 @@ class FormatExtractor:
         return True
 
     def get_fallback_formats(
-        self, 
-        formats: List[MediaFormat], 
-        failed_format: MediaFormat
-    ) -> List[MediaFormat]:
+        self, formats: list[MediaFormat], failed_format: MediaFormat
+    ) -> list[MediaFormat]:
         """
         Get fallback formats when primary format fails.
 
@@ -779,36 +813,46 @@ class FormatExtractor:
         Returns:
             List of fallback formats, ordered by preference
         """
-        logger.info(f"Finding fallback formats for failed format: {failed_format.format_id}")
+        logger.info(
+            f"Finding fallback formats for failed format: {failed_format.format_id}"
+        )
 
         # Remove the failed format from consideration
-        available_formats = [f for f in formats if f.format_id != failed_format.format_id]
-        
+        available_formats = [
+            f for f in formats if f.format_id != failed_format.format_id
+        ]
+
         if not available_formats:
             return []
 
         # Prefer formats with similar characteristics
         fallback_formats = []
-        
+
         # First, try formats with same container
         same_container = [f for f in available_formats if f.ext == failed_format.ext]
         fallback_formats.extend(same_container)
-        
+
         # Then, try formats with similar codecs
         if failed_format.vcodec:
             similar_vcodec = [
-                f for f in available_formats 
-                if f.vcodec and f.vcodec == failed_format.vcodec and f not in fallback_formats
+                f
+                for f in available_formats
+                if f.vcodec
+                and f.vcodec == failed_format.vcodec
+                and f not in fallback_formats
             ]
             fallback_formats.extend(similar_vcodec)
-        
+
         if failed_format.acodec:
             similar_acodec = [
-                f for f in available_formats 
-                if f.acodec and f.acodec == failed_format.acodec and f not in fallback_formats
+                f
+                for f in available_formats
+                if f.acodec
+                and f.acodec == failed_format.acodec
+                and f not in fallback_formats
             ]
             fallback_formats.extend(similar_acodec)
-        
+
         # Finally, add remaining formats sorted by quality
         remaining_formats = [f for f in available_formats if f not in fallback_formats]
         remaining_formats.sort(key=lambda x: x.quality or 0, reverse=True)
@@ -839,10 +883,10 @@ class FormatExtractor:
 
     def select_adaptive_quality_format(
         self,
-        formats: List[MediaFormat],
-        preferences: Optional[FormatPreferences] = None,
-        available_bandwidth: Optional[float] = None,
-        device_capabilities: Optional[Dict[str, Any]] = None
+        formats: list[MediaFormat],
+        preferences: FormatPreferences | None = None,
+        available_bandwidth: float | None = None,
+        device_capabilities: dict[str, Any] | None = None,
     ) -> MediaFormat:
         """
         Select format using adaptive quality selection based on available formats and conditions.
@@ -863,7 +907,7 @@ class FormatExtractor:
             raise ValueError("No formats available for adaptive selection")
 
         prefs = preferences or self.config.format_preferences
-        
+
         logger.info("Performing adaptive quality format selection")
 
         try:
@@ -871,17 +915,19 @@ class FormatExtractor:
                 formats=formats,
                 preferences=prefs,
                 available_bandwidth=available_bandwidth,
-                device_capabilities=device_capabilities
+                device_capabilities=device_capabilities,
             )
         except Exception as e:
-            logger.warning(f"Adaptive quality selection failed: {e}, falling back to standard selection")
+            logger.warning(
+                f"Adaptive quality selection failed: {e}, falling back to standard selection"
+            )
             return self.select_format(formats, preferences)
 
     def get_format_conversion_requirements(
-        self, 
-        selected_format: MediaFormat, 
-        target_preferences: Optional[FormatPreferences] = None
-    ) -> Dict[str, Any]:
+        self,
+        selected_format: MediaFormat,
+        target_preferences: FormatPreferences | None = None,
+    ) -> dict[str, Any]:
         """
         Determine what format conversion is needed for the selected format.
 
@@ -893,16 +939,16 @@ class FormatExtractor:
             Dictionary describing conversion requirements
         """
         prefs = target_preferences or self.config.format_preferences
-        
+
         return self.format_selector.get_format_conversion_requirements(
             selected_format, prefs
         )
 
     def select_format_for_bandwidth(
         self,
-        formats: List[MediaFormat],
+        formats: list[MediaFormat],
         available_bandwidth: float,
-        preferences: Optional[FormatPreferences] = None
+        preferences: FormatPreferences | None = None,
     ) -> MediaFormat:
         """
         Select optimal format based on available bandwidth.
@@ -922,7 +968,7 @@ class FormatExtractor:
             raise ValueError("No formats available for bandwidth-based selection")
 
         prefs = preferences or self.config.format_preferences
-        
+
         logger.info(f"Selecting format for bandwidth: {available_bandwidth:.0f} B/s")
 
         # Use the enhanced format selector with connection speed
@@ -932,18 +978,20 @@ class FormatExtractor:
                 preferences=prefs,
                 target_quality=None,  # Let it auto-determine
                 adaptive=True,
-                connection_speed=available_bandwidth
+                connection_speed=available_bandwidth,
             )
         except Exception as e:
-            logger.warning(f"Bandwidth-based selection failed: {e}, falling back to standard selection")
+            logger.warning(
+                f"Bandwidth-based selection failed: {e}, falling back to standard selection"
+            )
             return self.select_format(formats, preferences)
 
     def get_quality_alternatives_for_format(
         self,
-        formats: List[MediaFormat],
+        formats: list[MediaFormat],
         current_format: MediaFormat,
-        direction: str = "lower"
-    ) -> List[MediaFormat]:
+        direction: str = "lower",
+    ) -> list[MediaFormat]:
         """
         Get quality alternatives for adaptive selection during downloads.
 
@@ -955,23 +1003,23 @@ class FormatExtractor:
         Returns:
             List of alternative formats ordered by preference
         """
-        logger.info(f"Finding {direction} quality alternatives for format {current_format.format_id}")
-        
+        logger.info(
+            f"Finding {direction} quality alternatives for format {current_format.format_id}"
+        )
+
         try:
             alternatives = self.format_selector.get_quality_alternatives(
-                formats=formats,
-                current_format=current_format,
-                direction=direction
+                formats=formats, current_format=current_format, direction=direction
             )
-            
+
             logger.info(f"Found {len(alternatives)} {direction} quality alternatives")
             return alternatives
-            
+
         except Exception as e:
             logger.error(f"Failed to get quality alternatives: {e}")
             return []
 
-    def get_supported_sites(self) -> List[str]:
+    def get_supported_sites(self) -> list[str]:
         """
         Get list of sites supported by yt-dlp.
 
@@ -981,13 +1029,13 @@ class FormatExtractor:
         try:
             # Get all extractor classes
             extractors = yt_dlp.extractor.gen_extractors()
-            
+
             # Extract site names (IE_NAME attribute)
             sites = []
             for extractor in extractors:
-                if hasattr(extractor, 'IE_NAME') and extractor.IE_NAME:
+                if hasattr(extractor, "IE_NAME") and extractor.IE_NAME:
                     sites.append(extractor.IE_NAME)
-            
+
             return sorted(set(sites))
         except Exception as e:
             logger.error(f"Failed to get supported sites: {e}")

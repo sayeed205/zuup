@@ -85,8 +85,12 @@ class ProgressInfo(BaseModel):
     def validate_progress_consistency(self) -> "ProgressInfo":
         """Validate progress information consistency."""
         # Ensure downloaded bytes doesn't exceed total bytes
-        if (self.total_bytes is not None and self.total_bytes > 0 and 
-            self.downloaded_bytes is not None and self.downloaded_bytes > self.total_bytes):
+        if (
+            self.total_bytes is not None
+            and self.total_bytes > 0
+            and self.downloaded_bytes is not None
+            and self.downloaded_bytes > self.total_bytes
+        ):
             raise ValueError("Downloaded bytes cannot exceed total bytes")
 
         # Validate peer relationships

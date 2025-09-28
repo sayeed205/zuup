@@ -5,23 +5,23 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator
 import logging
-import time
-from typing import Any, Optional
 from pathlib import Path
+import time
+from typing import Any
 
 import pycurl
 
+from .adaptive_scaling import create_balanced_scaler
+from .bandwidth_manager import AllocationAlgorithm, EnhancedBandwidthManager
+from .connection_pool import get_global_pool
 from .curl_worker import CurlWorker
+from .pycurl_logging import LogLevel
 from .pycurl_models import (
     DownloadSegment,
     HttpFtpConfig,
     WorkerProgress,
     WorkerStatus,
 )
-from .pycurl_logging import LogLevel
-from .connection_pool import get_global_pool
-from .adaptive_scaling import AdaptiveConnectionScaler, create_balanced_scaler
-from .bandwidth_manager import EnhancedBandwidthManager, AllocationAlgorithm
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +33,7 @@ class ConnectionManager:
     """Manages multiple curl connections for parallel downloads with performance optimizations."""
 
     def __init__(
-        self, 
+        self,
         config: HttpFtpConfig,
         enable_adaptive_scaling: bool = True,
         enable_connection_pooling: bool = True,
@@ -146,10 +146,10 @@ class ConnectionManager:
             logger.warning(f"Failed to setup curl sharing: {e}")
 
     async def create_workers(
-        self, 
-        segments: list[DownloadSegment], 
+        self,
+        segments: list[DownloadSegment],
         log_level: LogLevel = LogLevel.BASIC,
-        log_dir: Optional[Path] = None,
+        log_dir: Path | None = None,
     ) -> list[CurlWorker]:
         """
         Create workers for downloading segments.
@@ -178,8 +178,8 @@ class ConnectionManager:
             for segment in segments:
                 # Create worker with shared curl handle and logging configuration
                 worker = CurlWorker(
-                    segment=segment, 
-                    config=self.config, 
+                    segment=segment,
+                    config=self.config,
                     curl_share=self.curl_share,
                     log_level=log_level,
                     log_dir=log_dir,
@@ -198,7 +198,9 @@ class ConnectionManager:
             # Allocate bandwidth among workers
             self._allocate_bandwidth(workers)
 
-            logger.info(f"Created {len(workers)} workers for parallel download with {log_level.value} logging")
+            logger.info(
+                f"Created {len(workers)} workers for parallel download with {log_level.value} logging"
+            )
             return workers
 
         except Exception as e:
@@ -237,7 +239,7 @@ class ConnectionManager:
                     f"Allocated {limit} bytes/sec to worker {worker.worker_id}"
                 )
                 # Apply bandwidth limit to worker if supported
-                if hasattr(worker, 'set_bandwidth_limit'):
+                if hasattr(worker, "set_bandwidth_limit"):
                     worker.set_bandwidth_limit(limit)
 
     async def monitor_workers(
@@ -267,12 +269,12 @@ class ConnectionManager:
             # Monitor progress while downloads are active
             last_optimization_update = time.time()
             optimization_interval = 10.0  # Update optimizations every 10 seconds
-            
+
             while not self._shutdown_requested and any(
                 not task.done() for task in download_tasks
             ):
                 current_time = time.time()
-                
+
                 # Collect current progress from all workers
                 current_progress = {}
                 worker_speeds = {}
@@ -284,26 +286,26 @@ class ConnectionManager:
 
                 # Update bandwidth allocation based on current speeds
                 allocations = self.bandwidth_manager.allocate_bandwidth(worker_speeds)
-                
+
                 # Apply bandwidth limits to workers
                 for worker in workers:
                     limit = allocations.get(worker.worker_id, 0)
-                    if hasattr(worker, 'set_bandwidth_limit') and limit > 0:
+                    if hasattr(worker, "set_bandwidth_limit") and limit > 0:
                         worker.set_bandwidth_limit(limit)
 
                 # Periodic optimization updates
                 if current_time - last_optimization_update >= optimization_interval:
                     # Update adaptive scaling
                     self._update_adaptive_scaling()
-                    
+
                     # Collect performance metrics
                     metrics = self._collect_performance_metrics()
                     self._performance_samples.append(metrics)
-                    
+
                     # Keep only recent samples (last 100)
                     if len(self._performance_samples) > 100:
                         self._performance_samples = self._performance_samples[-100:]
-                    
+
                     last_optimization_update = current_time
 
                 # Yield progress update
@@ -388,42 +390,42 @@ class ConnectionManager:
 
         # Get scaling recommendation
         recommendation = self.connection_scaler.get_scaling_recommendation()
-        
+
         if recommendation["would_change"]:
             new_connections = recommendation["recommended_connections"]
             reason = recommendation["reason"]
-            
+
             logger.info(
                 f"Adaptive scaling recommendation: {self.max_connections} -> {new_connections} ({reason})"
             )
-            
+
             # Apply scaling decision
             self.connection_scaler.apply_scaling_decision()
-            
+
             # Update max connections (this would affect future worker creation)
             old_max = self.max_connections
             self.max_connections = new_connections
-            
+
             # Update curl multi handle if initialized
             if self.curl_multi:
                 self.curl_multi.setopt(pycurl.M_MAXCONNECTS, new_connections)
-            
+
             logger.info(f"Scaled max connections from {old_max} to {new_connections}")
 
     def _collect_performance_metrics(self) -> dict[str, Any]:
         """Collect comprehensive performance metrics."""
         current_time = time.time()
-        
+
         # Worker metrics
         worker_metrics = {}
         total_speed = 0.0
         active_workers = 0
-        
+
         for worker_id, progress in self._worker_progress.items():
             if progress.status == WorkerStatus.DOWNLOADING:
                 active_workers += 1
                 total_speed += progress.download_speed
-            
+
             worker_metrics[worker_id] = {
                 "status": progress.status.value,
                 "downloaded_bytes": progress.downloaded_bytes,
@@ -431,7 +433,7 @@ class ConnectionManager:
                 "download_speed": progress.download_speed,
                 "progress_percentage": progress.progress_percentage,
             }
-        
+
         # Connection metrics
         connection_metrics = {
             "active_workers": active_workers,
@@ -439,15 +441,15 @@ class ConnectionManager:
             "total_download_speed": total_speed,
             "average_speed_per_worker": total_speed / max(1, active_workers),
         }
-        
+
         # Bandwidth metrics
         bandwidth_stats = self.bandwidth_manager.get_allocation_stats()
-        
+
         # Adaptive scaling metrics
         scaling_stats = {}
         if self.connection_scaler:
             scaling_stats = self.connection_scaler.get_scaling_stats()
-        
+
         return {
             "timestamp": current_time,
             "workers": worker_metrics,
@@ -633,7 +635,7 @@ class ConnectionManager:
                 self.curl_share = None
 
         # Clean up performance optimization components
-        if hasattr(self, 'bandwidth_manager'):
+        if hasattr(self, "bandwidth_manager"):
             # Remove all workers from bandwidth manager
             for worker_id in list(self.bandwidth_manager.allocations.keys()):
                 self.bandwidth_manager.remove_worker(worker_id)
@@ -649,33 +651,39 @@ class ConnectionManager:
         """Cleanup when manager is destroyed."""
         if self.curl_multi or self.curl_share or self.active_workers:
             logger.warning("ConnectionManager destroyed without proper cleanup")
-    def set_worker_log_level(self, log_level: LogLevel, worker_ids: Optional[list[str]] = None) -> None:
+
+    def set_worker_log_level(
+        self, log_level: LogLevel, worker_ids: list[str] | None = None
+    ) -> None:
         """
         Set logging level for specified workers or all workers.
-        
+
         Args:
             log_level: New logging level
             worker_ids: Optional list of worker IDs (None for all workers)
         """
         target_workers = []
-        
+
         if worker_ids:
             target_workers = [
-                worker for worker_id, worker in self.active_workers.items()
+                worker
+                for worker_id, worker in self.active_workers.items()
                 if worker_id in worker_ids
             ]
         else:
             target_workers = list(self.active_workers.values())
-        
+
         for worker in target_workers:
             worker.set_log_level(log_level)
-        
-        logger.info(f"Updated log level to {log_level.value} for {len(target_workers)} workers")
-    
+
+        logger.info(
+            f"Updated log level to {log_level.value} for {len(target_workers)} workers"
+        )
+
     def get_debug_summary(self) -> dict[str, Any]:
         """
         Get comprehensive debug summary from all workers.
-        
+
         Returns:
             Debug summary with worker information
         """
@@ -693,28 +701,38 @@ class ConnectionManager:
                 "total_connection_attempts": 0,
                 "successful_connections": 0,
                 "failed_connections": 0,
-            }
+            },
         }
-        
+
         for worker_id, worker in self.active_workers.items():
             worker_debug = worker.get_debug_summary()
             summary["workers"][worker_id] = worker_debug
-            
+
             # Aggregate statistics
-            summary["aggregated_stats"]["total_errors"] += worker_debug.get("error_count", 0)
-            summary["aggregated_stats"]["total_retries"] += worker_debug.get("retry_count", 0)
-            
+            summary["aggregated_stats"]["total_errors"] += worker_debug.get(
+                "error_count", 0
+            )
+            summary["aggregated_stats"]["total_retries"] += worker_debug.get(
+                "retry_count", 0
+            )
+
             conn_stats = worker_debug.get("connection_stats", {})
-            summary["aggregated_stats"]["total_connection_attempts"] += conn_stats.get("attempts", 0)
-            summary["aggregated_stats"]["successful_connections"] += conn_stats.get("successful", 0)
-            summary["aggregated_stats"]["failed_connections"] += conn_stats.get("failed", 0)
-        
+            summary["aggregated_stats"]["total_connection_attempts"] += conn_stats.get(
+                "attempts", 0
+            )
+            summary["aggregated_stats"]["successful_connections"] += conn_stats.get(
+                "successful", 0
+            )
+            summary["aggregated_stats"]["failed_connections"] += conn_stats.get(
+                "failed", 0
+            )
+
         return summary
-    
+
     def get_performance_metrics(self) -> dict[str, Any]:
         """
         Get performance metrics from all workers.
-        
+
         Returns:
             Performance metrics summary
         """
@@ -725,90 +743,92 @@ class ConnectionManager:
                 "average_speed": 0.0,
                 "total_duration": 0.0,
                 "efficiency_scores": [],
-            }
+            },
         }
-        
+
         total_speed = 0.0
         worker_count = 0
-        
+
         for worker_id, worker in self.active_workers.items():
             worker_metrics = worker.get_performance_metrics()
             metrics["workers"][worker_id] = worker_metrics
-            
+
             # Aggregate metrics
             transfer_info = worker_metrics.get("transfer", {})
             timing_info = worker_metrics.get("timing", {})
-            
-            metrics["aggregated"]["total_downloaded"] += transfer_info.get("downloaded_bytes", 0)
-            
+
+            metrics["aggregated"]["total_downloaded"] += transfer_info.get(
+                "downloaded_bytes", 0
+            )
+
             if transfer_info.get("download_speed", 0) > 0:
                 total_speed += transfer_info["download_speed"]
                 worker_count += 1
-            
+
             if timing_info.get("duration", 0) > 0:
                 metrics["aggregated"]["total_duration"] = max(
-                    metrics["aggregated"]["total_duration"],
-                    timing_info["duration"]
+                    metrics["aggregated"]["total_duration"], timing_info["duration"]
                 )
-            
+
             if transfer_info.get("efficiency", 0) > 0:
-                metrics["aggregated"]["efficiency_scores"].append(transfer_info["efficiency"])
-        
+                metrics["aggregated"]["efficiency_scores"].append(
+                    transfer_info["efficiency"]
+                )
+
         # Calculate averages
         if worker_count > 0:
             metrics["aggregated"]["average_speed"] = total_speed / worker_count
-        
+
         if metrics["aggregated"]["efficiency_scores"]:
-            metrics["aggregated"]["average_efficiency"] = (
-                sum(metrics["aggregated"]["efficiency_scores"]) / 
-                len(metrics["aggregated"]["efficiency_scores"])
-            )
-        
+            metrics["aggregated"]["average_efficiency"] = sum(
+                metrics["aggregated"]["efficiency_scores"]
+            ) / len(metrics["aggregated"]["efficiency_scores"])
+
         return metrics
-    
+
     def generate_debug_commands(self) -> dict[str, str]:
         """
         Generate equivalent curl commands for all workers for debugging.
-        
+
         Returns:
             Dictionary mapping worker IDs to curl commands
         """
         commands = {}
-        
+
         for worker_id, worker in self.active_workers.items():
             try:
                 commands[worker_id] = worker.generate_debug_curl_command()
             except Exception as e:
                 commands[worker_id] = f"Error generating command: {e}"
-        
+
         return commands
-    
+
     def diagnose_connection_issues(self) -> dict[str, Any]:
         """
         Diagnose connection issues across all workers.
-        
+
         Returns:
             Diagnosis information with suggestions
         """
         from .pycurl_logging import CurlDebugUtilities
-        
+
         diagnosis = {
             "overall_health": "healthy",
             "issues_found": [],
             "worker_diagnoses": {},
             "recommendations": [],
         }
-        
+
         failed_workers = 0
         total_workers = len(self.active_workers)
-        
+
         for worker_id, worker in self.active_workers.items():
             worker_debug = worker.get_debug_summary()
-            
+
             # Check for worker issues
             if worker_debug.get("error_count", 0) > 0:
                 failed_workers += 1
-                
+
                 # Get last error for diagnosis
                 last_error = worker_debug.get("last_error")
                 if last_error:
@@ -818,50 +838,61 @@ class ConnectionManager:
                         try:
                             # Extract curl code from error message
                             import re
-                            match = re.search(r'curl code (\d+)', last_error.lower())
+
+                            match = re.search(r"curl code (\d+)", last_error.lower())
                             if match:
                                 curl_code = int(match.group(1))
                         except:
                             pass
-                    
+
                     if curl_code:
                         worker_diagnosis = CurlDebugUtilities.diagnose_connection_error(
                             curl_code, worker.segment.url
                         )
                         diagnosis["worker_diagnoses"][worker_id] = worker_diagnosis
-        
+
         # Determine overall health
         failure_rate = failed_workers / total_workers if total_workers > 0 else 0
-        
+
         if failure_rate == 0:
             diagnosis["overall_health"] = "healthy"
         elif failure_rate < 0.25:
             diagnosis["overall_health"] = "minor_issues"
-            diagnosis["issues_found"].append(f"{failed_workers}/{total_workers} workers have errors")
+            diagnosis["issues_found"].append(
+                f"{failed_workers}/{total_workers} workers have errors"
+            )
         elif failure_rate < 0.75:
             diagnosis["overall_health"] = "degraded"
-            diagnosis["issues_found"].append(f"High failure rate: {failed_workers}/{total_workers} workers failing")
+            diagnosis["issues_found"].append(
+                f"High failure rate: {failed_workers}/{total_workers} workers failing"
+            )
         else:
             diagnosis["overall_health"] = "critical"
-            diagnosis["issues_found"].append(f"Critical failure rate: {failed_workers}/{total_workers} workers failing")
-        
+            diagnosis["issues_found"].append(
+                f"Critical failure rate: {failed_workers}/{total_workers} workers failing"
+            )
+
         # Generate recommendations
         if failure_rate > 0:
-            diagnosis["recommendations"].extend([
-                "Check network connectivity",
-                "Verify server availability",
-                "Review authentication credentials",
-                "Consider reducing concurrent connections",
-                "Check firewall and proxy settings",
-            ])
-        
+            diagnosis["recommendations"].extend(
+                [
+                    "Check network connectivity",
+                    "Verify server availability",
+                    "Review authentication credentials",
+                    "Consider reducing concurrent connections",
+                    "Check firewall and proxy settings",
+                ]
+            )
+
         if failure_rate > 0.5:
-            diagnosis["recommendations"].extend([
-                "Consider switching to single-connection mode",
-                "Increase timeout values",
-                "Check for server-side rate limiting",
-            ])
-        
+            diagnosis["recommendations"].extend(
+                [
+                    "Consider switching to single-connection mode",
+                    "Increase timeout values",
+                    "Check for server-side rate limiting",
+                ]
+            )
+
         return diagnosis
 
     def get_performance_optimization_stats(self) -> dict[str, Any]:
@@ -880,7 +911,9 @@ class ConnectionManager:
         # Add adaptive scaling stats if enabled
         if self.connection_scaler:
             stats["adaptive_scaling"] = self.connection_scaler.get_scaling_stats()
-            stats["scaling_recommendation"] = self.connection_scaler.get_scaling_recommendation()
+            stats["scaling_recommendation"] = (
+                self.connection_scaler.get_scaling_recommendation()
+            )
 
         # Add connection pool stats if enabled
         if self.connection_pool:
@@ -888,7 +921,9 @@ class ConnectionManager:
 
         # Add recent performance samples
         if self._performance_samples:
-            stats["recent_performance"] = self._performance_samples[-10:]  # Last 10 samples
+            stats["recent_performance"] = self._performance_samples[
+                -10:
+            ]  # Last 10 samples
 
         return stats
 
@@ -903,18 +938,22 @@ class ConnectionManager:
         # Bandwidth optimization
         bandwidth_optimization = self.bandwidth_manager.optimize_allocation()
         optimization_results["bandwidth_optimization"] = bandwidth_optimization
-        optimization_results["recommendations"].extend(bandwidth_optimization["suggestions"])
+        optimization_results["recommendations"].extend(
+            bandwidth_optimization["suggestions"]
+        )
 
         # Adaptive scaling optimization
         if self.connection_scaler:
             scaling_recommendation = self.connection_scaler.get_scaling_recommendation()
             if scaling_recommendation["would_change"]:
                 # Apply scaling recommendation
-                new_connections, reason = self.connection_scaler.apply_scaling_decision()
+                new_connections, reason = (
+                    self.connection_scaler.apply_scaling_decision()
+                )
                 optimization_results["optimizations_applied"].append(
                     f"Scaled connections to {new_connections} ({reason})"
                 )
-                
+
                 # Update max connections
                 self.max_connections = new_connections
                 if self.curl_multi:
@@ -934,8 +973,10 @@ class ConnectionManager:
         """Change the bandwidth allocation algorithm."""
         old_algorithm = self.bandwidth_manager.algorithm
         self.bandwidth_manager.algorithm = algorithm
-        
-        logger.info(f"Changed bandwidth algorithm from {old_algorithm.value} to {algorithm.value}")
+
+        logger.info(
+            f"Changed bandwidth algorithm from {old_algorithm.value} to {algorithm.value}"
+        )
 
     def enable_aggressive_scaling(self) -> None:
         """Enable aggressive adaptive scaling."""
@@ -952,42 +993,49 @@ class ConnectionManager:
     def force_connection_count(self, count: int, reason: str = "manual") -> None:
         """Force a specific connection count."""
         count = max(1, min(count, 32))  # Reasonable bounds
-        
+
         if self.connection_scaler:
             self.connection_scaler.force_scale_to(count, reason)
-        
+
         self.max_connections = count
         if self.curl_multi:
             self.curl_multi.setopt(pycurl.M_MAXCONNECTS, count)
-        
+
         logger.info(f"Forced connection count to {count} ({reason})")
 
     def get_optimization_recommendations(self) -> list[str]:
         """Get performance optimization recommendations."""
         recommendations = []
-        
+
         # Analyze current performance
         if self._performance_samples:
             recent_samples = self._performance_samples[-10:]
-            
+
             # Check for consistent low speeds
-            avg_speeds = [s["connections"]["total_download_speed"] for s in recent_samples]
-            if avg_speeds and sum(avg_speeds) / len(avg_speeds) < 100 * 1024:  # < 100KB/s
-                recommendations.append("Low download speeds detected - consider checking network connectivity")
-            
+            avg_speeds = [
+                s["connections"]["total_download_speed"] for s in recent_samples
+            ]
+            if (
+                avg_speeds and sum(avg_speeds) / len(avg_speeds) < 100 * 1024
+            ):  # < 100KB/s
+                recommendations.append(
+                    "Low download speeds detected - consider checking network connectivity"
+                )
+
             # Check for high error rates
             error_rates = []
             for sample in recent_samples:
                 failed_workers = sum(
-                    1 for w in sample["workers"].values() 
-                    if w["status"] == "failed"
+                    1 for w in sample["workers"].values() if w["status"] == "failed"
                 )
                 total_workers = len(sample["workers"])
                 if total_workers > 0:
                     error_rates.append(failed_workers / total_workers)
-            
+
             if error_rates and sum(error_rates) / len(error_rates) > 0.2:
-                recommendations.append("High error rate detected - consider reducing connection count")
+                recommendations.append(
+                    "High error rate detected - consider reducing connection count"
+                )
 
         # Bandwidth management recommendations
         bandwidth_optimization = self.bandwidth_manager.optimize_allocation()
@@ -997,6 +1045,8 @@ class ConnectionManager:
         if self.connection_pool:
             pool_stats = self.connection_pool.get_stats()
             if pool_stats["reuse_rate"] < 0.2:
-                recommendations.append("Consider increasing connection pool size for better reuse")
+                recommendations.append(
+                    "Consider increasing connection pool size for better reuse"
+                )
 
         return recommendations

@@ -215,14 +215,15 @@ class DownloadProgress(BaseModel):
     def validate_progress_consistency(self) -> "DownloadProgress":
         """Validate progress information consistency."""
         # Ensure downloaded bytes doesn't exceed total bytes
-        if (self.total_bytes is not None and
-            self.downloaded_bytes > self.total_bytes):
+        if self.total_bytes is not None and self.downloaded_bytes > self.total_bytes:
             raise ValueError("Downloaded bytes cannot exceed total bytes")
 
         # Validate fragment relationships
-        if (self.fragment_index is not None and
-            self.fragment_count is not None and
-            self.fragment_index > self.fragment_count):
+        if (
+            self.fragment_index is not None
+            and self.fragment_count is not None
+            and self.fragment_index > self.fragment_count
+        ):
             raise ValueError("Fragment index cannot exceed fragment count")
 
         return self
@@ -306,8 +307,10 @@ class BatchProgress(BaseModel):
             raise ValueError("Completed + failed items cannot exceed total items")
 
         # Validate overall bytes consistency
-        if (self.overall_total_bytes is not None and
-            self.overall_downloaded_bytes > self.overall_total_bytes):
+        if (
+            self.overall_total_bytes is not None
+            and self.overall_downloaded_bytes > self.overall_total_bytes
+        ):
             raise ValueError("Overall downloaded bytes cannot exceed total bytes")
 
         return self
@@ -337,7 +340,7 @@ class AuthMethod(Enum):
 
 class ProxyType(Enum):
     """Proxy type enumeration."""
-    
+
     HTTP = "http"
     HTTPS = "https"
     SOCKS4 = "socks4"
@@ -346,24 +349,24 @@ class ProxyType(Enum):
 
 class ProxyConfig(BaseModel):
     """Advanced proxy configuration for geo-bypass and network routing."""
-    
+
     # Basic proxy settings
     proxy_url: str | None = None
     proxy_type: ProxyType = ProxyType.HTTP
-    
+
     # Proxy authentication
     proxy_username: str | None = None
     proxy_password: str | None = None
-    
+
     # Proxy rotation and fallback
     proxy_list: list[str] = Field(default_factory=list)
     enable_proxy_rotation: bool = False
     proxy_rotation_interval: int = 10  # requests before rotation
-    
+
     # Proxy testing and validation
     test_proxy_connectivity: bool = True
     proxy_timeout: float = 10.0
-    
+
     # Geo-bypass specific settings
     geo_bypass_proxy: str | None = None  # Specific proxy for geo-blocked content
     auto_detect_geo_blocking: bool = True
@@ -390,55 +393,61 @@ class ProxyConfig(BaseModel):
         # If proxy rotation is enabled, ensure proxy list is provided
         if self.enable_proxy_rotation and not self.proxy_list:
             raise ValueError("Proxy list required when proxy rotation is enabled")
-        
+
         # If proxy authentication is provided, ensure proxy URL is set
         if (self.proxy_username or self.proxy_password) and not self.proxy_url:
             raise ValueError("Proxy URL required when proxy authentication is provided")
-        
+
         return self
 
 
 class NetworkConfig(BaseModel):
     """Advanced network configuration for timeouts, retries, and headers."""
-    
+
     # Timeout settings
     socket_timeout: int = 30
     read_timeout: int = 60
     connect_timeout: int = 30
-    
+
     # Retry configuration
     retries: int = 10
     fragment_retries: int = 10
     retry_sleep: float = 1.0
     max_retry_sleep: float = 60.0
     retry_backoff_factor: float = 2.0
-    
+
     # Rate limiting and delays
     sleep_interval: float = 0.0
     max_sleep_interval: float = 5.0
     sleep_interval_subtitles: float = 0.0
-    
+
     # User agent and headers
     user_agent: str | None = None
     custom_headers: dict[str, str] = Field(default_factory=dict)
     referer: str | None = None
-    
+
     # Platform-specific user agents
     platform_user_agents: dict[str, str] = Field(default_factory=dict)
     rotate_user_agents: bool = False
-    
+
     # Connection settings
     prefer_ipv4: bool = False
     prefer_ipv6: bool = False
     source_address: str | None = None
-    
+
     # SSL/TLS settings
     no_check_certificate: bool = False
     client_certificate: str | None = None
     client_certificate_key: str | None = None
     client_certificate_password: str | None = None
 
-    @field_validator("socket_timeout", "read_timeout", "connect_timeout", "retries", "fragment_retries")
+    @field_validator(
+        "socket_timeout",
+        "read_timeout",
+        "connect_timeout",
+        "retries",
+        "fragment_retries",
+    )
     @classmethod
     def validate_positive_ints(cls, v: int) -> int:
         """Validate positive integer values."""
@@ -446,8 +455,14 @@ class NetworkConfig(BaseModel):
             raise ValueError("Value must be positive")
         return v
 
-    @field_validator("retry_sleep", "max_retry_sleep", "sleep_interval", "max_sleep_interval", 
-                    "sleep_interval_subtitles", "retry_backoff_factor")
+    @field_validator(
+        "retry_sleep",
+        "max_retry_sleep",
+        "sleep_interval",
+        "max_sleep_interval",
+        "sleep_interval_subtitles",
+        "retry_backoff_factor",
+    )
     @classmethod
     def validate_non_negative_floats(cls, v: float) -> float:
         """Validate non-negative float values."""
@@ -461,37 +476,37 @@ class NetworkConfig(BaseModel):
         # Validate retry sleep ranges
         if self.retry_sleep > self.max_retry_sleep:
             raise ValueError("Retry sleep cannot exceed max retry sleep")
-        
+
         if self.sleep_interval > self.max_sleep_interval:
             raise ValueError("Sleep interval cannot exceed max sleep interval")
-        
+
         # Validate backoff factor
         if self.retry_backoff_factor <= 1.0:
             raise ValueError("Retry backoff factor must be greater than 1.0")
-        
+
         # Validate IP preference consistency
         if self.prefer_ipv4 and self.prefer_ipv6:
             raise ValueError("Cannot prefer both IPv4 and IPv6")
-        
+
         return self
 
 
 class GeoBypassConfig(BaseModel):
     """Geo-bypass configuration with country selection and automatic detection."""
-    
+
     # Basic geo-bypass settings
     geo_bypass: bool = False
     geo_bypass_country: str | None = None
     geo_bypass_ip_block: str | None = None
-    
+
     # Advanced geo-bypass features
     auto_detect_geo_blocking: bool = True
     geo_bypass_fallback_countries: list[str] = Field(default_factory=list)
-    
+
     # Country-specific settings
     preferred_countries: list[str] = Field(default_factory=list)
     blocked_countries: list[str] = Field(default_factory=list)
-    
+
     # Geo-bypass testing
     test_geo_bypass: bool = True
     geo_bypass_timeout: float = 15.0
@@ -506,14 +521,18 @@ class GeoBypassConfig(BaseModel):
             return v.upper()
         return v
 
-    @field_validator("geo_bypass_fallback_countries", "preferred_countries", "blocked_countries")
+    @field_validator(
+        "geo_bypass_fallback_countries", "preferred_countries", "blocked_countries"
+    )
     @classmethod
     def validate_country_lists(cls, v: list[str]) -> list[str]:
         """Validate country code lists."""
         validated = []
         for country in v:
             if len(country) != 2 or not country.isalpha():
-                raise ValueError(f"Invalid country code: {country}. Must be 2-letter ISO code")
+                raise ValueError(
+                    f"Invalid country code: {country}. Must be 2-letter ISO code"
+                )
             validated.append(country.upper())
         return validated
 
@@ -541,7 +560,9 @@ class AuthConfig(BaseModel):
         """Validate authentication configuration consistency."""
         if self.method == AuthMethod.USERNAME_PASSWORD:
             if not self.username or not self.password:
-                raise ValueError("Username and password required for username_password auth")
+                raise ValueError(
+                    "Username and password required for username_password auth"
+                )
         elif self.method == AuthMethod.COOKIES:
             if not self.cookies_file:
                 raise ValueError("Cookies file required for cookies auth")
@@ -566,28 +587,30 @@ class FormatPreferences(BaseModel):
     preferred_containers: list[str] = Field(default_factory=list)
     audio_only: bool = False
     video_only: bool = False
-    
+
     # Advanced quality control
-    target_quality: str | None = None  # "ultra_high", "high", "medium", "low", "very_low"
+    target_quality: str | None = (
+        None  # "ultra_high", "high", "medium", "low", "very_low"
+    )
     adaptive_quality: bool = True
     quality_fallback: bool = True
-    
+
     # Bitrate preferences
     max_video_bitrate: int | None = None  # kbps
     min_video_bitrate: int | None = None  # kbps
     max_audio_bitrate: int | None = None  # kbps
     min_audio_bitrate: int | None = None  # kbps
     target_audio_bitrate: int | None = None  # kbps for audio-only
-    
+
     # Frame rate preferences
     max_fps: float | None = None
     min_fps: float | None = None
     prefer_60fps: bool = False
-    
+
     # Codec-specific preferences
     prefer_hardware_decodable: bool = True
     avoid_experimental_codecs: bool = True
-    
+
     # Format conversion preferences
     allow_format_conversion: bool = True
     prefer_native_formats: bool = True
@@ -607,11 +630,18 @@ class FormatPreferences(BaseModel):
         if v is not None:
             valid_qualities = {"ultra_high", "high", "medium", "low", "very_low"}
             if v not in valid_qualities:
-                raise ValueError(f"Invalid target quality: {v}. Must be one of {valid_qualities}")
+                raise ValueError(
+                    f"Invalid target quality: {v}. Must be one of {valid_qualities}"
+                )
         return v
 
-    @field_validator("max_video_bitrate", "min_video_bitrate", "max_audio_bitrate", 
-                    "min_audio_bitrate", "target_audio_bitrate")
+    @field_validator(
+        "max_video_bitrate",
+        "min_video_bitrate",
+        "max_audio_bitrate",
+        "min_audio_bitrate",
+        "target_audio_bitrate",
+    )
     @classmethod
     def validate_bitrates(cls, v: int | None) -> int | None:
         """Validate bitrate values are positive."""
@@ -632,21 +662,30 @@ class FormatPreferences(BaseModel):
         """Validate format preferences consistency."""
         if self.audio_only and self.video_only:
             raise ValueError("Cannot specify both audio_only and video_only")
-        
+
         # Validate bitrate ranges
-        if (self.min_video_bitrate is not None and self.max_video_bitrate is not None and
-            self.min_video_bitrate > self.max_video_bitrate):
+        if (
+            self.min_video_bitrate is not None
+            and self.max_video_bitrate is not None
+            and self.min_video_bitrate > self.max_video_bitrate
+        ):
             raise ValueError("Min video bitrate cannot exceed max video bitrate")
-        
-        if (self.min_audio_bitrate is not None and self.max_audio_bitrate is not None and
-            self.min_audio_bitrate > self.max_audio_bitrate):
+
+        if (
+            self.min_audio_bitrate is not None
+            and self.max_audio_bitrate is not None
+            and self.min_audio_bitrate > self.max_audio_bitrate
+        ):
             raise ValueError("Min audio bitrate cannot exceed max audio bitrate")
-        
+
         # Validate FPS ranges
-        if (self.min_fps is not None and self.max_fps is not None and
-            self.min_fps > self.max_fps):
+        if (
+            self.min_fps is not None
+            and self.max_fps is not None
+            and self.min_fps > self.max_fps
+        ):
             raise ValueError("Min FPS cannot exceed max FPS")
-        
+
         return self
 
 
@@ -711,7 +750,20 @@ class MediaConfig(BaseModel):
             return v
         except ValueError:
             # Check if it's a valid quality string
-            valid_qualities = {"best", "worst", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9"}
+            valid_qualities = {
+                "best",
+                "worst",
+                "0",
+                "1",
+                "2",
+                "3",
+                "4",
+                "5",
+                "6",
+                "7",
+                "8",
+                "9",
+            }
             if v not in valid_qualities:
                 raise ValueError(f"Invalid audio quality: {v}") from None
             return v
@@ -760,8 +812,7 @@ class MediaConfig(BaseModel):
     def validate_media_config(self) -> "MediaConfig":
         """Validate media configuration consistency."""
         # Validate playlist range
-        if (self.playlist_end is not None and
-            self.playlist_end < self.playlist_start):
+        if self.playlist_end is not None and self.playlist_end < self.playlist_start:
             raise ValueError("Playlist end must be >= playlist start")
 
         # Validate output directory

@@ -1,16 +1,13 @@
 """Advanced network management for media downloads with proxy support and geo-bypass."""
 
-import asyncio
 import logging
 import random
-import time
-from typing import Any, Dict, List, Optional
+from typing import Any
 from urllib.parse import urlparse
 
 import httpx
-import yt_dlp  # type: ignore[import-untyped]
 
-from .media_models import GeoBypassConfig, NetworkConfig, ProxyConfig, ProxyType
+from .media_models import GeoBypassConfig, NetworkConfig, ProxyConfig
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +36,7 @@ class NetworkManager:
         # Proxy rotation state
         self._current_proxy_index = 0
         self._proxy_request_count = 0
-        self._tested_proxies: Dict[str, bool] = {}
+        self._tested_proxies: dict[str, bool] = {}
 
         # User agent rotation state
         self._current_user_agent_index = 0
@@ -51,9 +48,11 @@ class NetworkManager:
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:121.0) Gecko/20100101 Firefox/121.0",
         ]
 
-        logger.info("NetworkManager initialized with advanced proxy and geo-bypass support")
+        logger.info(
+            "NetworkManager initialized with advanced proxy and geo-bypass support"
+        )
 
-    def create_yt_dlp_options(self, url: str) -> Dict[str, Any]:
+    def create_yt_dlp_options(self, url: str) -> dict[str, Any]:
         """
         Create comprehensive yt-dlp options with network configuration.
 
@@ -87,9 +86,9 @@ class NetworkManager:
         logger.debug(f"Created yt-dlp network options for {urlparse(url).netloc}")
         return opts
 
-    def _get_basic_network_options(self) -> Dict[str, Any]:
+    def _get_basic_network_options(self) -> dict[str, Any]:
         """Get basic network timeout and retry options."""
-        opts: Dict[str, Any] = {
+        opts: dict[str, Any] = {
             "socket_timeout": self.network_config.socket_timeout,
             "retries": self.network_config.retries,
             "fragment_retries": self.network_config.fragment_retries,
@@ -99,7 +98,7 @@ class NetworkManager:
         }
         return opts
 
-    def _get_proxy_options(self, url: str) -> Dict[str, Any]:
+    def _get_proxy_options(self, url: str) -> dict[str, Any]:
         """
         Get proxy configuration options with rotation support.
 
@@ -109,7 +108,7 @@ class NetworkManager:
         Returns:
             Dictionary of proxy options
         """
-        opts: Dict[str, Any] = {}
+        opts: dict[str, Any] = {}
 
         # Determine which proxy to use
         proxy_url = self._get_current_proxy(url)
@@ -119,7 +118,7 @@ class NetworkManager:
 
         return opts
 
-    def _get_geo_bypass_options(self, url: str) -> Dict[str, Any]:
+    def _get_geo_bypass_options(self, url: str) -> dict[str, Any]:
         """
         Get geo-bypass configuration options.
 
@@ -129,7 +128,7 @@ class NetworkManager:
         Returns:
             Dictionary of geo-bypass options
         """
-        opts: Dict[str, Any] = {
+        opts: dict[str, Any] = {
             "geo_bypass": self.geo_bypass_config.geo_bypass,
         }
 
@@ -146,7 +145,7 @@ class NetworkManager:
 
         return opts
 
-    def _get_header_options(self, url: str) -> Dict[str, Any]:
+    def _get_header_options(self, url: str) -> dict[str, Any]:
         """
         Get user agent and header options with platform-specific support.
 
@@ -156,7 +155,7 @@ class NetworkManager:
         Returns:
             Dictionary of header options
         """
-        opts: Dict[str, Any] = {}
+        opts: dict[str, Any] = {}
 
         # Determine user agent
         user_agent = self._get_current_user_agent(url)
@@ -178,9 +177,9 @@ class NetworkManager:
 
         return opts
 
-    def _get_ssl_options(self) -> Dict[str, Any]:
+    def _get_ssl_options(self) -> dict[str, Any]:
         """Get SSL/TLS configuration options."""
-        opts: Dict[str, Any] = {}
+        opts: dict[str, Any] = {}
 
         if self.network_config.no_check_certificate:
             opts["no_check_certificate"] = True
@@ -192,7 +191,9 @@ class NetworkManager:
             opts["client_certificate_key"] = self.network_config.client_certificate_key
 
         if self.network_config.client_certificate_password:
-            opts["client_certificate_password"] = self.network_config.client_certificate_password
+            opts["client_certificate_password"] = (
+                self.network_config.client_certificate_password
+            )
 
         # IP preference settings
         if self.network_config.prefer_ipv4:
@@ -205,7 +206,7 @@ class NetworkManager:
 
         return opts
 
-    def _get_current_proxy(self, url: str) -> Optional[str]:
+    def _get_current_proxy(self, url: str) -> str | None:
         """
         Get current proxy URL with rotation and geo-bypass support.
 
@@ -231,7 +232,7 @@ class NetworkManager:
 
         return None
 
-    def _get_geo_bypass_proxy(self, url: str) -> Optional[str]:
+    def _get_geo_bypass_proxy(self, url: str) -> str | None:
         """
         Get geo-bypass specific proxy if needed.
 
@@ -260,7 +261,9 @@ class NetworkManager:
 
         # Check if rotation is needed
         if self._proxy_request_count >= self.proxy_config.proxy_rotation_interval:
-            self._current_proxy_index = (self._current_proxy_index + 1) % len(self.proxy_config.proxy_list)
+            self._current_proxy_index = (self._current_proxy_index + 1) % len(
+                self.proxy_config.proxy_list
+            )
             self._proxy_request_count = 0
             logger.info(f"Rotated to proxy index {self._current_proxy_index}")
 
@@ -290,7 +293,7 @@ class NetworkManager:
 
         return proxy_url
 
-    def _get_current_user_agent(self, url: str) -> Optional[str]:
+    def _get_current_user_agent(self, url: str) -> str | None:
         """
         Get current user agent with platform-specific and rotation support.
 
@@ -303,7 +306,10 @@ class NetworkManager:
         # Check for platform-specific user agent
         if self.network_config.platform_user_agents:
             domain = urlparse(url).netloc.lower()
-            for platform, user_agent in self.network_config.platform_user_agents.items():
+            for (
+                platform,
+                user_agent,
+            ) in self.network_config.platform_user_agents.items():
                 if platform.lower() in domain:
                     return user_agent
 
@@ -324,7 +330,9 @@ class NetworkManager:
         Returns:
             Next user agent in rotation
         """
-        self._current_user_agent_index = (self._current_user_agent_index + 1) % len(self._default_user_agents)
+        self._current_user_agent_index = (self._current_user_agent_index + 1) % len(
+            self._default_user_agents
+        )
         return self._default_user_agents[self._current_user_agent_index]
 
     async def test_proxy_connectivity(self, proxy_url: str) -> bool:
@@ -353,12 +361,14 @@ class NetworkManager:
             ) as client:
                 response = await client.get("https://httpbin.org/ip")
                 success = response.status_code == 200
-                
+
                 if success:
                     logger.info(f"Proxy test successful: {proxy_url}")
                 else:
-                    logger.warning(f"Proxy test failed with status {response.status_code}: {proxy_url}")
-                
+                    logger.warning(
+                        f"Proxy test failed with status {response.status_code}: {proxy_url}"
+                    )
+
                 self._tested_proxies[proxy_url] = success
                 return success
 
@@ -367,7 +377,9 @@ class NetworkManager:
             self._tested_proxies[proxy_url] = False
             return False
 
-    async def handle_geo_blocking_error(self, url: str, error: Exception) -> Dict[str, Any]:
+    async def handle_geo_blocking_error(
+        self, url: str, error: Exception
+    ) -> dict[str, Any]:
         """
         Handle geo-blocking errors with automatic fallback.
 
@@ -385,21 +397,21 @@ class NetworkManager:
             for country in self.geo_bypass_config.geo_bypass_fallback_countries:
                 if country != self.geo_bypass_config.geo_bypass_country:
                     logger.info(f"Trying geo-bypass with country: {country}")
-                    
+
                     # Update geo-bypass country
                     self.geo_bypass_config.geo_bypass_country = country
-                    
+
                     # Return updated options
                     return self.create_yt_dlp_options(url)
 
         # Try using geo-bypass proxy if available
         if self.proxy_config.geo_bypass_proxy:
             logger.info("Trying geo-bypass proxy")
-            
+
             # Temporarily switch to geo-bypass proxy
             original_proxy = self.proxy_config.proxy_url
             self.proxy_config.proxy_url = self.proxy_config.geo_bypass_proxy
-            
+
             try:
                 return self.create_yt_dlp_options(url)
             finally:
@@ -410,7 +422,9 @@ class NetworkManager:
         logger.error(f"No more geo-bypass options available for {url}")
         raise error
 
-    async def handle_network_error(self, url: str, error: Exception, attempt: int) -> float:
+    async def handle_network_error(
+        self, url: str, error: Exception, attempt: int
+    ) -> float:
         """
         Handle network errors with retry delay calculation.
 
@@ -429,8 +443,8 @@ class NetworkManager:
         max_delay = self.network_config.max_retry_sleep
         backoff_factor = self.network_config.retry_backoff_factor
 
-        delay = min(base_delay * (backoff_factor ** attempt), max_delay)
-        
+        delay = min(base_delay * (backoff_factor**attempt), max_delay)
+
         # Add some jitter to avoid thundering herd
         jitter = random.uniform(0.1, 0.3) * delay
         final_delay = delay + jitter
@@ -438,7 +452,7 @@ class NetworkManager:
         logger.info(f"Retrying {url} after {final_delay:.1f}s delay")
         return final_delay
 
-    def get_platform_specific_options(self, url: str) -> Dict[str, Any]:
+    def get_platform_specific_options(self, url: str) -> dict[str, Any]:
         """
         Get platform-specific options for known sites.
 
@@ -453,28 +467,40 @@ class NetworkManager:
 
         # YouTube specific optimizations
         if "youtube.com" in domain or "youtu.be" in domain:
-            opts.update({
-                "sleep_interval": max(self.network_config.sleep_interval, 1.0),  # Respect rate limits
-                "max_sleep_interval": 10.0,
-            })
+            opts.update(
+                {
+                    "sleep_interval": max(
+                        self.network_config.sleep_interval, 1.0
+                    ),  # Respect rate limits
+                    "max_sleep_interval": 10.0,
+                }
+            )
 
         # Twitter/X specific settings
         elif "twitter.com" in domain or "x.com" in domain:
-            opts.update({
-                "sleep_interval": max(self.network_config.sleep_interval, 2.0),  # Higher rate limit
-            })
+            opts.update(
+                {
+                    "sleep_interval": max(
+                        self.network_config.sleep_interval, 2.0
+                    ),  # Higher rate limit
+                }
+            )
 
         # TikTok specific settings
         elif "tiktok.com" in domain:
-            opts.update({
-                "sleep_interval": max(self.network_config.sleep_interval, 1.5),
-            })
+            opts.update(
+                {
+                    "sleep_interval": max(self.network_config.sleep_interval, 1.5),
+                }
+            )
 
         # Instagram specific settings
         elif "instagram.com" in domain:
-            opts.update({
-                "sleep_interval": max(self.network_config.sleep_interval, 2.0),
-            })
+            opts.update(
+                {
+                    "sleep_interval": max(self.network_config.sleep_interval, 2.0),
+                }
+            )
 
         return opts
 
@@ -489,7 +515,7 @@ class NetworkManager:
         self._current_user_agent_index = 0
         logger.info("User agent rotation state reset")
 
-    def get_network_stats(self) -> Dict[str, Any]:
+    def get_network_stats(self) -> dict[str, Any]:
         """
         Get network manager statistics.
 

@@ -6,7 +6,7 @@ import logging
 import mmap
 import os
 from pathlib import Path
-from typing import Any, Optional, Union
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -37,8 +37,8 @@ class MemoryMappedFile:
         self.size = size
         self.mode = mode
 
-        self._file_handle: Optional[Any] = None
-        self._mmap_handle: Optional[mmap.mmap] = None
+        self._file_handle: Any | None = None
+        self._mmap_handle: mmap.mmap | None = None
         self._is_open = False
 
         # Create file if needed
@@ -74,7 +74,11 @@ class MemoryMappedFile:
             self._file_handle = open(self.file_path, self.mode)
 
             # Create memory mapping
-            access = mmap.ACCESS_WRITE if "w" in self.mode or "+" in self.mode else mmap.ACCESS_READ
+            access = (
+                mmap.ACCESS_WRITE
+                if "w" in self.mode or "+" in self.mode
+                else mmap.ACCESS_READ
+            )
             self._mmap_handle = mmap.mmap(self._file_handle.fileno(), 0, access=access)
 
             self._is_open = True
@@ -135,7 +139,9 @@ class MemoryMappedFile:
             raise ValueError(f"Invalid offset {offset} for file size {self.size}")
 
         if offset + len(data) > self.size:
-            raise ValueError(f"Write would exceed file size: {offset + len(data)} > {self.size}")
+            raise ValueError(
+                f"Write would exceed file size: {offset + len(data)} > {self.size}"
+            )
 
         try:
             # Seek to offset and write data
@@ -215,11 +221,14 @@ class MemoryMappedFile:
 
         if self.file_path.exists():
             stat = self.file_path.stat()
-            stats.update({
-                "actual_size": stat.st_size,
-                "modified_time": stat.st_mtime,
-                "is_sparse": stat.st_blocks * 512 < stat.st_size,  # Approximate sparse detection
-            })
+            stats.update(
+                {
+                    "actual_size": stat.st_size,
+                    "modified_time": stat.st_mtime,
+                    "is_sparse": stat.st_blocks * 512
+                    < stat.st_size,  # Approximate sparse detection
+                }
+            )
 
         return stats
 
@@ -235,7 +244,9 @@ class MemoryMappedFile:
     def __del__(self) -> None:
         """Cleanup when object is destroyed."""
         if self._is_open:
-            logger.warning(f"MemoryMappedFile {self.file_path} destroyed without proper cleanup")
+            logger.warning(
+                f"MemoryMappedFile {self.file_path} destroyed without proper cleanup"
+            )
             self._cleanup()
 
 
@@ -261,8 +272,8 @@ class MemoryMappedSegmentWriter:
         self.use_mmap_threshold = use_mmap_threshold
 
         self._use_mmap = total_size >= use_mmap_threshold
-        self._mmap_file: Optional[MemoryMappedFile] = None
-        self._regular_file: Optional[Any] = None
+        self._mmap_file: MemoryMappedFile | None = None
+        self._regular_file: Any | None = None
 
         # Track written segments for integrity checking
         self._written_segments: set[tuple[int, int]] = set()
@@ -278,20 +289,23 @@ class MemoryMappedSegmentWriter:
         try:
             if self._use_mmap:
                 self._mmap_file = MemoryMappedFile(
-                    self.target_file, self.total_size, mode="r+b", create_if_missing=True
+                    self.target_file,
+                    self.total_size,
+                    mode="r+b",
+                    create_if_missing=True,
                 )
                 self._mmap_file.open()
                 logger.debug(f"Opened memory-mapped file for {self.target_file}")
             else:
                 # Ensure parent directory exists
                 self.target_file.parent.mkdir(parents=True, exist_ok=True)
-                
+
                 # Create file if it doesn't exist
                 if not self.target_file.exists():
                     with open(self.target_file, "wb") as f:
                         f.seek(self.total_size - 1)
                         f.write(b"\0")
-                
+
                 self._regular_file = open(self.target_file, "r+b")
                 logger.debug(f"Opened regular file for {self.target_file}")
 
@@ -390,7 +404,9 @@ class MemoryMappedSegmentWriter:
             "is_complete": is_complete,
             "total_size": self.total_size,
             "covered_bytes": covered_bytes,
-            "coverage_percentage": (covered_bytes / self.total_size * 100) if self.total_size > 0 else 0,
+            "coverage_percentage": (covered_bytes / self.total_size * 100)
+            if self.total_size > 0
+            else 0,
             "segments_written": len(self._written_segments),
             "gaps": gaps,
             "gap_count": len(gaps),
@@ -451,11 +467,15 @@ class MemoryMappedSegmentWriter:
     def __del__(self) -> None:
         """Cleanup when object is destroyed."""
         if self._mmap_file or self._regular_file:
-            logger.warning(f"SegmentWriter for {self.target_file} destroyed without proper cleanup")
+            logger.warning(
+                f"SegmentWriter for {self.target_file} destroyed without proper cleanup"
+            )
             self.close()
 
 
-def should_use_memory_mapping(file_size: int, threshold: int = 50 * 1024 * 1024) -> bool:
+def should_use_memory_mapping(
+    file_size: int, threshold: int = 50 * 1024 * 1024
+) -> bool:
     """
     Determine if memory mapping should be used for a file.
 
@@ -479,14 +499,17 @@ def get_optimal_mmap_threshold() -> int:
     try:
         # Try to get available memory
         import psutil
+
         available_memory = psutil.virtual_memory().available
-        
+
         # Use 1% of available memory as threshold, with min 50MB and max 500MB
-        threshold = max(50 * 1024 * 1024, min(500 * 1024 * 1024, available_memory // 100))
-        
+        threshold = max(
+            50 * 1024 * 1024, min(500 * 1024 * 1024, available_memory // 100)
+        )
+
         logger.debug(f"Calculated optimal mmap threshold: {threshold} bytes")
         return threshold
-        
+
     except ImportError:
         # psutil not available, use default
         default_threshold = 50 * 1024 * 1024

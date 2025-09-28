@@ -97,7 +97,9 @@ class PlaylistManager:
             # Parse playlist information
             playlist_info = await self._parse_playlist_dict(info_dict)
 
-            logger.info(f"Successfully extracted playlist: {playlist_info.title} ({playlist_info.entry_count} entries)")
+            logger.info(
+                f"Successfully extracted playlist: {playlist_info.title} ({playlist_info.entry_count} entries)"
+            )
             return playlist_info
 
         except yt_dlp.DownloadError as e:
@@ -209,7 +211,7 @@ class PlaylistManager:
     async def download_playlist(
         self,
         playlist_info: PlaylistInfo,
-        batch_config: BatchDownloadConfig | None = None
+        batch_config: BatchDownloadConfig | None = None,
     ) -> AsyncIterator[BatchProgress]:
         """
         Download all entries in a playlist with concurrent management.
@@ -227,7 +229,9 @@ class PlaylistManager:
                 delay_between_downloads=self.config.delay_between_downloads,
             )
 
-        logger.info(f"Starting playlist download: {playlist_info.title} ({playlist_info.entry_count} entries)")
+        logger.info(
+            f"Starting playlist download: {playlist_info.title} ({playlist_info.entry_count} entries)"
+        )
 
         # Initialize batch statistics
         self._batch_stats = {
@@ -264,7 +268,9 @@ class PlaylistManager:
                 download_tasks.append((task, entry, task_id))
 
             # Process downloads with progress reporting
-            async for progress in self._process_batch_downloads(download_tasks, batch_config):
+            async for progress in self._process_batch_downloads(
+                download_tasks, batch_config
+            ):
                 yield progress
 
         except Exception as e:
@@ -275,10 +281,7 @@ class PlaylistManager:
             await self._cleanup_active_downloads()
 
     async def _download_single_entry(
-        self,
-        entry: MediaInfo,
-        task_id: str,
-        batch_config: BatchDownloadConfig
+        self, entry: MediaInfo, task_id: str, batch_config: BatchDownloadConfig
     ) -> None:
         """
         Download a single playlist entry with concurrency control.
@@ -306,7 +309,9 @@ class PlaylistManager:
                     # Check for completion
                     if progress.status == DownloadStatus.FINISHED:
                         self._batch_stats["completed_items"] += 1
-                        self._batch_stats["overall_downloaded_bytes"] += downloaded_bytes
+                        self._batch_stats["overall_downloaded_bytes"] += (
+                            downloaded_bytes
+                        )
 
                         # Add to archive if configured
                         if batch_config.archive_file:
@@ -335,7 +340,7 @@ class PlaylistManager:
     async def _process_batch_downloads(
         self,
         download_tasks: list[tuple[asyncio.Task[None], MediaInfo, str]],
-        batch_config: BatchDownloadConfig
+        batch_config: BatchDownloadConfig,
     ) -> AsyncIterator[BatchProgress]:
         """
         Process batch downloads and yield progress updates.
@@ -365,14 +370,16 @@ class PlaylistManager:
         )
 
         # Process tasks as they complete
-        pending_tasks = {task: (entry, task_id) for task, entry, task_id in download_tasks}
+        pending_tasks = {
+            task: (entry, task_id) for task, entry, task_id in download_tasks
+        }
 
         while pending_tasks:
             # Wait for at least one task to complete
             done, _pending = await asyncio.wait(
                 pending_tasks.keys(),
                 return_when=asyncio.FIRST_COMPLETED,
-                timeout=1.0  # Regular progress updates
+                timeout=1.0,  # Regular progress updates
             )
 
             # Process completed tasks
@@ -403,9 +410,13 @@ class PlaylistManager:
             yield progress
 
             # Check failure threshold
-            if (batch_config.max_failures > 0 and
-                self._batch_stats["failed_items"] >= batch_config.max_failures):
-                logger.error(f"Maximum failures ({batch_config.max_failures}) reached, stopping batch download")
+            if (
+                batch_config.max_failures > 0
+                and self._batch_stats["failed_items"] >= batch_config.max_failures
+            ):
+                logger.error(
+                    f"Maximum failures ({batch_config.max_failures}) reached, stopping batch download"
+                )
                 # Cancel remaining tasks
                 for task in pending_tasks:
                     task.cancel()
@@ -421,8 +432,10 @@ class PlaylistManager:
             overall_total_bytes=self._batch_stats["overall_total_bytes"],
         )
 
-        logger.info(f"Batch download completed: {self._batch_stats['completed_items']} completed, "
-                   f"{self._batch_stats['failed_items']} failed, {self._batch_stats['skipped_items']} skipped")
+        logger.info(
+            f"Batch download completed: {self._batch_stats['completed_items']} completed, "
+            f"{self._batch_stats['failed_items']} failed, {self._batch_stats['skipped_items']} skipped"
+        )
 
     async def _load_download_archive(self, archive_file: Path) -> None:
         """
@@ -434,8 +447,12 @@ class PlaylistManager:
         try:
             if archive_file.exists():
                 content = archive_file.read_text(encoding="utf-8")
-                self._archive_entries = {line.strip() for line in content.splitlines() if line.strip()}
-                logger.info(f"Loaded {len(self._archive_entries)} entries from download archive")
+                self._archive_entries = {
+                    line.strip() for line in content.splitlines() if line.strip()
+                }
+                logger.info(
+                    f"Loaded {len(self._archive_entries)} entries from download archive"
+                )
             else:
                 self._archive_entries = set()
                 logger.info("Download archive file does not exist, starting fresh")

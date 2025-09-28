@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
+from collections import deque
 import logging
 import statistics
 import time
-from collections import deque
-from typing import Any, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +33,9 @@ class ServerPerformanceMetrics:
         self._last_update = time.time()
         self._sample_count = 0
 
-        logger.debug(f"Initialized ServerPerformanceMetrics with window_size={window_size}")
+        logger.debug(
+            f"Initialized ServerPerformanceMetrics with window_size={window_size}"
+        )
 
     def add_sample(
         self,
@@ -80,7 +82,11 @@ class ServerPerformanceMetrics:
 
     def get_connection_success_rate(self) -> float:
         """Get connection success rate (0.0 to 1.0)."""
-        return statistics.mean(self._connection_success_rates) if self._connection_success_rates else 1.0
+        return (
+            statistics.mean(self._connection_success_rates)
+            if self._connection_success_rates
+            else 1.0
+        )
 
     def get_speed_stability(self) -> float:
         """
@@ -95,8 +101,8 @@ class ServerPerformanceMetrics:
         try:
             mean_speed = statistics.mean(self._download_speeds)
             if mean_speed == 0:
-                return float('inf')
-            
+                return float("inf")
+
             stdev_speed = statistics.stdev(self._download_speeds)
             return stdev_speed / mean_speed  # Coefficient of variation
         except statistics.StatisticsError:
@@ -113,27 +119,31 @@ class ServerPerformanceMetrics:
             return 0.5  # Neutral score with no data
 
         # Normalize metrics to 0-1 scale
-        speed_score = min(1.0, self.get_average_download_speed() / (10 * 1024 * 1024))  # 10MB/s = 1.0
-        response_score = max(0.0, 1.0 - (self.get_average_response_time() / 10.0))  # 10s = 0.0
+        speed_score = min(
+            1.0, self.get_average_download_speed() / (10 * 1024 * 1024)
+        )  # 10MB/s = 1.0
+        response_score = max(
+            0.0, 1.0 - (self.get_average_response_time() / 10.0)
+        )  # 10s = 0.0
         error_score = 1.0 - self.get_error_rate()
         connection_score = self.get_connection_success_rate()
         stability_score = max(0.0, 1.0 - min(1.0, self.get_speed_stability()))
 
         # Weighted average
         weights = {
-            'speed': 0.3,
-            'response': 0.2,
-            'error': 0.2,
-            'connection': 0.2,
-            'stability': 0.1,
+            "speed": 0.3,
+            "response": 0.2,
+            "error": 0.2,
+            "connection": 0.2,
+            "stability": 0.1,
         }
 
         score = (
-            weights['speed'] * speed_score +
-            weights['response'] * response_score +
-            weights['error'] * error_score +
-            weights['connection'] * connection_score +
-            weights['stability'] * stability_score
+            weights["speed"] * speed_score
+            + weights["response"] * response_score
+            + weights["error"] * error_score
+            + weights["connection"] * connection_score
+            + weights["stability"] * stability_score
         )
 
         return max(0.0, min(1.0, score))
@@ -254,15 +264,17 @@ class AdaptiveConnectionScaler:
 
         # Scale down conditions
         if (
-            error_rate > 0.3 or  # High error rate
-            connection_success_rate < 0.7 or  # Low connection success
-            performance_score < self.scale_down_threshold
+            error_rate > 0.3  # High error rate
+            or connection_success_rate < 0.7  # Low connection success
+            or performance_score < self.scale_down_threshold
         ):
             if self.current_connections > self.min_connections:
                 if self.aggressive_scaling:
                     # Aggressive scaling: reduce by 50% or at least 1
                     reduction = max(1, self.current_connections // 2)
-                    new_connections = max(self.min_connections, self.current_connections - reduction)
+                    new_connections = max(
+                        self.min_connections, self.current_connections - reduction
+                    )
                     reason = "aggressive_scale_down"
                 else:
                     # Conservative scaling: reduce by 1
@@ -271,15 +283,17 @@ class AdaptiveConnectionScaler:
 
         # Scale up conditions (only if not scaling down)
         elif (
-            performance_score > self.scale_up_threshold and
-            error_rate < 0.1 and
-            connection_success_rate > 0.9
+            performance_score > self.scale_up_threshold
+            and error_rate < 0.1
+            and connection_success_rate > 0.9
         ):
             if self.current_connections < self.max_connections:
                 if self.aggressive_scaling:
                     # Aggressive scaling: increase by 50% or at least 1
                     increase = max(1, self.current_connections // 2)
-                    new_connections = min(self.max_connections, self.current_connections + increase)
+                    new_connections = min(
+                        self.max_connections, self.current_connections + increase
+                    )
                     reason = "aggressive_scale_up"
                 else:
                     # Conservative scaling: increase by 1
@@ -293,10 +307,12 @@ class AdaptiveConnectionScaler:
             speed_stability = self.performance_metrics.get_speed_stability()
 
             if (
-                avg_response_time > 10.0 or  # Very slow responses
-                speed_stability > 1.0  # Very unstable speeds
+                avg_response_time > 10.0  # Very slow responses
+                or speed_stability > 1.0  # Very unstable speeds
             ) and self.current_connections > self.min_connections:
-                new_connections = max(self.min_connections, self.current_connections - 1)
+                new_connections = max(
+                    self.min_connections, self.current_connections - 1
+                )
                 reason = "server_overload"
 
         return new_connections, reason
@@ -405,7 +421,9 @@ class AdaptiveConnectionScaler:
         }
 
 
-def create_conservative_scaler(min_conn: int = 1, max_conn: int = 4) -> AdaptiveConnectionScaler:
+def create_conservative_scaler(
+    min_conn: int = 1, max_conn: int = 4
+) -> AdaptiveConnectionScaler:
     """Create a conservative scaler for stable servers."""
     return AdaptiveConnectionScaler(
         min_connections=min_conn,
@@ -417,7 +435,9 @@ def create_conservative_scaler(min_conn: int = 1, max_conn: int = 4) -> Adaptive
     )
 
 
-def create_aggressive_scaler(min_conn: int = 1, max_conn: int = 16) -> AdaptiveConnectionScaler:
+def create_aggressive_scaler(
+    min_conn: int = 1, max_conn: int = 16
+) -> AdaptiveConnectionScaler:
     """Create an aggressive scaler for high-performance scenarios."""
     return AdaptiveConnectionScaler(
         min_connections=min_conn,
@@ -429,7 +449,9 @@ def create_aggressive_scaler(min_conn: int = 1, max_conn: int = 16) -> AdaptiveC
     )
 
 
-def create_balanced_scaler(min_conn: int = 1, max_conn: int = 8) -> AdaptiveConnectionScaler:
+def create_balanced_scaler(
+    min_conn: int = 1, max_conn: int = 8
+) -> AdaptiveConnectionScaler:
     """Create a balanced scaler for general use."""
     return AdaptiveConnectionScaler(
         min_connections=min_conn,

@@ -4,13 +4,12 @@ from __future__ import annotations
 
 import hashlib
 import logging
-import ssl
 from pathlib import Path
-from typing import Any
+import ssl
 
-import pycurl
 from cryptography import x509
-from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives import serialization
+import pycurl
 
 from .pycurl_models import HttpFtpConfig, SSLSecurityProfile
 
@@ -60,11 +59,11 @@ class SSLCertificateValidator:
 
             # Basic certificate validation
             current_time = x509.datetime.datetime.now()
-            
+
             if cert.not_valid_before > current_time:
                 logger.error(f"Certificate {cert_path} is not yet valid")
                 return False
-            
+
             if cert.not_valid_after < current_time:
                 logger.error(f"Certificate {cert_path} has expired")
                 return False
@@ -106,21 +105,24 @@ class SSLCertificateValidator:
 
             # Extract public key
             public_key = cert.public_key()
-            
+
             # Serialize public key in DER format
             public_key_der = public_key.public_key_bytes(
                 encoding=serialization.Encoding.DER,
-                format=serialization.PublicFormat.SubjectPublicKeyInfo
+                format=serialization.PublicFormat.SubjectPublicKeyInfo,
             )
 
             # Calculate SHA256 hash
             sha256_hash = hashlib.sha256(public_key_der).digest()
-            
+
             # Encode as base64
             import base64
-            public_key_hash = base64.b64encode(sha256_hash).decode('ascii')
 
-            logger.info(f"Extracted public key hash from {cert_path}: sha256//{public_key_hash}")
+            public_key_hash = base64.b64encode(sha256_hash).decode("ascii")
+
+            logger.info(
+                f"Extracted public key hash from {cert_path}: sha256//{public_key_hash}"
+            )
             return public_key_hash
 
         except Exception as e:
@@ -150,15 +152,14 @@ class SSLCertificateValidator:
             try:
                 # Try PEM format first
                 private_key = serialization.load_pem_private_key(
-                    key_data, 
-                    password=password.encode('utf-8') if password else None
+                    key_data, password=password.encode("utf-8") if password else None
                 )
             except ValueError:
                 try:
                     # Try DER format
                     private_key = serialization.load_der_private_key(
                         key_data,
-                        password=password.encode('utf-8') if password else None
+                        password=password.encode("utf-8") if password else None,
                     )
                 except ValueError as e:
                     logger.error(f"Failed to parse private key {key_path}: {e}")
@@ -173,8 +174,9 @@ class SSLCertificateValidator:
             logger.error(f"Error validating private key {key_path}: {e}")
             return False
 
-    def validate_certificate_key_pair(self, cert_path: Path, key_path: Path, 
-                                    key_password: str | None = None) -> bool:
+    def validate_certificate_key_pair(
+        self, cert_path: Path, key_path: Path, key_password: str | None = None
+    ) -> bool:
         """
         Validate that a certificate and private key match.
 
@@ -203,12 +205,12 @@ class SSLCertificateValidator:
             try:
                 private_key = serialization.load_pem_private_key(
                     key_data,
-                    password=key_password.encode('utf-8') if key_password else None
+                    password=key_password.encode("utf-8") if key_password else None,
                 )
             except ValueError:
                 private_key = serialization.load_der_private_key(
                     key_data,
-                    password=key_password.encode('utf-8') if key_password else None
+                    password=key_password.encode("utf-8") if key_password else None,
                 )
 
             # Compare public keys
@@ -218,19 +220,21 @@ class SSLCertificateValidator:
             # Serialize both public keys for comparison
             cert_public_der = cert_public_key.public_key_bytes(
                 encoding=serialization.Encoding.DER,
-                format=serialization.PublicFormat.SubjectPublicKeyInfo
+                format=serialization.PublicFormat.SubjectPublicKeyInfo,
             )
-            
+
             private_public_der = private_public_key.public_key_bytes(
                 encoding=serialization.Encoding.DER,
-                format=serialization.PublicFormat.SubjectPublicKeyInfo
+                format=serialization.PublicFormat.SubjectPublicKeyInfo,
             )
 
             if cert_public_der == private_public_der:
                 logger.info(f"Certificate {cert_path} and private key {key_path} match")
                 return True
             else:
-                logger.error(f"Certificate {cert_path} and private key {key_path} do not match")
+                logger.error(
+                    f"Certificate {cert_path} and private key {key_path} do not match"
+                )
                 return False
 
         except Exception as e:
@@ -245,7 +249,9 @@ class SSLSecurityManager:
         """Initialize SSL security manager."""
         self.validator = None
 
-    def create_security_profile_from_config(self, config: HttpFtpConfig) -> SSLSecurityProfile:
+    def create_security_profile_from_config(
+        self, config: HttpFtpConfig
+    ) -> SSLSecurityProfile:
         """
         Create an SSL security profile from configuration.
 
@@ -274,7 +280,7 @@ class SSLSecurityManager:
             List of validation issues (empty if no issues)
         """
         issues = []
-        
+
         if not self.validator:
             self.validator = SSLCertificateValidator(config)
 
@@ -286,17 +292,14 @@ class SSLSecurityManager:
         # Check private key
         if config.client_key_path:
             if not self.validator.validate_private_key(
-                config.client_key_path, 
-                config.ssl_key_password
+                config.client_key_path, config.ssl_key_password
             ):
                 issues.append(f"Invalid private key: {config.client_key_path}")
 
         # Check certificate/key pair match
         if config.client_cert_path and config.client_key_path:
             if not self.validator.validate_certificate_key_pair(
-                config.client_cert_path,
-                config.client_key_path,
-                config.ssl_key_password
+                config.client_cert_path, config.client_key_path, config.ssl_key_password
             ):
                 issues.append("Client certificate and private key do not match")
 
@@ -307,7 +310,9 @@ class SSLSecurityManager:
 
         # Check CA certificate directory
         if config.ssl_ca_cert_dir and not config.ssl_ca_cert_dir.exists():
-            issues.append(f"CA certificate directory does not exist: {config.ssl_ca_cert_dir}")
+            issues.append(
+                f"CA certificate directory does not exist: {config.ssl_ca_cert_dir}"
+            )
 
         # Check CRL file
         if config.ssl_crl_file and not config.ssl_crl_file.exists():
@@ -315,18 +320,26 @@ class SSLSecurityManager:
 
         # Security warnings
         if not config.verify_ssl and not config.ssl_development_mode:
-            issues.append("SSL verification is disabled but not in development mode - SECURITY RISK")
+            issues.append(
+                "SSL verification is disabled but not in development mode - SECURITY RISK"
+            )
 
         if config.ssl_development_mode:
-            issues.append("Development mode enabled - SSL verification disabled - NOT FOR PRODUCTION")
+            issues.append(
+                "Development mode enabled - SSL verification disabled - NOT FOR PRODUCTION"
+            )
 
         # Check for weak SSL versions
         if config.ssl_version in ("SSLv2", "SSLv3", "TLSv1", "TLSv1.0"):
-            issues.append(f"Weak SSL/TLS version specified: {config.ssl_version} - consider TLSv1.2 or higher")
+            issues.append(
+                f"Weak SSL/TLS version specified: {config.ssl_version} - consider TLSv1.2 or higher"
+            )
 
         return issues
 
-    def setup_curl_ssl_security(self, curl_handle: pycurl.Curl, config: HttpFtpConfig) -> None:
+    def setup_curl_ssl_security(
+        self, curl_handle: pycurl.Curl, config: HttpFtpConfig
+    ) -> None:
         """
         Setup comprehensive SSL security for a curl handle.
 
@@ -344,12 +357,16 @@ class SSLSecurityManager:
 
         # Apply security profile if available
         if config.ssl_security_profile:
-            logger.info(f"Applying SSL security profile: {config.ssl_security_profile.name}")
+            logger.info(
+                f"Applying SSL security profile: {config.ssl_security_profile.name}"
+            )
 
         # The actual curl SSL setup is handled by the existing _setup_ssl_options methods
         # This method provides additional validation and logging
 
-    def generate_certificate_pinning_hash(self, hostname: str, port: int = 443) -> str | None:
+    def generate_certificate_pinning_hash(
+        self, hostname: str, port: int = 443
+    ) -> str | None:
         """
         Generate certificate pinning hash for a remote server.
 
@@ -363,36 +380,41 @@ class SSLSecurityManager:
         try:
             # Get server certificate
             context = ssl.create_default_context()
-            
+
             with ssl.create_connection((hostname, port)) as sock:
                 with context.wrap_socket(sock, server_hostname=hostname) as ssock:
                     # Get peer certificate in DER format
                     cert_der = ssock.getpeercert(binary_form=True)
-                    
+
                     # Parse certificate
                     cert = x509.load_der_x509_certificate(cert_der)
-                    
+
                     # Extract public key
                     public_key = cert.public_key()
-                    
+
                     # Serialize public key in DER format
                     public_key_der = public_key.public_key_bytes(
                         encoding=serialization.Encoding.DER,
-                        format=serialization.PublicFormat.SubjectPublicKeyInfo
+                        format=serialization.PublicFormat.SubjectPublicKeyInfo,
                     )
-                    
+
                     # Calculate SHA256 hash
                     sha256_hash = hashlib.sha256(public_key_der).digest()
-                    
+
                     # Encode as base64
                     import base64
-                    public_key_hash = base64.b64encode(sha256_hash).decode('ascii')
-                    
-                    logger.info(f"Generated pinning hash for {hostname}:{port}: sha256//{public_key_hash}")
+
+                    public_key_hash = base64.b64encode(sha256_hash).decode("ascii")
+
+                    logger.info(
+                        f"Generated pinning hash for {hostname}:{port}: sha256//{public_key_hash}"
+                    )
                     return public_key_hash
 
         except Exception as e:
-            logger.error(f"Failed to generate certificate pinning hash for {hostname}:{port}: {e}")
+            logger.error(
+                f"Failed to generate certificate pinning hash for {hostname}:{port}: {e}"
+            )
             return None
 
 
