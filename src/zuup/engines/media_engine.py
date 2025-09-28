@@ -6,7 +6,7 @@ import logging
 from pathlib import Path
 from urllib.parse import urlparse
 
-from ..storage.models import DownloadTask, ProgressInfo, TaskStatus
+from ..storage.models import DownloadTask, ProgressInfo, TaskStatus, TaskConfig, GlobalConfig
 from .base import BaseDownloadEngine
 from .format_extractor import FormatExtractor
 from .media_downloader import MediaDownloader
@@ -22,6 +22,7 @@ from .media_models import (
     MediaConfig,
     MediaInfo,
 )
+from .media_config_integration import MediaConfigurationManager, MediaConfigurationError
 from .metadata_manager import MetadataTemplate, ThumbnailConfig
 from .playlist_manager import PlaylistManager
 from .post_processor import PostProcessor
@@ -32,34 +33,68 @@ logger = logging.getLogger(__name__)
 class MediaEngine(BaseDownloadEngine):
     """Media download engine using yt-dlp."""
 
-    def __init__(self, config: MediaConfig | None = None) -> None:
-        """Initialize Media engine."""
+    def __init__(
+        self, 
+        config: MediaConfig | None = None,
+        task_config: TaskConfig | None = None,
+        global_config: GlobalConfig | None = None,
+        profile_name: str | None = None
+    ) -> None:
+        """
+        Initialize Media engine.
+        
+        Args:
+            config: Direct MediaConfig (takes precedence)
+            task_config: TaskConfig to map to MediaConfig
+            global_config: GlobalConfig for mapping
+            profile_name: Configuration profile to use as base
+        """
         super().__init__()
 
-        # Create default config if none provided
-        if config is None:
-            config = MediaConfig(output_directory=Path.home() / "Downloads")
+        # Initialize configuration manager
+        self.config_manager = MediaConfigurationManager()
 
-        self.config = config
-        self.extractor = FormatExtractor(config)
-        self.downloader = MediaDownloader(config)
-        self.playlist_manager = PlaylistManager(config)
+        # Create config from various sources
+        if config is not None:
+            # Direct MediaConfig provided
+            self.config = config
+        elif task_config is not None:
+            # Map from TaskConfig
+            try:
+                self.config = self.config_manager.create_engine_config(
+                    task_config=task_config,
+                    global_config=global_config,
+                    profile_name=profile_name,
+                    validate=True
+                )
+            except MediaConfigurationError as e:
+                logger.error(f"Failed to create media configuration: {e}")
+                # Fall back to default config
+                self.config = MediaConfig(output_directory=Path.home() / "Downloads")
+        else:
+            # Create default config
+            self.config = MediaConfig(output_directory=Path.home() / "Downloads")
+
+        # Initialize components with the final config
+        self.extractor = FormatExtractor(self.config)
+        self.downloader = MediaDownloader(self.config)
+        self.playlist_manager = PlaylistManager(self.config)
 
         # Initialize post-processor with enhanced metadata capabilities
         metadata_template = MetadataTemplate(
-            filename_template=config.output_template,
-            create_subdirectories=config.create_subdirectories,
+            filename_template=self.config.output_template,
+            create_subdirectories=self.config.create_subdirectories,
         )
         thumbnail_config = ThumbnailConfig(
-            download_thumbnails=config.embed_thumbnail,
-            embed_thumbnails=config.embed_thumbnail,
+            download_thumbnails=self.config.embed_thumbnail,
+            embed_thumbnails=self.config.embed_thumbnail,
             save_separate_thumbnails=False,  # Embed by default
         )
-        self.post_processor = PostProcessor(config, metadata_template, thumbnail_config)
+        self.post_processor = PostProcessor(self.config, metadata_template, thumbnail_config)
 
         # Initialize error handler with configuration
         self.error_handler = MediaErrorHandler(
-            max_retry_attempts=config.retries,
+            max_retry_attempts=self.config.retries,
             base_retry_delay=1.0,
             max_retry_delay=60.0,
             backoff_factor=2.0,
@@ -541,6 +576,150 @@ class MediaEngine(BaseDownloadEngine):
             raise last_error
         else:
             raise DownloadError(f"Failed to download {media_info.title}")
+
+    def update_config_for_url(self, url: str) -> None:
+        """
+        Update configuration with URL-specific optimizations.
+        
+        Args:
+            url: URL to optimize configuration for
+        """
+        try:
+            # Create a new config with URL-specific optimizations
+            updated_config = self.config_manager.mapper.map_task_config(
+                TaskConfig(),  # Empty task config
+                url=url
+            )
+            
+            # Apply URL-specific settings to current config
+            if url:
+                self.config_manager.mapper._apply_url_specific_config(self.config, url)
+                
+                # Reinitialize components with updated config
+                self.extractor = FormatExtractor(self.config)
+                self.downloader = MediaDownloader(self.config)
+                
+                logger.info(f"Updated configuration for URL: {url}")
+                
+        except Exception as e:
+            logger.warning(f"Failed to update config for URL {url}: {e}")
+
+    def update_config(
+        self, 
+        task_config: TaskConfig | None = None,
+        global_config: GlobalConfig | None = None,
+        profile_name: str | None = None
+    ) -> None:
+        """
+        Update engine configuration dynamically.
+        
+        Args:
+            task_config: New task configuration
+            global_config: New global configuration  
+            profile_name: Configuration profile to apply
+        """
+        try:
+            if task_config is not None or global_config is not None or profile_name is not None:
+                # Create new configuration
+                new_config = self.config_manager.create_engine_config(
+                    task_config=task_config or TaskConfig(),
+                    global_config=global_config,
+                    profile_name=profile_name,
+                    validate=True
+                )
+                
+                # Update current config
+                self.config = new_config
+                
+                # Reinitialize components
+                self.extractor = FormatExtractor(self.config)
+                self.downloader = MediaDownloader(self.config)
+                self.playlist_manager = PlaylistManager(self.config)
+                
+                # Update post-processor config
+                metadata_template = MetadataTemplate(
+                    filename_template=self.config.output_template,
+                    create_subdirectories=self.config.create_subdirectories,
+                )
+                thumbnail_config = ThumbnailConfig(
+                    download_thumbnails=self.config.embed_thumbnail,
+                    embed_thumbnails=self.config.embed_thumbnail,
+                    save_separate_thumbnails=False,
+                )
+                self.post_processor = PostProcessor(self.config, metadata_template, thumbnail_config)
+                
+                # Update error handler
+                self.error_handler = MediaErrorHandler(
+                    max_retry_attempts=self.config.retries,
+                    base_retry_delay=1.0,
+                    max_retry_delay=60.0,
+                    backoff_factor=2.0,
+                    enable_fallback_extractors=True,
+                    enable_format_alternatives=True,
+                )
+                
+                logger.info("Engine configuration updated successfully")
+                
+        except MediaConfigurationError as e:
+            logger.error(f"Failed to update engine configuration: {e}")
+            raise
+
+    def get_available_profiles(self) -> list[str]:
+        """
+        Get list of available configuration profiles.
+        
+        Returns:
+            List of profile names
+        """
+        return self.config_manager.get_profile_names()
+
+    def get_profile_info(self, profile_name: str) -> dict[str, any]:
+        """
+        Get information about a configuration profile.
+        
+        Args:
+            profile_name: Name of the profile
+            
+        Returns:
+            Profile information dictionary
+        """
+        return self.config_manager.get_profile_info(profile_name)
+
+    def validate_format_selector(self, selector: str) -> tuple[bool, list[str]]:
+        """
+        Validate a yt-dlp format selector.
+        
+        Args:
+            selector: Format selector to validate
+            
+        Returns:
+            Tuple of (is_valid, error_messages)
+        """
+        return self.config_manager.validate_format_selector(selector)
+
+    def suggest_format_selector(self, requirements: dict[str, any]) -> str:
+        """
+        Suggest a format selector based on requirements.
+        
+        Args:
+            requirements: Dictionary of requirements (height, codec, etc.)
+            
+        Returns:
+            Suggested format selector string
+        """
+        return self.config_manager.suggest_format_selector(requirements)
+
+    def get_extractor_options(self, extractor_name: str) -> set[str]:
+        """
+        Get available options for a specific extractor.
+        
+        Args:
+            extractor_name: Name of the extractor
+            
+        Returns:
+            Set of available option names
+        """
+        return self.config_manager.get_extractor_options(extractor_name)
 
     async def cleanup(self) -> None:
         """Clean up engine resources."""
