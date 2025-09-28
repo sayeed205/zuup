@@ -433,6 +433,19 @@ class MediaDownloader:
         async for progress in self.download_media(info, task_id, format_spec):
             yield progress
 
+    def is_playlist_supported(self, url: str) -> bool:
+        """
+        Check if URL is a supported playlist format.
+
+        Args:
+            url: URL to check
+
+        Returns:
+            True if playlist is supported
+        """
+        # Use the format extractor to check support
+        return self.extractor.supports_url(url) if hasattr(self, 'extractor') else True
+
     async def cancel_download(self, task_id: str) -> None:
         """
         Cancel a download task.
