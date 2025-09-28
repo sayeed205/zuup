@@ -14,7 +14,7 @@ from urllib.parse import urljoin, urlparse
 
 import pycurl
 
-from ..storage.models import DownloadTask, ProgressInfo, TaskStatus
+from ..storage.models import DownloadTask, ProgressInfo, TaskStatus, TaskConfig, GlobalConfig
 from .base import BaseDownloadEngine, DownloadError, NetworkError, ValidationError
 from .connection_manager import ConnectionManager
 from .pycurl_models import (
@@ -23,8 +23,10 @@ from .pycurl_models import (
     SegmentStatus,
     WorkerProgress,
     WorkerStatus,
+    CompletedSegment,
 )
 from .segment_merger import SegmentMerger
+from .config_integration import ConfigurationManager, ConfigurationError
 
 logger = logging.getLogger(__name__)
 
@@ -32,23 +34,63 @@ logger = logging.getLogger(__name__)
 class HttpFtpEngine(BaseDownloadEngine):
     """Main engine implementing HTTP/HTTPS and FTP/SFTP downloads using pycurl."""
 
-    def __init__(self, config: HttpFtpConfig | None = None) -> None:
+    def __init__(
+        self, 
+        config: HttpFtpConfig | None = None,
+        global_config: GlobalConfig | None = None,
+        config_manager: ConfigurationManager | None = None
+    ) -> None:
         """
         Initialize HttpFtpEngine.
 
         Args:
-            config: Configuration for HTTP/FTP downloads
+            config: Direct configuration for HTTP/FTP downloads (optional)
+            global_config: Global application configuration (optional)
+            config_manager: Configuration manager for advanced config handling (optional)
         """
         super().__init__()
-        self.config = config or HttpFtpConfig()
+        
+        # Configuration management
+        self._config_manager = config_manager or ConfigurationManager()
+        self._global_config = global_config
+        self._base_config = config or HttpFtpConfig()
 
         # Active downloads tracking
         self._active_downloads: dict[str, dict[str, Any]] = {}
         self._download_locks: dict[str, asyncio.Lock] = {}
 
         logger.info(
-            f"Initialized HttpFtpEngine with max {self.config.max_connections} connections"
+            f"Initialized HttpFtpEngine with max {self._base_config.max_connections} connections"
         )
+    
+    def _get_effective_config(self, task: DownloadTask) -> HttpFtpConfig:
+        """
+        Get the effective configuration for a download task.
+        
+        Args:
+            task: Download task
+            
+        Returns:
+            Effective HttpFtpConfig for the task
+            
+        Raises:
+            ConfigurationError: If configuration is invalid
+        """
+        try:
+            # If task has specific config, use configuration manager to map it
+            if hasattr(task, 'config') and task.config:
+                return self._config_manager.create_engine_config(
+                    task.config,
+                    self._global_config,
+                    validate=True
+                )
+            
+            # Otherwise use base config
+            return self._base_config
+            
+        except Exception as e:
+            logger.error(f"Failed to get effective configuration for task {task.id}: {e}")
+            raise ConfigurationError(f"Configuration error: {e}") from e
 
     def supports_protocol(self, url: str) -> bool:
         """
@@ -94,6 +136,14 @@ class HttpFtpEngine(BaseDownloadEngine):
 
         async with self._download_locks[task.id]:
             try:
+                # Get effective configuration for this task
+                effective_config = self._get_effective_config(task)
+                
+                # Store effective config in download context for later use
+                if task.id not in self._active_downloads:
+                    self._active_downloads[task.id] = {}
+                self._active_downloads[task.id]["effective_config"] = effective_config
+                
                 # Initialize download context
                 await self._initialize_download(task)
 
@@ -144,8 +194,11 @@ class HttpFtpEngine(BaseDownloadEngine):
         logger.info(f"Initializing download for task {task.id}")
 
         try:
+            # Get effective configuration for this task
+            effective_config = self._active_downloads[task.id]["effective_config"]
+            
             # Get file information from server
-            file_info = await self._get_file_info(task.url)
+            file_info = await self._get_file_info(task.url, effective_config)
 
             # Update task with file information
             if not task.file_size and file_info.get("content_length"):
@@ -163,7 +216,7 @@ class HttpFtpEngine(BaseDownloadEngine):
             supports_ranges = file_info.get("accept_ranges", False)
 
             # Calculate segments for multi-connection download
-            segments = await self._calculate_segments(task, supports_ranges)
+            segments = await self._calculate_segments(task, supports_ranges, effective_config)
 
             # Create temporary directory for segments
             temp_dir = Path(task.destination).parent / f".{task.id}_temp"
@@ -201,7 +254,7 @@ class HttpFtpEngine(BaseDownloadEngine):
             logger.error(f"Failed to initialize download for task {task.id}: {e}")
             raise NetworkError(f"Download initialization failed: {e}", task.id) from e
 
-    async def _get_file_info(self, url: str) -> dict[str, Any]:
+    async def _get_file_info(self, url: str, config: HttpFtpConfig) -> dict[str, Any]:
         """
         Get file information from server using HEAD request.
 
@@ -224,27 +277,27 @@ class HttpFtpEngine(BaseDownloadEngine):
             curl_handle.setopt(pycurl.URL, url.encode("utf-8"))
             curl_handle.setopt(pycurl.NOBODY, 1)  # HEAD request
             curl_handle.setopt(pycurl.FOLLOWLOCATION, 1)
-            curl_handle.setopt(pycurl.MAXREDIRS, self.config.max_redirects)
+            curl_handle.setopt(pycurl.MAXREDIRS, config.max_redirects)
             # Automatically referer on redirects
             curl_handle.setopt(pycurl.AUTOREFERER, 1)
-            curl_handle.setopt(pycurl.TIMEOUT, self.config.connect_timeout)
-            curl_handle.setopt(pycurl.USERAGENT, self.config.user_agent.encode("utf-8"))
+            curl_handle.setopt(pycurl.TIMEOUT, config.connect_timeout)
+            curl_handle.setopt(pycurl.USERAGENT, config.user_agent.encode("utf-8"))
 
             # SSL/TLS settings
-            self._setup_curl_ssl_options(curl_handle)
+            self._setup_curl_ssl_options(curl_handle, config)
 
             # Authentication
-            if self.config.auth.method.value != "none":
-                self._setup_curl_auth(curl_handle)
+            if config.auth.method.value != "none":
+                self._setup_curl_auth(curl_handle, config)
 
             # Custom headers (including bearer token if applicable)
-            self._setup_curl_headers(curl_handle)
+            self._setup_curl_headers(curl_handle, config)
 
             # Cookies
-            self._setup_curl_cookies(curl_handle)
+            self._setup_curl_cookies(curl_handle, config)
 
             # Proxy settings
-            self._setup_curl_proxy(curl_handle)
+            self._setup_curl_proxy(curl_handle, config)
 
             # Perform HEAD request
             await asyncio.get_event_loop().run_in_executor(None, curl_handle.perform)
@@ -288,9 +341,9 @@ class HttpFtpEngine(BaseDownloadEngine):
             if curl_handle:
                 curl_handle.close()
 
-    def _setup_curl_auth(self, curl_handle: pycurl.Curl) -> None:
+    def _setup_curl_auth(self, curl_handle: pycurl.Curl, config: HttpFtpConfig) -> None:
         """Setup authentication for curl handle."""
-        auth = self.config.auth
+        auth = config.auth
 
         if auth.method.value == "basic":
             curl_handle.setopt(pycurl.HTTPAUTH, pycurl.HTTPAUTH_BASIC)
@@ -300,7 +353,7 @@ class HttpFtpEngine(BaseDownloadEngine):
             # Bearer token authentication via Authorization header
             token = auth.get_token()
             if token:
-                headers = self.config.custom_headers.copy()
+                headers = config.custom_headers.copy()
                 headers["Authorization"] = f"Bearer {token}"
                 header_list = [f"{k}: {v}" for k, v in headers.items()]
                 curl_handle.setopt(pycurl.HTTPHEADER, header_list)
@@ -318,18 +371,18 @@ class HttpFtpEngine(BaseDownloadEngine):
         if username and password:
             curl_handle.setopt(pycurl.USERPWD, f"{username}:{password}")
 
-    def _setup_curl_cookies(self, curl_handle: pycurl.Curl) -> None:
+    def _setup_curl_cookies(self, curl_handle: pycurl.Curl, config: HttpFtpConfig) -> None:
         """Setup cookies for curl handle."""
-        if self.config.cookies:
+        if config.cookies:
             # Convert cookies dict to cookie string format
             cookie_string = "; ".join(
-                [f"{k}={v}" for k, v in self.config.cookies.items()]
+                [f"{k}={v}" for k, v in config.cookies.items()]
             )
             curl_handle.setopt(pycurl.COOKIE, cookie_string.encode("utf-8"))
 
-    def _setup_curl_proxy(self, curl_handle: pycurl.Curl) -> None:
+    def _setup_curl_proxy(self, curl_handle: pycurl.Curl, config: HttpFtpConfig) -> None:
         """Setup proxy configuration for curl handle."""
-        proxy = self.config.proxy
+        proxy = config.proxy
 
         if not proxy.enabled or not proxy.host:
             return
@@ -357,30 +410,30 @@ class HttpFtpEngine(BaseDownloadEngine):
                 pycurl.PROXYUSERPWD, f"{proxy.username}:{proxy.password}"
             )
 
-    def _setup_curl_headers(self, curl_handle: pycurl.Curl) -> None:
+    def _setup_curl_headers(self, curl_handle: pycurl.Curl, config: HttpFtpConfig) -> None:
         """Setup custom headers for curl handle."""
         headers = []
 
         # Add custom headers
-        if self.config.custom_headers:
-            headers.extend([f"{k}: {v}" for k, v in self.config.custom_headers.items()])
+        if config.custom_headers:
+            headers.extend([f"{k}: {v}" for k, v in config.custom_headers.items()])
 
         # Add bearer token if using bearer authentication
         if (
-            self.config.auth.method.value == "bearer"
-            and "Authorization" not in self.config.custom_headers
+            config.auth.method.value == "bearer"
+            and "Authorization" not in config.custom_headers
         ):
-            token = self.config.auth.get_token()
+            token = config.auth.get_token()
             if token:
                 headers.append(f"Authorization: Bearer {token}")
 
         if headers:
             curl_handle.setopt(pycurl.HTTPHEADER, headers)
 
-    def _setup_curl_ssl_options(self, curl_handle: pycurl.Curl) -> None:
+    def _setup_curl_ssl_options(self, curl_handle: pycurl.Curl, config: HttpFtpConfig) -> None:
         """Setup SSL/TLS options for curl handle."""
         # Basic SSL verification
-        if self.config.verify_ssl and not self.config.ssl_development_mode:
+        if config.verify_ssl and not config.ssl_development_mode:
             curl_handle.setopt(pycurl.SSL_VERIFYPEER, 1)
             curl_handle.setopt(pycurl.SSL_VERIFYHOST, 2)
         else:
@@ -388,11 +441,11 @@ class HttpFtpEngine(BaseDownloadEngine):
             curl_handle.setopt(pycurl.SSL_VERIFYHOST, 0)
             
             # Log warning for development mode
-            if self.config.ssl_development_mode:
+            if config.ssl_development_mode:
                 logger.warning("SSL verification disabled for development mode - NOT SECURE")
 
         # SSL/TLS version specification
-        if self.config.ssl_version:
+        if config.ssl_version:
             ssl_version_map = {
                 "TLSv1": pycurl.SSLVERSION_TLSv1,
                 "TLSv1.0": pycurl.SSLVERSION_TLSv1_0,
@@ -402,81 +455,81 @@ class HttpFtpEngine(BaseDownloadEngine):
                 "SSLv2": pycurl.SSLVERSION_SSLv2,
                 "SSLv3": pycurl.SSLVERSION_SSLv3,
             }
-            if self.config.ssl_version in ssl_version_map:
-                curl_handle.setopt(pycurl.SSLVERSION, ssl_version_map[self.config.ssl_version])
+            if config.ssl_version in ssl_version_map:
+                curl_handle.setopt(pycurl.SSLVERSION, ssl_version_map[config.ssl_version])
 
         # Custom CA certificate bundle
-        if self.config.ca_cert_path and self.config.ca_cert_path.exists():
-            curl_handle.setopt(pycurl.CAINFO, str(self.config.ca_cert_path))
+        if config.ca_cert_path and config.ca_cert_path.exists():
+            curl_handle.setopt(pycurl.CAINFO, str(config.ca_cert_path))
 
         # CA certificate directory
-        if self.config.ssl_ca_cert_dir and self.config.ssl_ca_cert_dir.exists():
-            curl_handle.setopt(pycurl.CAPATH, str(self.config.ssl_ca_cert_dir))
+        if config.ssl_ca_cert_dir and config.ssl_ca_cert_dir.exists():
+            curl_handle.setopt(pycurl.CAPATH, str(config.ssl_ca_cert_dir))
 
         # Certificate Revocation List
-        if self.config.ssl_crl_file and self.config.ssl_crl_file.exists():
-            curl_handle.setopt(pycurl.CRLFILE, str(self.config.ssl_crl_file))
+        if config.ssl_crl_file and config.ssl_crl_file.exists():
+            curl_handle.setopt(pycurl.CRLFILE, str(config.ssl_crl_file))
 
         # Client certificate authentication
-        if self.config.client_cert_path and self.config.client_cert_path.exists():
-            curl_handle.setopt(pycurl.SSLCERT, str(self.config.client_cert_path))
-            curl_handle.setopt(pycurl.SSLCERTTYPE, self.config.ssl_cert_type.encode("utf-8"))
+        if config.client_cert_path and config.client_cert_path.exists():
+            curl_handle.setopt(pycurl.SSLCERT, str(config.client_cert_path))
+            curl_handle.setopt(pycurl.SSLCERTTYPE, config.ssl_cert_type.encode("utf-8"))
 
-        if self.config.client_key_path and self.config.client_key_path.exists():
-            curl_handle.setopt(pycurl.SSLKEY, str(self.config.client_key_path))
-            curl_handle.setopt(pycurl.SSLKEYTYPE, self.config.ssl_key_type.encode("utf-8"))
+        if config.client_key_path and config.client_key_path.exists():
+            curl_handle.setopt(pycurl.SSLKEY, str(config.client_key_path))
+            curl_handle.setopt(pycurl.SSLKEYTYPE, config.ssl_key_type.encode("utf-8"))
             
             # Private key password
-            if self.config.ssl_key_password:
-                curl_handle.setopt(pycurl.KEYPASSWD, self.config.ssl_key_password.encode("utf-8"))
+            if config.ssl_key_password:
+                curl_handle.setopt(pycurl.KEYPASSWD, config.ssl_key_password.encode("utf-8"))
 
         # SSL cipher list
-        if self.config.ssl_cipher_list:
+        if config.ssl_cipher_list:
             curl_handle.setopt(
-                pycurl.SSL_CIPHER_LIST, self.config.ssl_cipher_list.encode("utf-8")
+                pycurl.SSL_CIPHER_LIST, config.ssl_cipher_list.encode("utf-8")
             )
 
         # Public key pinning
-        if self.config.ssl_pinned_public_key:
+        if config.ssl_pinned_public_key:
             # Format the pinned key for curl
-            pinned_key = self.config.ssl_pinned_public_key
+            pinned_key = config.ssl_pinned_public_key
             if not pinned_key.startswith("sha256//"):
                 pinned_key = f"sha256//{pinned_key}"
             curl_handle.setopt(pycurl.PINNEDPUBLICKEY, pinned_key.encode("utf-8"))
 
         # OCSP stapling verification
-        if self.config.ssl_verify_status:
+        if config.ssl_verify_status:
             curl_handle.setopt(pycurl.SSL_VERIFYSTATUS, 1)
 
         # SSL session ID caching
-        if self.config.ssl_session_id_cache:
+        if config.ssl_session_id_cache:
             curl_handle.setopt(pycurl.SSL_SESSIONID_CACHE, 1)
         else:
             curl_handle.setopt(pycurl.SSL_SESSIONID_CACHE, 0)
 
         # SSL False Start (performance optimization)
-        if self.config.ssl_falsestart:
+        if config.ssl_falsestart:
             curl_handle.setopt(pycurl.SSL_FALSESTART, 1)
 
         # ALPN (Application-Layer Protocol Negotiation)
-        if self.config.ssl_enable_alpn:
+        if config.ssl_enable_alpn:
             curl_handle.setopt(pycurl.SSL_ENABLE_ALPN, 1)
         else:
             curl_handle.setopt(pycurl.SSL_ENABLE_ALPN, 0)
 
         # NPN (Next Protocol Negotiation) - deprecated but still supported
-        if self.config.ssl_enable_npn:
+        if config.ssl_enable_npn:
             curl_handle.setopt(pycurl.SSL_ENABLE_NPN, 1)
         else:
             curl_handle.setopt(pycurl.SSL_ENABLE_NPN, 0)
 
         # SSL debug level
-        if self.config.ssl_debug_level > 0:
+        if config.ssl_debug_level > 0:
             curl_handle.setopt(pycurl.VERBOSE, 1)
             # Note: More detailed SSL debugging would require custom debug callback
 
         # Additional SSL options
-        for ssl_option in self.config.ssl_options:
+        for ssl_option in config.ssl_options:
             # Parse and apply additional SSL options
             # Format: "OPTION_NAME:value" or just "OPTION_NAME" for boolean flags
             if ":" in ssl_option:
@@ -488,7 +541,7 @@ class HttpFtpEngine(BaseDownloadEngine):
                 logger.debug(f"SSL flag requested: {ssl_option}")
 
         # Enable compression if configured
-        if self.config.enable_compression:
+        if config.enable_compression:
             # Accept all supported encodings
             curl_handle.setopt(pycurl.ACCEPT_ENCODING, b"")
 
@@ -585,7 +638,7 @@ class HttpFtpEngine(BaseDownloadEngine):
         return f"HTTP {response_code}: {status_message}"
 
     async def _calculate_segments(
-        self, task: DownloadTask, supports_ranges: bool
+        self, task: DownloadTask, supports_ranges: bool, config: HttpFtpConfig
     ) -> list[DownloadSegment]:
         """
         Calculate download segments for multi-connection downloads.
@@ -620,8 +673,8 @@ class HttpFtpEngine(BaseDownloadEngine):
             return segments
 
         # Calculate optimal number of segments
-        max_segments = min(self.config.max_connections, 8)  # Reasonable limit
-        min_segment_size = self.config.segment_size
+        max_segments = min(config.max_connections, 8)  # Reasonable limit
+        min_segment_size = config.segment_size
 
         # Don't create more segments than needed
         optimal_segments = min(
@@ -677,6 +730,7 @@ class HttpFtpEngine(BaseDownloadEngine):
         download_context = self._active_downloads[task.id]
         segments = download_context["segments"]
         segment_merger = download_context["segment_merger"]
+        effective_config = download_context["effective_config"]
 
         logger.info(f"Starting download with {len(segments)} segments")
 
@@ -684,7 +738,7 @@ class HttpFtpEngine(BaseDownloadEngine):
         total_bytes = task.file_size or sum(seg.segment_size for seg in segments)
 
         # Create connection manager
-        async with ConnectionManager(self.config) as conn_manager:
+        async with ConnectionManager(effective_config) as conn_manager:
             # Create workers for segments
             workers = await conn_manager.create_workers(segments)
 
@@ -717,8 +771,6 @@ class HttpFtpEngine(BaseDownloadEngine):
 
         for segment in segments:
             if segment.status == SegmentStatus.COMPLETED:
-                from .pycurl_models import CompletedSegment
-
                 completed_segment = CompletedSegment(
                     segment=segment,
                     temp_file_path=segment.temp_file_path,

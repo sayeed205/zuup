@@ -82,6 +82,23 @@ class DownloadSegment(BaseModel):
         return (self.downloaded_bytes / self.segment_size) * 100.0
 
 
+class CompletedSegment(BaseModel):
+    """Represents a completed download segment ready for merging."""
+    
+    segment: DownloadSegment
+    temp_file_path: Path
+    
+    @field_validator("temp_file_path")
+    @classmethod
+    def validate_temp_file_exists(cls, v: Path) -> Path:
+        """Validate that the temporary file exists."""
+        if not v.exists():
+            raise ValueError(f"Temporary file does not exist: {v}")
+        if not v.is_file():
+            raise ValueError(f"Path is not a file: {v}")
+        return v
+
+
 class WorkerStatus(Enum):
     """Status of a curl worker."""
 

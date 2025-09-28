@@ -48,6 +48,7 @@ dependencies = [
     "httpx>=0.24.0", # HTTP client
     "cryptography>=41.0.0", # Secure storage
     "psutil>=5.9.0", # System monitoring
+    "watchdog>=3.0.0", # File system monitoring for hot-reload
 ]
 
 [project.optional-dependencies]
