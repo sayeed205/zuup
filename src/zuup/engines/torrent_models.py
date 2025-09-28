@@ -32,6 +32,7 @@ STALL_AVAILABILITY_THRESHOLD = 0.5
 # Core Torrent State and Status Models
 # ============================================================================
 
+
 class TorrentState(Enum):
     """Torrent state enumeration matching libtorrent states."""
 
@@ -76,7 +77,9 @@ class TorrentInfo(BaseModel):
         """Validate file priorities are within valid range."""
         for priority in v:
             if not (0 <= priority <= MAX_FILE_PRIORITY):
-                raise ValueError(f"File priorities must be between 0 and {MAX_FILE_PRIORITY}")
+                raise ValueError(
+                    f"File priorities must be between 0 and {MAX_FILE_PRIORITY}"
+                )
         return v
 
     @field_validator("storage_mode")
@@ -183,6 +186,7 @@ class TorrentStatus(BaseModel):
 # Peer Information Models
 # ============================================================================
 
+
 class ConnectionType(Enum):
     """Peer connection type."""
 
@@ -262,13 +266,16 @@ class PeerInfo(BaseModel):
     def validate_port(cls, v: int) -> int:
         """Validate port number."""
         if not (MIN_PORT_NUMBER <= v <= MAX_PORT_NUMBER):
-            raise ValueError(f"Port must be between {MIN_PORT_NUMBER} and {MAX_PORT_NUMBER}")
+            raise ValueError(
+                f"Port must be between {MIN_PORT_NUMBER} and {MAX_PORT_NUMBER}"
+            )
         return v
 
 
 # ============================================================================
 # Tracker Information Models
 # ============================================================================
+
 
 class TrackerStatus(Enum):
     """Tracker status enumeration."""
@@ -327,6 +334,7 @@ class TrackerInfo(BaseModel):
 # ============================================================================
 # File Management Models
 # ============================================================================
+
 
 class FilePriority(Enum):
     """File download priority levels."""
@@ -398,6 +406,7 @@ class FileProgress(BaseModel):
 # ============================================================================
 # Alert System Models
 # ============================================================================
+
 
 class AlertType(Enum):
     """Torrent alert types."""
@@ -512,6 +521,7 @@ class TorrentAlert(BaseModel):
 # Configuration Models
 # ============================================================================
 
+
 class ChokingAlgorithm(Enum):
     """Choking algorithm options."""
 
@@ -541,11 +551,13 @@ class TorrentConfig(BaseModel):
 
     # Session settings
     listen_interfaces: str = "0.0.0.0:6881"
-    dht_bootstrap_nodes: list[str] = Field(default_factory=lambda: [
-        "router.bittorrent.com:6881",
-        "dht.transmissionbt.com:6881",
-        "router.utorrent.com:6881"
-    ])
+    dht_bootstrap_nodes: list[str] = Field(
+        default_factory=lambda: [
+            "router.bittorrent.com:6881",
+            "dht.transmissionbt.com:6881",
+            "router.utorrent.com:6881",
+        ]
+    )
     enable_dht: bool = True
     enable_lsd: bool = True  # Local Service Discovery
     enable_upnp: bool = True
@@ -602,9 +614,9 @@ class TorrentConfig(BaseModel):
     def validate_listen_interfaces(cls, v: str) -> str:
         """Validate listen interfaces format."""
         # Basic validation - should be in format "ip:port" or "ip:port,ip:port"
-        interfaces = v.split(',')
+        interfaces = v.split(",")
         for interface in interfaces:
-            if ':' not in interface.strip():
+            if ":" not in interface.strip():
                 raise ValueError("Listen interface must be in format 'ip:port'")
         return v
 
@@ -613,8 +625,10 @@ class TorrentConfig(BaseModel):
     def validate_peer_id_prefix(cls, v: str) -> str:
         """Validate peer ID prefix format."""
         if len(v) != PEER_ID_PREFIX_LENGTH:
-            raise ValueError(f"Peer ID prefix must be exactly {PEER_ID_PREFIX_LENGTH} characters")
-        if not v.startswith('-') or not v.endswith('-'):
+            raise ValueError(
+                f"Peer ID prefix must be exactly {PEER_ID_PREFIX_LENGTH} characters"
+            )
+        if not v.startswith("-") or not v.endswith("-"):
             raise ValueError("Peer ID prefix must start and end with '-'")
         return v
 
@@ -622,10 +636,14 @@ class TorrentConfig(BaseModel):
     def validate_config_consistency(self) -> "TorrentConfig":
         """Validate configuration consistency."""
         # Ensure max connections per torrent doesn't exceed global max
-        self.max_connections_per_torrent = min(self.max_connections_per_torrent, self.max_connections)
+        self.max_connections_per_torrent = min(
+            self.max_connections_per_torrent, self.max_connections
+        )
 
         # Ensure max uploads per torrent doesn't exceed global max
-        self.max_uploads_per_torrent = min(self.max_uploads_per_torrent, self.max_uploads)
+        self.max_uploads_per_torrent = min(
+            self.max_uploads_per_torrent, self.max_uploads
+        )
 
         # Set default directories if not provided
         if self.torrent_files_directory is None:
@@ -640,6 +658,7 @@ class TorrentConfig(BaseModel):
 # ============================================================================
 # Statistics and Monitoring Models
 # ============================================================================
+
 
 class SessionStats(BaseModel):
     """Session-wide statistics."""
@@ -685,7 +704,9 @@ class SwarmHealth(BaseModel):
 
     # Health indicators
     is_healthy: bool = True  # overall health assessment
-    health_score: float = Field(ge=0.0, le=1.0, default=0.0)  # 0.0 = unhealthy, 1.0 = very healthy
+    health_score: float = Field(
+        ge=0.0, le=1.0, default=0.0
+    )  # 0.0 = unhealthy, 1.0 = very healthy
 
     # Recommendations
     needs_more_seeds: bool = False
@@ -722,7 +743,9 @@ class SwarmHealth(BaseModel):
         # Set recommendations
         self.needs_more_seeds = self.seed_peer_ratio < SEED_SHORTAGE_THRESHOLD
         self.needs_more_peers = self.availability < MIN_AVAILABILITY_THRESHOLD
-        self.is_stalled = (self.availability < STALL_AVAILABILITY_THRESHOLD
-                          and self.distributed_copies < MIN_COPIES_THRESHOLD)
+        self.is_stalled = (
+            self.availability < STALL_AVAILABILITY_THRESHOLD
+            and self.distributed_copies < MIN_COPIES_THRESHOLD
+        )
 
         return self
